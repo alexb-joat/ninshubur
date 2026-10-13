@@ -57,22 +57,24 @@ sources:
       reviewed_at: 2026-10-12
       review_every_days: 90
 
-  claude-status:
-    adapter: statuspage
-    params: {host: status.claude.com, provider: anthropic/claude}
-    trust:
-      tier: 0
-      owner: Anthropic
-      owner_url: https://status.claude.com
-      terms_url: https://www.anthropic.com/legal/consumer-terms
-      licence: "public status page JSON"
-      legal_basis: public_business_info
-      rate_limit: "1 req / 10 min"
-      expected_content_type: application/json
-      schema: statuspage_summary.v1
-      reviewed_by: alex
-      reviewed_at: 2026-10-12
-      review_every_days: 180
+  # Disabled: status.claude.com's robots.txt says `Disallow: /api/` for all agents (checked 2026-10-13),
+  # so `sources test` refuses it (H2). Kept as a template for status pages that allow /api/v2/.
+  # claude-status:
+  #   adapter: statuspage
+  #   params: {host: status.claude.com, provider: anthropic/claude}
+  #   trust:
+  #     tier: 0
+  #     owner: Anthropic
+  #     owner_url: https://status.claude.com
+  #     terms_url: https://www.anthropic.com/legal/consumer-terms
+  #     licence: "public status page JSON"
+  #     legal_basis: public_business_info
+  #     rate_limit: "1 req / 10 min"
+  #     expected_content_type: application/json
+  #     schema: statuspage_summary.v1
+  #     reviewed_by: alex
+  #     reviewed_at: 2026-10-12
+  #     review_every_days: 180
 
   # Example Greenhouse board (replace `board` with a real target company's board slug):
   # acme-jobs:
