@@ -12,6 +12,8 @@ permissions:
 
 jobs:
   analyze:
+    # Code scanning uploads need Advanced Security, which a private personal repo does not have.
+    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

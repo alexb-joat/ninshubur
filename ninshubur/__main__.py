@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -49,7 +49,12 @@ class App:
         self.suggester = Suggester(self.conn, self.policy, self.cfg, self.profiles)
         self.sinks = [IcsSink(self.conn, self.home, str(self.cfg.get("sinks", "ics", "path", default="feeds/timings.ics")))]
         self.feedback = Feedback(self.conn, self.sinks)
-        self.tz = ZoneInfo(str(self.cfg.get("timezone", default="UTC")))
+        tz_name = str(self.cfg.get("timezone", default="UTC"))
+        try:
+            self.tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            print(f"warning: time zone {tz_name!r} not found (on Windows: pip install tzdata); using UTC", file=sys.stderr)
+            self.tz = ZoneInfo("UTC")
         self.verbose = verbose
 
     def local(self, ts: float | None) -> str:
