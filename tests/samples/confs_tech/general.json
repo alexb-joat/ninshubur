@@ -1,0 +1,10 @@
+[
+  {"name": "PyCon Portugal", "url": "https://pycon.pt/2026", "startDate": "2026-11-10", "endDate": "2026-11-12",
+   "city": "Lisbon", "country": "Portugal", "cfpUrl": "https://pycon.pt/2026/cfp", "cfpEndDate": "2026-10-30",
+   "online": false, "twitter": "@pyconpt", "cocUrl": "https://pycon.pt/coc", "bluesky": "pyconpt.bsky.social"},
+  {"name": "SaaStock Dublin", "url": "https://www.saastock.com/", "startDate": "2026-11-18", "endDate": "2026-11-20",
+   "city": "Dublin", "country": "Ireland", "online": false},
+  {"name": "Remote Growth Summit", "url": "https://growthsummit.example/", "startDate": "2026-12-01",
+   "city": "Online", "country": "Online", "online": true, "cfpUrl": "https://growthsummit.example/cfp", "cfpEndDate": "2026-10-20"},
+  {"name": "Broken Date Conf", "url": "https://broken.example/", "startDate": "someday"}
+]

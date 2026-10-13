@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ninshubur"
+version = "0.1.0"
+description = "Policy-first intelligence crawler: trusted sources, declared extraction, timed suggestions."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+api = ["fastapi", "uvicorn"]
+win = ["tzdata"]
+dev = ["pytest", "anyio"]
+
+[project.scripts]
+ninshubur = "ninshubur.__main__:main"
+
+[tool.setuptools]
+packages = ["ninshubur", "ninshubur.parse", "ninshubur.adapters", "ninshubur.analyze", "ninshubur.sinks"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+ninshubur = ["policy.yaml", "data/*.json", "static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

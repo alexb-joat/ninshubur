@@ -1,0 +1,17 @@
+# Copy to ~/.ninshubur/profiles.yaml. One profile per client or ideal customer profile.
+profiles:
+  leadget-saas-eu:
+    industries: [saas, fintech, devtools]
+    titles: [VP Sales, Head of Growth, CRO, Founder]
+    geos: {cities: [London, Berlin, Amsterdam, Lisbon], countries: [United Kingdom, Germany, Netherlands, Portugal]}
+    pains: [outbound, pipeline, cold email deliverability, SDR hiring]
+    keywords: [lead generation, outbound, appointment setting, sdr, b2b]
+    negative_keywords: [internship, unpaid]
+    topics: [general, saas, growth, python]
+    example_texts: ["We need help booking qualified B2B meetings in Europe"]
+    thresholds: {relevance: 0.55, tier_b: 0.70}
+    tiers: {b: false, c: false}
+    home_base: Lisbon
+    target_companies: [{name: Stripe, domain: stripe.com, greenhouse: stripe}]
+    tools_in_use: [{kind: llm_provider, id: anthropic/claude}, {kind: github, repo: ollama/ollama}]
+    weights: {service_request_lead: 1.2}

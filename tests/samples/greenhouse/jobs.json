@@ -1,0 +1,9 @@
+{"jobs": [
+  {"absolute_url": "https://boards.greenhouse.io/acme/jobs/1001", "internal_job_id": 1, "location": {"name": "Lisbon, Portugal"},
+   "metadata": null, "id": 1001, "updated_at": "2026-10-05T10:00:00-04:00", "requisition_id": "R1", "title": "Sales Development Representative",
+   "first_published": "2026-10-01T09:00:00-04:00", "content": "<p>should never be requested</p>"},
+  {"absolute_url": "https://boards.greenhouse.io/acme/jobs/1002", "internal_job_id": 2, "location": {"name": "Remote - EU"},
+   "metadata": [], "id": 1002, "updated_at": "2026-09-28T10:00:00-04:00", "title": "Head of Growth", "first_published": "2026-09-20T09:00:00-04:00"},
+  {"absolute_url": "https://boards.greenhouse.io/acme/jobs/1003", "id": 1003, "updated_at": "2026-09-28T10:00:00-04:00",
+   "title": "Senior Backend Engineer", "location": {"name": "Berlin, Germany"}}
+], "meta": {"total": 3}}

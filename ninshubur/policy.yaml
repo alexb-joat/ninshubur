@@ -1,0 +1,87 @@
+# Ninshubur shipped policy. A user policy at ~/.ninshubur/policy.yaml may TIGHTEN
+# these settings (more denied hosts, fewer allowed fields, smaller caps) but can
+# never loosen them. The merge rules live in ninshubur/policy.py.
+
+fetch:
+  https_only_except_local: true
+  follow_redirects: same_host_only
+  max_hops: 2
+  robots:
+    honour: true
+    cache_s: 86400
+    default_crawl_delay_s: 1.0
+  denied_hosts:
+    - linkedin.com
+    - www.linkedin.com
+    - facebook.com
+    - www.facebook.com
+    - x.com
+    - twitter.com
+    - www.twitter.com
+    - reddit.com
+    - www.reddit.com
+    - old.reddit.com
+  max_body_bytes_default: 2000000
+  max_body_bytes_hard: 8000000
+  decompression_ratio_max: 100
+  per_host_rps_max: 1.0
+  # Documented invariants. There is no code path for any of these; tests assert it.
+  never: [login, captcha_bypass, paywall_bypass, proxies, fingerprint_evasion]
+
+admission:
+  min_field_validity: 0.95
+  required_trust_fields: [tier, owner, owner_url, terms_url, licence, legal_basis,
+                          expected_content_type, schema, reviewed_by, reviewed_at, review_every_days]
+  tiers:
+    0: {name: authoritative, reputation: 0.90, review_every_days: 180, value_factor: 1.0, confidence_cap: 0.95}
+    1: {name: curated,       reputation: 0.75, review_every_days: 120, value_factor: 1.0, confidence_cap: 0.95}
+    2: {name: aggregator,    reputation: 0.50, review_every_days: 90,  value_factor: 0.8, confidence_cap: 0.50}
+    3: {name: user_generated, reputation: 0.35, review_every_days: 60, value_factor: 0.6, confidence_cap: 0.50}
+
+# Deltas and thresholds below are written for Tier 0 (start 0.90); for lower tiers every
+# value is multiplied by tier_default / 0.90 so penalties stay proportional.
+reputation:
+  parse_ok: 0.01
+  cap_above_default: 0.05
+  schema_drift: -0.10
+  taint_medium: -0.10
+  taint_high: -0.25
+  integrity: -0.30
+  size_anomaly: -0.05
+  decay_weekly: 0.10
+  suspect_below: 0.40
+  quarantine_below: 0.25
+  taint_events_24h: 3
+  clear_factor: 0.8
+
+detectors:
+  medium_holds: true
+  schema_violation_ratio: 0.20
+  item_explosion_factor: 5
+  max_depth: 32
+  base64_run_min: 200
+  lookalike_max_distance: 2
+
+person_data:
+  allowed_sources: [apollo, hubspot, leadget, mastodon, bluesky]
+  allowed_fields: [name, handle, title, company, company_domain, office_city, country, tz, seniority, department]
+  forbidden_fields: [home_address, street, postcode, personal_email, personal_phone, dob, photo]
+  location_granularity: city
+  social:
+    skip_noindex: true
+    skip_undiscoverable: true
+    skip_no_unauthenticated_label: true
+  llm:
+    require_local: true
+
+legal_basis:
+  allowed: [legitimate_interest, contract, public_business_info, licensed]
+
+retention:
+  months: 12
+  sweep_every_s: 3600
+  snapshots_days: 30
+  quarantine_days: 90
+
+corroboration:
+  value_usd: 300

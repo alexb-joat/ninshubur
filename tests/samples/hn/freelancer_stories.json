@@ -1,0 +1,8 @@
+{"hits": [
+  {"objectID": "45400001", "title": "Ask HN: Freelancer? Seeking freelancer? (October 2026)", "author": "whoishiring",
+   "created_at": "2026-10-01T15:01:00Z", "points": 120, "num_comments": 210, "url": null, "story_text": "Please lead with SEEKING WORK or SEEKING FREELANCER", "_tags": ["story"]},
+  {"objectID": "45300001", "title": "Ask HN: Who is hiring? (October 2026)", "author": "whoishiring",
+   "created_at": "2026-10-01T15:00:00Z", "points": 400, "num_comments": 600, "url": null},
+  {"objectID": "44000001", "title": "Ask HN: Freelancer? Seeking freelancer? (June 2026)", "author": "whoishiring",
+   "created_at": "2026-06-01T15:01:00Z", "points": 100, "num_comments": 150, "url": "https://example.org/old"}
+], "nbHits": 3, "page": 0, "hitsPerPage": 10}

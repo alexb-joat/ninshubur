@@ -1,0 +1,93 @@
+# Copy to ~/.ninshubur/config.yaml (or set NINSHUBUR_CONFIG). Secrets never go here: only env var names.
+user_agent: "Ninshubur/0.1 (+https://leadget.ai/bot; contact: alex@leadget.ai)"
+timezone: Europe/Lisbon
+
+llm:
+  local: {base_url: http://127.0.0.1:11434/v1, model: qwen2.5:7b, embed_model: nomic-embed-text}
+  cloud: {enabled: false, base_url: https://api.openai.com/v1, api_key_env: NINSHUBUR_CLOUD_KEY, model: gpt-5-mini}
+  caps: {daily_usd: 0.50, daily_tokens: 300000}
+  person_data: local_only
+
+budgets: {daily_bytes: 200000000, daily_human_minutes: 45, hourly_rate_usd: 60}
+scheduler: {tick_s: 30, max_concurrent_sources: 4, per_host_rps: 1.0, boost_cooldown_s: 600, jitter: 0.10}
+retention_months: 12
+corroboration_value_usd: 300
+
+sinks:
+  ics: {path: feeds/timings.ics}
+  trello: {enabled: false, key_env: TRELLO_KEY, token_env: TRELLO_TOKEN, list_id: ""}
+  google_calendar: {enabled: false, credentials_env: GOOGLE_CAL_CREDENTIALS_JSON, calendar_id: primary}
+  platform: {enabled: false, base_url: "", token_env: LEADGET_API_TOKEN}
+api: {host: 127.0.0.1, port: 8791}
+
+# Every source needs a full trust block (admission criteria H1-H8). `ninshubur sources test NAME`
+# runs the checklist; sources past their review date stop fetching.
+sources:
+  confs-2026:
+    adapter: confs_tech
+    params: {year: 2026, topics: [general, javascript, devops, data, python]}
+    trust:
+      tier: 1
+      owner: "tech-conferences (community project)"
+      owner_url: https://github.com/tech-conferences/conference-data
+      terms_url: https://github.com/tech-conferences/conference-data/blob/main/LICENSE.md
+      licence: MIT
+      legal_basis: public_business_info
+      rate_limit: "GitHub raw; ETag; we fetch <= 1/day per file"
+      expected_content_type: text/plain|application/json
+      schema: confs_tech.v1
+      reviewed_by: alex
+      reviewed_at: 2026-10-12
+      review_every_days: 120
+
+  hn-freelancer:
+    adapter: hn
+    params: {freelancer_threads: true, show_hn_queries: [lead generation, outbound]}
+    trust:
+      tier: 2
+      owner: "Algolia (HN Search API)"
+      owner_url: https://hn.algolia.com/api
+      terms_url: https://hn.algolia.com/api
+      licence: "public API, no key; request ceiling to verify (commonly cited 10 000/h)"
+      legal_basis: public_business_info
+      rate_limit: "self-cap 1 req/s; a few dozen requests/day"
+      expected_content_type: application/json
+      schema: hn_story.v1
+      reviewed_by: alex
+      reviewed_at: 2026-10-12
+      review_every_days: 90
+
+  claude-status:
+    adapter: statuspage
+    params: {host: status.claude.com, provider: anthropic/claude}
+    trust:
+      tier: 0
+      owner: Anthropic
+      owner_url: https://status.claude.com
+      terms_url: https://www.anthropic.com/legal/consumer-terms
+      licence: "public status page JSON"
+      legal_basis: public_business_info
+      rate_limit: "1 req / 10 min"
+      expected_content_type: application/json
+      schema: statuspage_summary.v1
+      reviewed_by: alex
+      reviewed_at: 2026-10-12
+      review_every_days: 180
+
+  # Example Greenhouse board (replace `board` with a real target company's board slug):
+  # acme-jobs:
+  #   adapter: greenhouse
+  #   params: {boards: [acme], companies: {acme: {name: Acme Inc, domain: acme.example}}}
+  #   trust:
+  #     tier: 0
+  #     owner: "Greenhouse Job Board API (public, unauthenticated)"
+  #     owner_url: https://developers.greenhouse.io/job-board.html
+  #     terms_url: https://developers.greenhouse.io/job-board.html
+  #     licence: "public API"
+  #     legal_basis: public_business_info
+  #     rate_limit: "ETag; <= 4 req/day per board"
+  #     expected_content_type: application/json
+  #     schema: greenhouse_jobs.v1
+  #     reviewed_by: alex
+  #     reviewed_at: 2026-10-12
+  #     review_every_days: 180

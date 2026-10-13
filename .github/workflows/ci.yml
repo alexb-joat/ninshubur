@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: the workflow can read the repo and nothing else.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2025]
+        python: ["3.11", "3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      # Actions pinned to full commit SHAs (tags can be moved; SHAs can't).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        # Hash-pinned lockfiles arrive in Phase 5; until then the two runtime deps come from PyPI.
+        run: pip install -e ".[dev]"
+      - name: Tests (no network; every unexpected host answers 599)
+        run: python -m pytest -q
+      - name: Smoke (replayed samples through the real pipeline and CLI)
+        run: python scripts/smoke.py
+      - name: Example config loads
+        env:
+          NINSHUBUR_CONFIG: config.example.yaml
+        run: python -m ninshubur check
+      - name: Dependency vulnerability audit
+        if: runner.os == 'Linux' && matrix.python == '3.13'
+        run: pipx run pip-audit --strict
