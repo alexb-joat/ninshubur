@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Install (or remove with --remove) a launchd user agent that runs `ninshubur run --daemon`.
 set -eu
-PLIST="$HOME/Library/LaunchAgents/ai.leadget.ninshubur.plist"
+PLIST="$HOME/Library/LaunchAgents/dev.alexb-joat.ninshubur.plist"
 HOME_DIR="${NINSHUBUR_HOME:-$HOME/.ninshubur}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PY="$ROOT/.venv/bin/python"
@@ -20,7 +20,7 @@ cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>ai.leadget.ninshubur</string>
+  <key>Label</key><string>dev.alexb-joat.ninshubur</string>
   <key>ProgramArguments</key><array><string>$PY</string><string>-m</string><string>ninshubur</string><string>run</string><string>--daemon</string></array>
   <key>WorkingDirectory</key><string>$ROOT</string>
   <key>EnvironmentVariables</key><dict><key>NINSHUBUR_HOME</key><string>$HOME_DIR</string></dict>

@@ -2,8 +2,8 @@
 # Every list is optional, but each suggestion kind needs certain fields; `ninshubur profiles check` tells you which.
 profiles:
 
-  # LeadGet's own ideal customer profile.
-  leadget-internal:
+  # The operator's own ideal customer profile.
+  agency-internal:
     industries: [saas, fintech, devtools]
     titles: [VP Sales, Head of Growth, CRO, Founder]
     geos:

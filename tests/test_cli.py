@@ -60,7 +60,7 @@ def test_check_and_replay_round_trip(cli, home):
     code, out = cli("profiles", "check")
     assert code == 0 and "conference_prospecting" in out and "ok" in out
     for fmt, marker in (("md", "# Ninshubur digest"), ("html", "<!doctype html>"), ("csv", "id,kind,profile")):
-        code, out = cli("export", "digest", "--format", fmt, "--profile", "leadget-eu")
+        code, out = cli("export", "digest", "--format", fmt, "--profile", "agency-eu")
         assert code == 0 and "written" in out
         path = Path(out.split("written ", 1)[1].splitlines()[0].strip())
         assert path.read_text(encoding="utf-8-sig").startswith(marker), fmt

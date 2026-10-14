@@ -1,4 +1,4 @@
-# Using Ninshubur: a guide for the LeadGet team
+# Using Ninshubur: the operator guide
 
 Ninshubur watches a short list of approved sources (conference calendars, job boards, public
 "who is hiring" threads, provider status pages), keeps only the facts we declared we want, and
@@ -43,7 +43,7 @@ hours). `run --force` fetches anyway.
 
 ```
 #19 [hiring_signal_outreach] Sundream Studio is hiring: growth, partnerships  (T3 unverified)
-    value 34 USD  cost 15 USD  roi 1.3  confidence 0.26  profile leadget-saas-eu
+    value 34 USD  cost 15 USD  roi 1.3  confidence 0.26  profile agency-saas-eu
     due 2026-11-01 (best: 2026-10-04 to 2026-10-23, Europe/Belgrade)  expires 2026-11-01
     - hiring for growth, partnerships: roles that imply an outbound need
     - value = 250 base x 1.00 weight x 0.50 relevance x 0.26 confidence x ...

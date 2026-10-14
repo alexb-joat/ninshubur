@@ -9,14 +9,14 @@ lawful reading is the only reading the code can take.
   office_city, country, tz, seniority, department`. Everything else (home address, street,
   postcode, personal email or phone, date of birth, photo) is dropped at the storage gate
   (`policy.allow_store`) and never written.
-- **Sources.** Licensed providers under contract (Apollo, HubSpot, the LeadGet platform),
+- **Sources.** Licensed providers under contract (Apollo, HubSpot, the operator's own platform),
   clearly public business pages, and official social APIs (Mastodon now; Bluesky after a
   reviewed spike). No LinkedIn, no Reddit HTML, no Facebook, no X, nothing behind a login.
 - **Granularity.** City level only. Nominatim geocoding (Phase 4) resolves city and country,
   never addresses.
 - **Legal basis.** Each record carries `legal_basis` (`legitimate_interest`, `contract`,
   `public_business_info` or `licensed`). The legitimate-interest assessment is reviewed and
-  signed off by a human before Phase 4 ships.
+  signed off by the operator (Alex, 2026-10-14).
 - **Retention.** `retention_until = fetched_at + 12 months`, hourly sweep, `forget person|company`
   cascades through entities, item links, licensed items and signals; suggestions become
   `redacted`; the erasure is logged in `logs/policy.jsonl`.
@@ -35,7 +35,7 @@ lawful reading is the only reading the code can take.
   (which are not public), pages on other hosts than the event's own.
 - **Legal basis:** `public_business_info`. A speaker or sponsor has chosen to be listed in a
   professional capacity at a business event; the use is B2B outreach about a service relevant to
-  that capacity. Legitimate-interest assessment (to be signed off by Alex before Phase 4): purpose
+  that capacity. Legitimate-interest assessment (signed off by Alex, 2026-10-14): purpose
   (B2B prospecting), necessity (the listing is the only source of who paid for presence), balance
   (professional context only, no sensitive data, 12-month retention, erasure on request via `forget`,
   no automated decisions, no profiling beyond title/company matching), transparency (identifying
@@ -67,4 +67,4 @@ User-Agent with a contact address, GET only except licensed APIs, no login, CAPT
 bypass, no proxies or fingerprint evasion. A source that answers with a CAPTCHA is marked
 `broken` and replaced by an official API or a licensed feed.
 
-Questions: alex@leadget.ai.
+Questions: open an issue at https://github.com/alexb-joat/ninshubur/issues.

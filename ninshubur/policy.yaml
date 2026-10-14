@@ -73,7 +73,7 @@ detectors:
   lookalike_max_distance: 2
 
 person_data:
-  allowed_sources: [apollo, hubspot, leadget, mastodon, bluesky, event_sites]
+  allowed_sources: [apollo, hubspot, platform, mastodon, bluesky, event_sites]
   allowed_fields: [name, handle, title, company, company_domain, office_city, country, tz, seniority, department]
   forbidden_fields: [home_address, street, postcode, personal_email, personal_phone, dob, photo]
   location_granularity: city

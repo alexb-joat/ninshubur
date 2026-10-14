@@ -16,7 +16,7 @@ from .home import data_home
 from .policy import SECONDS_PER_DAY, Policy, _parse_day, check_url, host_of
 
 DEFAULTS: dict[str, Any] = {
-    "user_agent": "Ninshubur/0.1 (+https://leadget.ai/bot; contact: alex@leadget.ai)",
+    "user_agent": "Ninshubur/0.1 (+https://github.com/alexb-joat/ninshubur; contact: https://github.com/alexb-joat/ninshubur/issues)",
     "timezone": "Europe/Lisbon",
     "llm": {
         "local": {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b", "embed_model": "nomic-embed-text",
@@ -44,7 +44,7 @@ DEFAULTS: dict[str, Any] = {
         "ics": {"path": "feeds/timings.ics"},
         "trello": {"enabled": False, "key_env": "TRELLO_KEY", "token_env": "TRELLO_TOKEN", "list_id": ""},
         "google_calendar": {"enabled": False, "credentials_env": "GOOGLE_CAL_CREDENTIALS_JSON", "calendar_id": "primary"},
-        "platform": {"enabled": False, "base_url": "", "token_env": "LEADGET_API_TOKEN"},
+        "platform": {"enabled": False, "base_url": "", "token_env": "PLATFORM_API_TOKEN"},
     },
     "api": {"host": "127.0.0.1", "port": 8791},
     "sources": {},

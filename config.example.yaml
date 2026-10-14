@@ -1,5 +1,5 @@
 # Copy to ~/.ninshubur/config.yaml (or set NINSHUBUR_CONFIG). Secrets never go here: only env var names.
-user_agent: "Ninshubur/0.1 (+https://leadget.ai/bot; contact: alex@leadget.ai)"
+user_agent: "Ninshubur/0.1 (+https://github.com/alexb-joat/ninshubur; contact: https://github.com/alexb-joat/ninshubur/issues)"
 timezone: Europe/Lisbon
 
 llm:
@@ -31,7 +31,7 @@ sinks:
   ics: {path: feeds/timings.ics}
   trello: {enabled: false, key_env: TRELLO_KEY, token_env: TRELLO_TOKEN, list_id: ""}
   google_calendar: {enabled: false, credentials_env: GOOGLE_CAL_CREDENTIALS_JSON, calendar_id: primary}
-  platform: {enabled: false, base_url: "", token_env: LEADGET_API_TOKEN}
+  platform: {enabled: false, base_url: "", token_env: PLATFORM_API_TOKEN}
 api: {host: 127.0.0.1, port: 8791}
 
 # Every source needs a full trust block (admission criteria H1-H8). `ninshubur sources test NAME`

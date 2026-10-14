@@ -130,7 +130,7 @@ def write_config(home: Path, sources: dict | None = None, extra: dict | None = N
 
 def write_profiles(home: Path, profiles: dict | None = None) -> Path:
     import yaml
-    profiles = profiles or {"leadget-eu": {
+    profiles = profiles or {"agency-eu": {
         "industries": ["saas", "devtools"], "titles": ["VP Sales", "Head of Growth", "Founder"],
         "geos": {"cities": ["Lisbon", "Berlin", "Dublin"], "countries": ["Portugal", "Germany", "Ireland"]},
         "pains": ["outbound", "lead generation", "appointment setting"],

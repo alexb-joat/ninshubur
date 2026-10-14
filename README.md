@@ -39,7 +39,7 @@ ninshubur show 3 && ninshubur accept 3
 ninshubur status                    # health, held, quarantined, candidates
 ```
 
-## How LeadGet uses it
+## How a team uses it
 
 The full operator guide is [docs/USAGE.md](docs/USAGE.md). In short:
 

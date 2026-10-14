@@ -20,4 +20,4 @@ Ninshubur treats every byte from the network as hostile data.
 - **LLM isolation (Phase 3).** Tainted text is never sent to a model; clean text goes inside
   `<data>` tags as untrusted content; model output is never a fetch target, command or evidence.
 
-Report issues privately to alex@leadget.ai.
+Report issues privately through GitHub private vulnerability reporting: https://github.com/alexb-joat/ninshubur/security/advisories/new.

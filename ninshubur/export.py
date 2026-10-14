@@ -1,4 +1,4 @@
-"""Exports for the LeadGet team: a per-profile digest (Markdown, printable HTML) and flat CSV
+"""Exports for the operating team: a per-profile digest (Markdown, printable HTML) and flat CSV
 files of suggestions or items. Everything is written with 0600 under the data directory; nothing
 is sent anywhere. Audience is internal, so formulas, held reasons and tiers stay visible."""
 from __future__ import annotations
