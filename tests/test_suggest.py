@@ -207,3 +207,21 @@ def test_hn_hiring_comment_matches_target_company_by_name(home):
     assert acme.reasons[0] == "target company Acme Inc" and acme.evidence[0]["tier"] == 3
     assert acme.status == "held"  # the thread had an injection comment -> source suspect; nothing from it is actionable yet
     assert not any("Evil Corp" in s.title for s in built)
+
+
+def test_hiring_roles_alone_are_a_signal_and_past_decide_by_is_said(home):
+    from tests.conftest import DEFAULT_SOURCES, hn_router, load_sample
+    write_config(home, {"hn": DEFAULT_SOURCES["hn"], "confs": DEFAULT_SOURCES["confs"]})
+    write_profiles(home, {"narrow": {"keywords": ["zzz-nothing"], "geos": {"cities": ["Lisbon"]}, "home_base": "Lisbon"}})
+    routes = dict(SAMPLE_ROUTES)
+    routes[("hn.algolia.com", "/api/v1/search_by_date")] = hn_router(load_sample("hn/whoishiring_stories.json"), load_sample("hn/whoishiring_comments.json"))
+    env = Env(home, routes)
+    env.run_once()
+    sug2 = Suggester(env.conn, env.policy, env.cfg, load_profiles(home), now=env.clock.now)
+    built = sug2.build_all()
+    hires = [s for s in built if s.kind == "hiring_signal_outreach"]
+    assert {s.title.split(" is hiring")[0] for s in hires} >= {"Acme Inc", "Nimbus Analytics"}
+    nimbus = next(s for s in hires if "Nimbus" in s.title)
+    assert nimbus.reasons[0].startswith("hiring for ") and "growth" in nimbus.reasons[0]
+    trip = next(s for s in built if s.kind == "conference_trip" and "Lisbon" in s.title)  # PyCon PT starts in 29 d: decide-by passed
+    assert trip.steps[1].startswith("Decide-by date has passed")

@@ -209,7 +209,8 @@ class Suggester:
             s = Suggestion(kind="conference_trip", profile=profile.name,
                            title=f"Attend {it['title']} in {attrs.get('city') or attrs.get('country')} ({_d(start)})",
                            steps=[f"Shortlist prospects in {attrs.get('city') or attrs.get('country')} with titles {', '.join(profile.titles[:3]) or 'from profile'}",
-                                  f"Decide and book before {_d(w.decide_by or w.deadline or start)}",
+                                  (f"Decide and book before {_d(w.decide_by)}" if w.decide_by and w.decide_by > now
+                                   else f"Decide-by date has passed: decide now, book before {_d(w.deadline or start)}"),
                                   f"Propose three meeting slots between {_d(w.start)} and {_d(w.end)} in local business hours"],
                            reasons=[f"{it['title']} starts {_d(start)} in {attrs.get('city')}, a profile city" if city_hit
                                     else (f"{it['title']} is in {attrs.get('country')}, a profile country" if country_hit
@@ -257,13 +258,14 @@ class Suggester:
                        or profile.company_by_name(attrs.get("company")))
             lex, matched, negatives = rel.lexical(it["title"], profile)
             title_hit = any(t.lower() in it["title"].lower() for t in profile.titles)
-            if not (company or lex > 0 or title_hit) or negatives:
+            roles = [r for r in (attrs.get("roles") or []) if isinstance(r, str)]
+            if not (company or lex > 0 or title_hit or roles) or negatives:
                 continue
             posted = it.get("published_at") or now
             w = timing.hiring_post(posted)
             tier = self._tier(it)
             conf = value.confidence(self._reputation(it), 1.0, 1, tier, self.policy)
-            relevance = max(0.75 if company else 0.0, lex, 0.6 if title_hit else 0.0)
+            relevance = max(0.75 if company else 0.0, lex, 0.6 if title_hit else 0.0, 0.5 if roles else 0.0)
             est = value.estimate("hiring_signal_outreach", cfg=self.cfg, policy=self.policy, tier=tier,
                                  profile_weight=profile.weight("hiring_signal_outreach"), relevance=relevance, conf=conf,
                                  timing_factor=w.factor(now), minutes=value.minutes_for("hiring_signal_outreach", self.cfg, 15),
@@ -273,7 +275,9 @@ class Suggester:
                            steps=[f"Reference the posting ({it['url']}) and what the hire implies about their pipeline",
                                   "Offer the service the hire implies (e.g. outsourced outbound while they staff up)",
                                   f"Send between {_d(w.start)} and {_d(w.end)}, Tue-Thu morning local time"],
-                           reasons=[("target company " + name) if company else f"title matches profile ({', '.join(matched) or 'title'})",
+                           reasons=[("target company " + name) if company
+                                    else (f"title matches profile ({', '.join(matched) or 'title'})" if (lex > 0 or title_hit)
+                                          else f"hiring for {', '.join(roles)}: roles that imply an outbound need"),
                                     f"posted {_d(posted)} in {attrs.get('location') or 'unknown location'}", est.formula],
                            evidence=[_evidence(it, self.source(it["source"]), {"title": it["title"], "location": attrs.get("location"),
                                                                                 "posted": _d(posted), "company": name})],
