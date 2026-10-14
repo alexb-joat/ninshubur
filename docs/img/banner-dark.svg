@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 190" width="880" height="190" role="img" aria-label="Ninshubur: trusted sources in, declared fields out, timed suggestions">
+  <g fill="none" stroke-width="3" stroke-linecap="round">
+    <path d="M40 46 C70 46 76 95 104 95" stroke="#5fd6ae"/>
+    <path d="M40 95 H104" stroke="#8ea6ff"/>
+    <path d="M40 144 C70 144 76 95 104 95" stroke="#a3a39d" stroke-dasharray="2 7"/>
+    <path d="M122 95 H160" stroke="#ececea"/>
+  </g>
+  <circle cx="32" cy="46" r="9" fill="#5fd6ae"/>
+  <circle cx="32" cy="95" r="9" fill="#8ea6ff"/>
+  <circle cx="32" cy="144" r="9" fill="none" stroke="#a3a39d" stroke-width="3"/>
+  <path d="M27 139 L37 149 M37 139 L27 149" stroke="#a3a39d" stroke-width="2.4" stroke-linecap="round"/>
+  <rect x="104" y="66" width="18" height="58" rx="5" fill="#ececea"/>
+  <circle cx="170" cy="95" r="11" fill="#8ea6ff"/>
+  <path d="M164 95 L168.5 99.5 L177 90.5" fill="none" stroke="#111112" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="222" y="96" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="60" font-weight="700" fill="#ececea" letter-spacing="1">Ninshubur</text>
+  <text x="224" y="136" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="22" fill="#a3a39d">Trusted sources in. Declared fields out. Timed suggestions.</text>
+  <text x="224" y="166" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#a3a39d">ninshubur   <tspan fill="#5fd6ae">● admitted source</tspan>   <tspan fill="#8ea6ff">● suggestion</tspan>   ○ held or quarantined</text>
+</svg>

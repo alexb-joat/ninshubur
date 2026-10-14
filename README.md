@@ -1,21 +1,35 @@
-# Ninshubur (𒀭𒎏𒋚)
+<div align="center">
 
-A policy-first intelligence crawler for a B2B lead-generation business. It gathers conferences,
-public service requests, hiring signals and provider status from **human-admitted sources only**,
-extracts **only declared fields**, and turns them into timed, costed suggestions a human accepts
-or dismisses. Nothing is ever executed automatically.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/banner-dark.svg">
+  <img alt="Ninshubur: trusted sources in, declared fields out, timed suggestions" src="docs/img/banner-light.svg" width="720">
+</picture>
 
-Three rules shape every module:
+**A policy-first crawler for B2B signals.** Ninshubur gathers conferences, public service requests, hiring signals and provider status from human-admitted sources only, keeps only the fields each source declared, and turns them into timed, costed suggestions a person accepts or dismisses. Nothing is ever executed automatically.
 
-1. **Source trust policy.** A source is fetched only after a named reviewer admitted it through
-   the H1-H8 checklist (`ninshubur sources test NAME`). Tiers 0-3 set starting reputation,
-   review cadence and evidence weight. Links found in content become *candidates* for a human,
-   never fetch targets.
-2. **Declared extraction.** Every adapter ships a schema; `project()` keeps only those fields,
-   sanitises them and drops the rest. Raw bodies never touch disk.
-3. **Fail closed, degrade gracefully.** Transport, structure and content detectors quarantine
-   bad items (hashes only), downgrade the source (`suspect` -> `quarantined`), hold affected
-   suggestions and keep serving from the last known-good snapshot.
+[![ci](https://github.com/alexb-joat/ninshubur/actions/workflows/ci.yml/badge.svg)](https://github.com/alexb-joat/ninshubur/actions/workflows/ci.yml)
+[![codeql](https://github.com/alexb-joat/ninshubur/actions/workflows/codeql.yml/badge.svg)](https://github.com/alexb-joat/ninshubur/actions/workflows/codeql.yml)
+![python](https://img.shields.io/badge/python-3.11%2B-3776AB)
+![platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-555)
+![dependencies](https://img.shields.io/badge/runtime%20dependencies-2-5fd6ae)
+![network](https://img.shields.io/badge/fetches-admitted%20sources%20only-5fd6ae)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+[Quick start](#quick-start) &nbsp;·&nbsp; [How a team uses it](#how-a-team-uses-it) &nbsp;·&nbsp; [Layout](#layout) &nbsp;·&nbsp; [What it will not do](#what-it-will-not-do) &nbsp;·&nbsp; [Operator guide](docs/USAGE.md)
+
+<sub><i>Ninshubur (𒀭𒎏𒋚): the Sumerian messenger who carried word between realms and did exactly what was asked, nothing more.<br>Here it carries what reviewed sources say, and acts on nothing by itself.</i></sub>
+
+</div>
+
+<br>
+
+## Three rules
+
+| Source trust policy | Declared extraction | Fail closed, degrade gracefully |
+|---|---|---|
+| A source is fetched only after a named reviewer admitted it through the H1–H8 checklist (`ninshubur sources test NAME`). Tiers 0–3 set starting reputation, review cadence and evidence weight. Links found in content become *candidates* for a human, never fetch targets. | Every adapter ships a schema; `project()` keeps only those fields, sanitises them and drops the rest. Raw bodies never touch disk. | Transport, structure and content detectors quarantine bad items (hashes only), downgrade the source (`suspect`, then `quarantined`), hold the affected suggestions and keep serving from the last known-good snapshot. |
+
+These are tested invariants: 272 tests, including a malicious-input corpus, run on Linux, macOS and Windows with Python 3.11, 3.13 and 3.14. Two runtime dependencies (httpx, PyYAML); no LLM calls in this phase.
 
 ## Status
 
