@@ -109,9 +109,14 @@ SCHEMA: list[str] = [
 ]
 
 # (table, statement) pairs applied once each, in order, after SCHEMA. Add to the end only.
-MIGRATIONS: list[tuple[str, str]] = []
+MIGRATIONS: list[tuple[str, str]] = [
+    ("entities", "ALTER TABLE entities ADD COLUMN handle TEXT"),
+    ("entities", "ALTER TABLE entities ADD COLUMN seen_events INTEGER NOT NULL DEFAULT 0"),
+    ("entities", "ALTER TABLE entities ADD COLUMN company TEXT"),
+    ("entities", "ALTER TABLE entities ADD COLUMN role TEXT"),
+]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def db_path(home: Path | None = None) -> Path:

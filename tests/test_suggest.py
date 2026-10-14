@@ -75,11 +75,10 @@ def test_builders_end_to_end(home):
     assert pycon.status == "new" and pycon.deadline is not None and pycon.evidence[0]["tier"] == 1
     assert pycon.evidence[0]["values"]["city"] == "Lisbon" and pycon.evidence[0]["fetched_at"] >= NOW
     assert any("value =" in r for r in pycon.reasons)
-    # conference_trip: Lisbon (home base -> 0 travel) and Dublin (profile city), not the online summit
-    trips = {s.title: s for s in by_kind["conference_trip"]}
-    assert any("Lisbon" in t for t in trips) and any("Dublin" in t for t in trips) and not any("Remote Growth" in t for t in trips)
-    lis = next(s for t, s in trips.items() if "Lisbon" in t)
-    assert lis.cost_parts["travel_usd"] == 0.0 and lis.est_cost == pytest.approx(240 / 60 * 60)
+    # conference_prospecting: PyCon PT (4 pages), SaaStock (1 page) and the online summit (3 visible speakers)
+    pros = {s.title: s for s in by_kind["conference_prospecting"]}
+    assert any("PyCon" in t for t in pros) and any("SaaStock" in t for t in pros)
+    assert "conference_trip" not in by_kind
     # service_request_lead: the HN source went suspect (one injection comment), so every lead from it is held:
     # founder_a (clean item, suspect source) and ops_c (medium taint). Nothing from a suspect source reaches "new".
     leads = {s.title: s for s in by_kind["service_request_lead"]}
@@ -112,7 +111,7 @@ def test_plan_knapsack(home):
     assert sum(s["cost_parts"]["human_minutes"] for s in picked) <= 30 and picked
 
 
-def test_feedback_and_ics(home):
+def test_feedback_and_ics(home):  # noqa: C901
     env, sug = build_env(home)
     sug.build_all()
     ics = IcsSink(env.conn, home, now=env.clock.now)
@@ -166,30 +165,30 @@ def test_corroboration_hold_for_tier2_single_source(home):
     assert built and all(s.status == "held" and s.held_reason == "needs_corroboration" for s in built if s.est_value > 300)
 
 
-def test_costs_from_config_and_home_country(home):
+def test_costs_from_config(home):
     env, sug = build_env(home)
-    env.cfg.data["costs"] = {"travel_same_city_usd": 0, "travel_same_country_usd": 100, "travel_abroad_usd": 999,
-                             "minutes": {"conference_trip": 60}}
-    profiles = load_profiles(home)
-    p = list(profiles.values())[0]
-    p.home_country = "Ireland"  # Dublin is now a domestic trip
-    sug2 = Suggester(env.conn, env.policy, env.cfg, profiles, now=env.clock.now)
-    trips = {s.title: s for s in sug2.build_conference_trip(p)}
-    dublin = next(s for t, s in trips.items() if "Dublin" in t)
-    lisbon = next(s for t, s in trips.items() if "Lisbon" in t)
-    assert dublin.cost_parts["travel_usd"] == 100 and dublin.cost_parts["human_minutes"] == 60
-    assert lisbon.cost_parts["travel_usd"] == 0 and lisbon.est_cost == pytest.approx(60)
-    assert "60 min" in dublin.reasons[-1]
+    env.cfg.data["costs"] = {"minutes": {"conference_prospecting": 40, "cfp_submit": 30}}
+    sug2 = Suggester(env.conn, env.policy, env.cfg, load_profiles(home), now=env.clock.now)
+    p = list(sug2.profiles.values())[0]
+    pro = next(s for s in sug2.build_conference_prospecting(p) if "PyCon" in s.title)
+    assert pro.cost_parts["human_minutes"] >= 40 and pro.cost_parts["travel_usd"] == 0
+    cfp = sug2.build_cfp_submit(p)[0]
+    assert cfp.cost_parts["human_minutes"] == 30 and "30 min" in cfp.reasons[-1]
 
 
-def test_topic_only_trip_ranks_below_geo(home):
+def test_prospecting_phases_upcoming_and_held(home):
     env, sug = build_env(home)
-    profiles = load_profiles(home)
-    p = list(profiles.values())[0]
-    p.cities, p.countries, p.topics = [], [], ["general"]
-    sug2 = Suggester(env.conn, env.policy, env.cfg, profiles, now=env.clock.now)
-    trips = sug2.build_conference_trip(p)
-    assert trips and all("profile topic general" in s.reasons[0] for s in trips)
+    p = list(sug.profiles.values())[0]
+    up = next(s for s in sug.build_conference_prospecting(p) if "PyCon" in s.title)
+    assert up.title.startswith("Prospect") and up.entity_keys[1] == "upcoming" and up.deadline < up.expires_at
+    env.clock.advance(60 * DAY)  # PyCon PT (Nov 10-12) is now held
+    sug2 = Suggester(env.conn, env.policy, env.cfg, sug.profiles, now=env.clock.now)
+    held = next(s for s in sug2.build_conference_prospecting(p) if "PyCon" in s.title)
+    assert held.title.startswith("Follow up") and held.entity_keys[1] == "held" and held.deadline is None
+    assert "paid for a stand" in held.steps[0]
+    env.clock.advance(200 * DAY)  # too old
+    sug3 = Suggester(env.conn, env.policy, env.cfg, sug.profiles, now=env.clock.now)
+    assert not any("PyCon" in s.title for s in sug3.build_conference_prospecting(p))
 
 
 def test_hn_hiring_comment_matches_target_company_by_name(home):
@@ -223,5 +222,4 @@ def test_hiring_roles_alone_are_a_signal_and_past_decide_by_is_said(home):
     assert {s.title.split(" is hiring")[0] for s in hires} >= {"Acme Inc", "Nimbus Analytics"}
     nimbus = next(s for s in hires if "Nimbus" in s.title)
     assert nimbus.reasons[0].startswith("hiring for ") and "growth" in nimbus.reasons[0]
-    trip = next(s for s in built if s.kind == "conference_trip" and "Lisbon" in s.title)  # PyCon PT starts in 29 d: decide-by passed
-    assert trip.steps[1].startswith("Decide-by date has passed")
+    assert not any(s.kind == "conference_trip" for s in built)

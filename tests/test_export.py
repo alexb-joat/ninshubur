@@ -38,15 +38,15 @@ def test_gather_and_renderers(home):
     env, sug = built_env(home)
     d = gather(env.conn, sug, profile="leadget-eu", statuses=("new", "accepted", "held"), since=None, now=env.clock.now(), tz=TZ)
     assert d["suggestions"] and d["held"] and d["sources"] and d["candidates"]
-    assert set(d["by_kind"]) >= {"cfp_submit", "conference_trip", "hiring_signal_outreach", "tool_outage", "service_request_lead"}
+    assert set(d["by_kind"]) >= {"cfp_submit", "conference_prospecting", "hiring_signal_outreach", "tool_outage", "service_request_lead"}
     md = render_md(d)
     assert md.startswith("# Ninshubur digest: leadget-eu")
-    assert "## Conference trips" in md and "## Held" in md and "## Sources" in md and "## Candidate hosts" in md
+    assert "## Conference prospecting" in md and "## Held" in md and "## Sources" in md and "## Candidate hosts" in md
     assert "value = " in md and "fetched 2026-10-12" in md and "https://pycon.pt/2026" in md
     assert "source_suspect" in md or "evidence_tainted" in md
     h = render_html(d)
     assert h.startswith("<!doctype html>") and "<script" not in h and "http://" not in h.split("<body>")[1].replace("https://", "")
-    assert "@media print" in h and "Print" not in h.split("<body>")[0] and "<h2>Conference trips</h2>" in h
+    assert "@media print" in h and "Print" not in h.split("<body>")[0] and "<h2>Conference prospecting</h2>" in h
     assert "&lt;" not in md  # markdown is not html-escaped
     c = render_csv_suggestions(d)
     assert c.startswith("﻿")

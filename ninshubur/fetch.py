@@ -16,7 +16,7 @@ import time
 import urllib.robotparser
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Iterable
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -183,10 +183,11 @@ class Fetcher:
         return Fetched(plan=plan, status=None, error=f"refused:{r.code}", fetched_at=self.now())
 
     async def fetch(self, plan: FetchPlan, src: SourceConfig, spec: AdapterSpec, *, health: str = "ok",
-                    boosted: bool = False, review_due_at: float | None = None) -> Fetched:
+                    boosted: bool = False, review_due_at: float | None = None,
+                    extra_hosts: Iterable[str] = ()) -> Fetched:
         now = self.now()
         refusal = self.policy.allow_fetch(plan.url, spec_hosts=spec.hosts, method=plan.method, allowed_methods=spec.methods,
-                                          source_health=health, review_due_at=review_due_at, now=now)
+                                          source_health=health, review_due_at=review_due_at, now=now, extra_hosts=extra_hosts)
         if refusal:
             return self.refuse(plan, src.name, refusal)
         if plan.body is not None and plan.method == "GET":

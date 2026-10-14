@@ -109,7 +109,14 @@ DEFAULT_SOURCES = {
     "hn": {"adapter": "hn", "params": {"freelancer_threads": True}, "trust": trust(2, "hn_story.v1")},
     "claude-status": {"adapter": "statuspage", "params": {"host": "status.claude.com", "provider": "anthropic/claude"},
                       "trust": trust(0, "statuspage_summary.v1")},
+    "event-sites": {"adapter": "event_sites", "params": {"events_per_day": 20, "pages_per_event": 4},
+                    "trust": trust(2, "event_org.v1", "text/html")},
 }
+
+
+def page(name: str, status: int = 200) -> dict:
+    root = SAMPLES / "event_sites" if (SAMPLES / "event_sites" / name).exists() else MALICIOUS / "event_sites"
+    return {"body": (root / name).read_bytes(), "headers": {"Content-Type": "text/html; charset=utf-8"}, "status": status}
 
 
 def write_config(home: Path, sources: dict | None = None, extra: dict | None = None) -> Path:
@@ -146,6 +153,16 @@ SAMPLE_ROUTES = {
     ("hn.algolia.com", "/robots.txt"): {"status": 404, "body": ""},
     ("status.claude.com", "/robots.txt"): {"status": 404, "body": ""},
     ("status.claude.com", "/api/v2/summary.json"): {"body": load_sample("statuspage/summary.json")},
+    # event sites from the confs_tech sample: PyCon PT (upcoming), SaaStock (upcoming), growthsummit (online)
+    ("pycon.pt", "/robots.txt"): {"status": 404, "body": ""},
+    ("pycon.pt", "/2026"): page("home.html"),
+    ("pycon.pt", "/speakers/"): page("cards_linkedin.html"),
+    ("pycon.pt", "/sponsors"): page("microdata.html"),
+    ("pycon.pt", "/agenda"): page("wordpress_plugin.html"),
+    ("www.saastock.com", "/robots.txt"): {"status": 404, "body": ""},
+    ("www.saastock.com", "/"): page("jsonld.html"),
+    ("growthsummit.example", "/robots.txt"): {"status": 404, "body": ""},
+    ("growthsummit.example", "/"): page("script_heavy.html"),
 }
 
 

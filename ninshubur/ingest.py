@@ -196,7 +196,11 @@ class Ingestor:
             self._quarantine(name, it.url, it.taint_codes, "high", it.text or it.title, "dropped_item")
             self._taint_event(name, "high", it.taint_codes)
             rep.dropped += 1
-        if high_items:
+        for url_, codes_, excerpt_ in parsed.dropped_rows:  # hostile rows inside an otherwise kept document
+            self._quarantine(name, url_, tuple(codes_), "high", excerpt_, "dropped_row")
+            self._taint_event(name, "high", tuple(codes_))
+            rep.dropped += 1
+        if high_items or parsed.dropped_rows:
             self.adjust_reputation(name, self.rep.get("taint_high", -0.25))
         if medium_items:
             self._taint_event(name, "medium", detectors.codes(detectors.Finding("medium", c) for i in medium_items for c in i.taint_codes))
@@ -209,7 +213,7 @@ class Ingestor:
         else:
             self.conn.execute("UPDATE source_stats SET parse_fail=parse_fail+1 WHERE source=?", (name,))
 
-        health = self._reevaluate_health(name, high=bool(high_items or doc_high), drift=drift)
+        health = self._reevaluate_health(name, high=bool(high_items or doc_high or parsed.dropped_rows), drift=drift)
         hold_all = health in ("suspect", "quarantined")
 
         for it in parsed.items:
@@ -273,28 +277,35 @@ class Ingestor:
         for e in it.entities:
             eid = self._upsert_entity(e, src, fetched_at)
             if eid:
-                self.conn.execute("INSERT OR IGNORE INTO item_entities(item_id, entity_id, role) VALUES (?,?,?)", (item_id, eid, "subject"))
+                cur = self.conn.execute("INSERT OR IGNORE INTO item_entities(item_id, entity_id, role) VALUES (?,?,?)",
+                                        (item_id, eid, e.role or "subject"))
+                if cur.rowcount:
+                    self.conn.execute("UPDATE entities SET seen_events=seen_events+1 WHERE id=?", (eid,))
         return created
 
     def _upsert_entity(self, e, src: SourceConfig, fetched_at: float) -> int | None:
         if e.type == "person":
             fields, _ = self.policy.allow_store({"name": e.name, "title": e.title, "office_city": e.city, "country": e.country,
-                                                 "company_domain": e.domain}, source_adapter=src.adapter)
+                                                 "company_domain": e.domain, "company": e.company, "handle": e.handle},
+                                                source_adapter=src.adapter)
             if not fields:
                 return None
             name, title, city, country, domain = (fields.get("name", ""), fields.get("title"), fields.get("office_city"),
                                                   fields.get("country"), fields.get("company_domain"))
+            company, handle = fields.get("company"), fields.get("handle")
         else:
-            name, title, city, country, domain = e.name, e.title, e.city, e.country, e.domain
+            name, title, city, country, domain, company, handle = e.name, e.title, e.city, e.country, e.domain, None, None
         retention = self.policy.retention_until(fetched_at) if e.type == "person" else None
         self.conn.execute(
-            """INSERT INTO entities(type, key, name, title, domain, office_city, country, source, legal_basis, fetched_at, retention_until)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """INSERT INTO entities(type, key, name, title, domain, office_city, country, source, legal_basis, fetched_at, retention_until,
+                                    company, handle, role)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(key) DO UPDATE SET name=excluded.name, title=COALESCE(excluded.title, entities.title),
                  domain=COALESCE(excluded.domain, entities.domain), office_city=COALESCE(excluded.office_city, entities.office_city),
                  country=COALESCE(excluded.country, entities.country), fetched_at=excluded.fetched_at,
-                 retention_until=excluded.retention_until, forgotten_at=NULL""",
-            (e.type, e.key, name, title, domain, city, country, src.name, src.legal_basis, fetched_at, retention))
+                 retention_until=excluded.retention_until, forgotten_at=NULL, company=COALESCE(excluded.company, entities.company),
+                 handle=COALESCE(excluded.handle, entities.handle), role=COALESCE(excluded.role, entities.role)""",
+            (e.type, e.key, name, title, domain, city, country, src.name, src.legal_basis, fetched_at, retention, company, handle, e.role))
         r = one(self.conn, "SELECT id FROM entities WHERE key=?", (e.key,))
         return int(r["id"]) if r else None
 

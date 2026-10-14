@@ -19,7 +19,7 @@ from .config import Config, SourceConfig
 from .db import one, rows, uj, j
 from .fetch import Fetcher
 from .ingest import Ingestor, IngestReport
-from .policy import Policy
+from .policy import Policy, host_of
 
 BROKEN_STATUSES = {403, 404, 410}
 BROKEN_AFTER = 5
@@ -111,7 +111,13 @@ class Scheduler:
             report.note = f"not fetchable: health={row['health']}"
             return report
         state = uj(row["state"])
+        extra_hosts: set[str] = set()
+        if "events" in spec.needs:
+            state["events"] = self._events_for(spec)
+        if spec.dynamic_hosts:
+            extra_hosts = {host_of(ev["url"]) for ev in state.get("events", []) if ev.get("url")}
         queue: list[FetchPlan] = list(adapter.plan(src, state, now))
+        state.pop("events", None)  # not persisted
         if not queue:
             report.note = "adapter produced no plans (check params)"
         integrity = False
@@ -121,33 +127,54 @@ class Scheduler:
             nxt: list[FetchPlan] = []
             for plan in queue:
                 health = (self.ingestor.source(name) or row)["health"]
-                f = await self.fetcher.fetch(plan, src, spec, health=health, boosted=boosted, review_due_at=src.review_due_at())
+                if plan.derived_from:
+                    r = self.policy.allow_derived_link(plan.url, base_url=plan.derived_from, adapter=spec.name, anchor_text=plan.anchor_text)
+                    if r:
+                        self.fetcher.refuse(plan, name, r)
+                        report.refused += 1
+                        continue
+                f = await self.fetcher.fetch(plan, src, spec, health=health, boosted=boosted, review_due_at=src.review_due_at(),
+                                             extra_hosts=extra_hosts)
                 report.fetched += 1
+                codes = tuple(x.code for x in f.findings)
                 if f.error and f.error.startswith("refused:"):
                     report.refused += 1
+                    self._note(adapter, state, plan, ok=False, codes=(f.error,), now=now)
                     continue
                 if any(x.severity == "integrity" for x in f.findings):
+                    if spec.dynamic_hosts:
+                        # one hostile event site is flagged on its own; the batch source stays up
+                        report.errors += 1
+                        report.ingests.append(self.ingestor.ingest(src, spec, _flagged(f), f))
+                        self._note(adapter, state, plan, ok=False, codes=codes, now=now)
+                        continue
                     report.ingests.append(self.ingestor.integrity_event(src, f))
                     integrity = True
                     break
                 if f.findings:  # binary magic etc. at transport level but not integrity
                     report.errors += 1
                     report.ingests.append(self.ingestor.ingest(src, spec, _flagged(f), f))
+                    self._note(adapter, state, plan, ok=False, codes=codes, now=now)
                     continue
                 if f.error or f.status is None:
                     report.errors += 1
+                    self._note(adapter, state, plan, ok=False, codes=(f.error or "no_status",), now=now)
                     continue
                 if f.status == 304 or (f.status == 200 and not f.changed):
                     report.unchanged += 1
+                    self._note(adapter, state, plan, ok=True, codes=(), now=now)
                     continue
                 if f.status != 200:
                     report.errors += 1
                     if f.status in BROKEN_STATUSES:
                         broken_hits += 1
+                    self._note(adapter, state, plan, ok=False, codes=(f"http_{f.status}",), now=now)
                     continue
                 report.changed += 1
                 parsed = adapter.parse(src, f, now)
-                report.ingests.append(self.ingestor.ingest(src, spec, parsed, f))
+                ing = self.ingestor.ingest(src, spec, parsed, f)
+                report.ingests.append(ing)
+                self._note(adapter, state, plan, ok=True, codes=tuple(ing.codes), now=now)
                 if round_no < MAX_FOLLOWUP_ROUNDS:
                     for fp in parsed.followups:
                         if fp.key not in seen_keys:
@@ -157,10 +184,29 @@ class Scheduler:
                 break
             queue = nxt
         self._reschedule(src, spec, report, broken_hits, integrity)
+        self.conn.execute("UPDATE sources SET state=? WHERE name=?", (j(state), name))
         cur = self.ingestor.source(name)
         report.health = cur["health"] if cur else "ok"
         report.next_due_at = float(cur["next_due_at"]) if cur else 0.0
         return report
+
+    @staticmethod
+    def _note(adapter, state: dict, plan: FetchPlan, *, ok: bool, codes: tuple, now: float) -> None:
+        hook = getattr(adapter, "update_state", None)
+        if hook:
+            hook(state, plan, ok=ok, codes=tuple(codes), now=now)
+
+    def _events_for(self, spec) -> list[dict]:
+        """Events from the items table for a dynamic-host adapter: uid, url, title, dates, place."""
+        out = []
+        for r in rows(self.conn, """SELECT i.uid, i.url, i.title, i.attrs,
+                                           (SELECT at FROM item_dates d WHERE d.item_id=i.id AND d.kind='event_start') AS start,
+                                           (SELECT end_at FROM item_dates d WHERE d.item_id=i.id AND d.kind='event_start') AS end
+                                    FROM items i WHERE i.kind='event' AND i.url IS NOT NULL AND i.url<>'' AND i.held=0 AND i.tainted=0"""):
+            a = uj(r["attrs"])
+            out.append({"uid": r["uid"], "url": r["url"], "title": r["title"], "start": r["start"], "end": r["end"],
+                        "city": a.get("city"), "country": a.get("country"), "online": a.get("online")})
+        return out
 
     def _reschedule(self, src: SourceConfig, spec, report: RunReport, broken_hits: int, integrity: bool) -> None:
         row = self.ingestor.source(src.name)

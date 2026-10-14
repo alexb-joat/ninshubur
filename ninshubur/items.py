@@ -11,7 +11,7 @@ DATE_KINDS = frozenset({
 
 ITEM_KINDS = frozenset({
     "event", "thread", "service_request", "discovery", "hiring", "incident", "status_component",
-    "pain", "tooling", "news", "social", "market_model", "deprecation", "person", "company",
+    "pain", "tooling", "news", "social", "market_model", "deprecation", "person", "company", "prospect_page",
 })
 
 
@@ -28,6 +28,9 @@ class EntityRef:
     city: str | None = None
     country: str | None = None
     title: str | None = None
+    company: str | None = None  # person's employer as written on the page
+    handle: str | None = None  # a public professional profile URL (LinkedIn only); stored as text, never fetched
+    role: str | None = None  # speaker|host|panelist|sponsor|exhibitor|partner|organizer|subject
 
 
 @dataclass(frozen=True)

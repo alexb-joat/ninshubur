@@ -18,12 +18,12 @@ costs:
   travel_same_city_usd: 0
   travel_same_country_usd: 150
   travel_abroad_usd: 600
-  minutes: {conference_trip: 240, cfp_submit: 120, hiring_signal_outreach: 15, service_request_lead: 10, tool_outage: 0}
+  minutes: {conference_prospecting: 20, cfp_submit: 120, hiring_signal_outreach: 15, service_request_lead: 10, tool_outage: 0}
 # Expected value per suggestion kind before relevance/confidence/timing scaling (placeholders until feedback calibrates them).
 base_value_usd:
   service_request_lead: 400
   hiring_signal_outreach: 250
-  conference_trip: 1500
+  conference_prospecting: 600
   cfp_submit: 800
   tool_outage: 50
 
@@ -39,7 +39,7 @@ api: {host: 127.0.0.1, port: 8791}
 sources:
   confs-2026:
     adapter: confs_tech
-    params: {year: 2026, topics: [general, javascript, devops, data, python]}
+    params: {years: [2025, 2026], topics: [general, javascript, devops, data, python]}
     trust:
       tier: 1
       owner: "tech-conferences (community project)"
@@ -53,6 +53,26 @@ sources:
       reviewed_by: alex
       reviewed_at: 2026-10-12
       review_every_days: 120
+
+  # Event websites, batch-admitted: the homepage of every event in the confs.tech dataset plus up to
+  # four same-host speaker/sponsor/exhibitor pages. Fixed hosts do not exist here; the allowlist for each
+  # run is built from the dataset's event URLs, never from a page. See docs/USAGE.md "Conference prospecting".
+  event-sites:
+    adapter: event_sites
+    params: {events_per_day: 20, pages_per_event: 4, include_past_days: 365, recrawl_upcoming_days: 7}
+    trust:
+      tier: 2
+      owner: "individual event organisers (homepages listed in the confs.tech dataset)"
+      owner_url: https://github.com/tech-conferences/conference-data
+      terms_url: https://github.com/tech-conferences/conference-data/blob/main/LICENSE.md
+      licence: "each site's own terms; robots.txt honoured; public listings only, structured data first"
+      legal_basis: public_business_info
+      rate_limit: "1 req/s per host; <= 5 pages per event; <= 20 events/day"
+      expected_content_type: text/html
+      schema: event_org.v1
+      reviewed_by: alex
+      reviewed_at: 2026-10-14
+      review_every_days: 90
 
   hn-freelancer:
     adapter: hn

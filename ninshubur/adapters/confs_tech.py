@@ -22,17 +22,22 @@ class ConfsTech:
     )
 
     def plan(self, src: SourceConfig, state: dict, now: float) -> list[FetchPlan]:
-        year = int(src.params.get("year", 2026))
-        if not 2020 <= year <= 2100:
-            return []
+        years = src.params.get("years") or [src.params.get("year", 2026)]
         plans = []
-        for topic in src.params.get("topics", DEFAULT_TOPICS):
-            topic = str(topic)
-            if not TOPIC_RE.match(topic):
+        for year in years:
+            try:
+                year = int(year)
+            except (TypeError, ValueError):
                 continue
-            plans.append(FetchPlan(
-                url=f"https://raw.githubusercontent.com/tech-conferences/conference-data/main/conferences/{year}/{topic}.json",
-                key=f"confs_tech:{year}:{topic}", purpose=f"conferences {year}/{topic}", max_bytes=1_500_000))
+            if not 2020 <= year <= 2100:
+                continue
+            for topic in src.params.get("topics", DEFAULT_TOPICS):
+                topic = str(topic)
+                if not TOPIC_RE.match(topic):
+                    continue
+                plans.append(FetchPlan(
+                    url=f"https://raw.githubusercontent.com/tech-conferences/conference-data/main/conferences/{year}/{topic}.json",
+                    key=f"confs_tech:{year}:{topic}", purpose=f"conferences {year}/{topic}", max_bytes=1_500_000))
         return plans
 
     def parse(self, src: SourceConfig, fetched: Fetched, now: float) -> ParseResult:

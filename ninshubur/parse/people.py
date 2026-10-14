@@ -144,9 +144,12 @@ def _section_role(node: Node) -> str | None:
     return None
 
 
-def _cards_persons(doc: Doc, out: list[dict]) -> None:
+def _cards_persons(doc: Doc, out: list[dict], notes: list[str]) -> None:
     best: list[dict] = []
     for group in card_groups(doc):
+        if len(group) > MAX_ROWS * 2:
+            notes.append("too_many_items")  # a planted wall of cards: flagged, not harvested
+            continue
         rows: list[dict] = []
         for card in group:
             lines = card.lines(max_lines=6)
@@ -239,7 +242,7 @@ def extract(doc: Doc, page_url: str) -> Extraction:
             ext.person_layer = "microdata"
         else:
             persons = []
-            _cards_persons(doc, persons)
+            _cards_persons(doc, persons, ext.notes)
             if persons:
                 ext.person_layer = "cards"
     if len(persons) > MAX_ROWS:

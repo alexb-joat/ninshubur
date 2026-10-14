@@ -8,6 +8,7 @@ Tier >= 2 source above the corroboration value, are ``held`` and never leave the
 from __future__ import annotations
 
 import hashlib
+import math
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -181,7 +182,21 @@ class Suggester:
             out.append(self._finish(s, [it], tier))
         return out
 
-    def build_conference_trip(self, profile: Profile) -> list[Suggestion]:
+    def _prospects(self, event_uid: str) -> tuple[list[dict], list[dict], list[dict]]:
+        """(pages, persons, orgs) crawled for an event: entities linked to its prospect_page items."""
+        pages = rows(self.conn, "SELECT * FROM items WHERE kind='prospect_page' AND json_extract(attrs, '$.event_uid')=? ORDER BY id", (event_uid,))
+        if not pages:
+            return [], [], []
+        ids = [p["id"] for p in pages]
+        q = f"""SELECT e.*, ie.role AS link_role, i.held AS page_held, i.tainted AS page_tainted FROM entities e
+                JOIN item_entities ie ON ie.entity_id=e.id JOIN items i ON i.id=ie.item_id
+                WHERE ie.item_id IN ({','.join('?' * len(ids))}) AND e.forgotten_at IS NULL"""
+        ents = rows(self.conn, q, ids)
+        persons = [e for e in ents if e["type"] == "person"]
+        orgs = [e for e in ents if e["type"] == "company"]
+        return pages, persons, orgs
+
+    def build_conference_prospecting(self, profile: Profile) -> list[Suggestion]:
         now = self.now()
         out = []
         for it in self._items("event"):
@@ -189,37 +204,67 @@ class Suggester:
             if "event_start" not in d:
                 continue
             start, end = d["event_start"]
+            end = end or start
             attrs = uj(it["attrs"])
-            if attrs.get("online") or not (now < start <= now + 60 * DAY):
+            if now + 7 * DAY <= start <= now + 90 * DAY:
+                phase = "upcoming"
+                w = timing.Window(start - 28 * DAY, start - 7 * DAY, start - 7 * DAY)
+                expires = start
+            elif end < now and now - end <= 180 * DAY:
+                phase = "held"
+                w = timing.Window(now, now + 21 * DAY, None)
+                expires = now + 45 * DAY
+            else:
+                continue
+            pages, persons, orgs = self._prospects(it["uid"])
+            if not pages or (len(orgs) < 1 and len(persons) < 3):
                 continue
             city_hit = profile.matches_city(attrs.get("city"))
             country_hit = profile.matches_country(attrs.get("country"))
             topic_hit = str(attrs.get("topic", "")).lower() in {t.lower() for t in profile.topics}
-            if not (city_hit or country_hit or topic_hit):
-                continue
-            w = timing.event_trip(start, now)
-            tier = self._tier(it)
-            conf = value.confidence(self._reputation(it), 1.0 if attrs.get("city") else 0.7, 1, tier, self.policy)
-            travel = value.travel_band(profile.home_base, attrs.get("city"), profile.home_country, attrs.get("country"), self.cfg)
-            relevance = 0.8 if city_hit else (0.55 if country_hit else 0.4)
-            est = value.estimate("conference_trip", cfg=self.cfg, policy=self.policy, tier=tier, profile_weight=profile.weight("conference_trip"),
-                                 relevance=relevance, conf=conf, timing_factor=w.factor(now),
-                                 minutes=value.minutes_for("conference_trip", self.cfg, 240), travel_usd=travel,
-                                 calibration=self._calibration("conference_trip"))
-            s = Suggestion(kind="conference_trip", profile=profile.name,
-                           title=f"Attend {it['title']} in {attrs.get('city') or attrs.get('country')} ({_d(start)})",
-                           steps=[f"Shortlist prospects in {attrs.get('city') or attrs.get('country')} with titles {', '.join(profile.titles[:3]) or 'from profile'}",
-                                  (f"Decide and book before {_d(w.decide_by)}" if w.decide_by and w.decide_by > now
-                                   else f"Decide-by date has passed: decide now, book before {_d(w.deadline or start)}"),
-                                  f"Propose three meeting slots between {_d(w.start)} and {_d(w.end)} in local business hours"],
-                           reasons=[f"{it['title']} starts {_d(start)} in {attrs.get('city')}, a profile city" if city_hit
-                                    else (f"{it['title']} is in {attrs.get('country')}, a profile country" if country_hit
-                                          else f"{it['title']} is on profile topic {attrs.get('topic')} (outside profile geos)"), est.formula],
-                           evidence=[_evidence(it, self.source(it["source"]), {"name": it["title"], "startDate": _d(start), "endDate": _d(end) if end else None,
-                                                                                "city": attrs.get("city"), "country": attrs.get("country")})],
+            geo_rel = 1.0 if city_hit else (0.85 if country_hit else (0.7 if topic_hit else 0.5))
+            matched_orgs = [o for o in orgs if profile.company_by_name(o["name"]) or (o.get("domain") and profile.company_by_key(f"company:{o['domain']}"))]
+            matched_people = [p for p in persons if p.get("title") and any(t.lower() in p["title"].lower() for t in profile.titles)]
+            paid = [o for o in orgs if o.get("link_role") in ("sponsor", "exhibitor", "partner")]
+            n_matched = len(matched_orgs) + len(matched_people)
+            match_ratio = min(1.0, 0.5 + 0.5 * n_matched / max(1, len(paid) + len(persons)) + 0.1 * min(5, n_matched))
+            scale = min(2.0, math.log2(1 + len(paid) + len(orgs) + len(persons) / 5))
+            tier = 2
+            agree = max([int(e.get("seen_events") or 1) for e in orgs + persons] + [1])
+            conf = value.confidence(self._reputation(pages[0]), 0.9, agree, tier, self.policy)
+            minutes = min(120.0, value.minutes_for("conference_prospecting", self.cfg, 20) + 3 * n_matched)
+            est = value.estimate("conference_prospecting", cfg=self.cfg, policy=self.policy, tier=tier,
+                                 profile_weight=profile.weight("conference_prospecting"), relevance=round(geo_rel * match_ratio * scale / 2, 3),
+                                 conf=conf, timing_factor=w.factor(now), minutes=minutes, calibration=self._calibration("conference_prospecting"))
+            where = attrs.get("city") or attrs.get("country") or "online"
+            if phase == "upcoming":
+                title = f"Prospect {it['title']} ({where}, {_d(start)}): {len(paid)} paying companies, {len(persons)} speakers"
+                steps = [f"Shortlist the sponsors/exhibitors{' (' + ', '.join(o['name'] for o in matched_orgs[:5]) + ' match the profile)' if matched_orgs else ''}",
+                         f"Pick speakers with profile titles{' (' + ', '.join(p['name'] for p in matched_people[:5]) + ')' if matched_people else ''}",
+                         f"Send a short pre-event note between {_d(w.start)} and {_d(w.end)}; verify each contact before writing",
+                         "Offer a meeting during the event week; mark done with the outcome"]
+                reason0 = f"{it['title']} starts {_d(start)} in {where}; {len(paid)} companies paid for presence, {len(persons)} speakers listed"
+            else:
+                title = f"Follow up {it['title']} ({where}, held {_d(end)}): {len(paid)} paying companies, {len(persons)} speakers"
+                steps = [f"Shortlist the companies that paid for a stand or sponsorship{' (' + ', '.join(o['name'] for o in matched_orgs[:5]) + ' match the profile)' if matched_orgs else ''}",
+                         "Angle: measurable pipeline versus what the event cost them; ask what the event delivered",
+                         f"Send between {_d(w.start)} and {_d(w.end)}; follow up two weeks later",
+                         "Speakers with profile titles are secondary targets; verify each contact before writing"]
+                reason0 = f"{it['title']} was held {_d(end)} in {where}; {len(paid)} companies paid for presence, {len(persons)} speakers listed"
+            reasons = [reason0,
+                       f"profile match: {len(matched_orgs)} target companies, {len(matched_people)} speakers with target titles; geo/topic factor {geo_rel:.2f}",
+                       "every prospect is unverified (Tier 2 page content): confirm role and company before contact",
+                       est.formula]
+            evidence = [_evidence(pg, self.source(pg["source"]), {"page": pg["url"], "persons": uj(pg["attrs"]).get("persons"),
+                                                                 "orgs": uj(pg["attrs"]).get("orgs"), "layer": uj(pg["attrs"]).get("layer")})
+                        for pg in pages]
+            evidence.insert(0, _evidence(it, self.source(it["source"]), {"name": it["title"], "startDate": _d(start), "city": attrs.get("city"),
+                                                                        "country": attrs.get("country")}))
+            s = Suggestion(kind="conference_prospecting", profile=profile.name, title=title, steps=steps, reasons=reasons, evidence=evidence,
                            confidence=conf, est_value=est.value, est_cost=est.cost, cost_parts=est.cost_parts, deadline=w.deadline,
-                           best_window=(w.start, w.end), expires_at=start, entity_keys=[f"event:{it['uid']}"], item_ids=[it["id"]])
-            out.append(self._finish(s, [it], tier))
+                           best_window=(w.start, w.end), expires_at=expires, entity_keys=[f"event:{it['uid']}", phase],
+                           item_ids=[it["id"]] + [pg["id"] for pg in pages])
+            out.append(self._finish(s, [it] + pages, tier))
         return out
 
     def build_service_request_lead(self, profile: Profile) -> list[Suggestion]:
@@ -317,7 +362,7 @@ class Suggester:
             out.append(self._finish(s, [it], tier))
         return out
 
-    BUILDERS = ("build_cfp_submit", "build_conference_trip", "build_service_request_lead", "build_hiring_signal_outreach", "build_tool_outage")
+    BUILDERS = ("build_cfp_submit", "build_conference_prospecting", "build_service_request_lead", "build_hiring_signal_outreach", "build_tool_outage")
 
     # -- orchestration ----------------------------------------------------------------------------
     def build_all(self) -> list[Suggestion]:

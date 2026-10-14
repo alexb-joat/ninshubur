@@ -17,7 +17,10 @@ def test_every_adapter_declares_known_schemas_and_hosts():
         spec = cls.spec
         assert spec.name == name
         assert spec.schema in SCHEMAS and all(s in SCHEMAS for s in spec.schemas)
-        assert spec.hosts and all("/" not in h and h == h.lower() for h in spec.hosts)
+        assert spec.hosts or spec.dynamic_hosts, f"{name} has no hosts and is not dynamic"
+        assert all("/" not in h and h == h.lower() for h in spec.hosts)
+        if spec.dynamic_hosts:
+            assert spec.needs, f"{name} is dynamic but declares no scheduler-provided data"
         assert spec.questions, f"{name} declares no business question (H7)"
         assert spec.legal_basis in ("public_business_info", "licensed", "legitimate_interest", "contract")
 

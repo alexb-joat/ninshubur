@@ -2,7 +2,9 @@
 and parse Fetched bodies through a schema. Only ``fetch.Fetcher`` touches the network."""
 from __future__ import annotations
 
+import importlib
 import json
+import pkgutil
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -29,6 +31,11 @@ class AdapterSpec:
     methods: frozenset[str] = frozenset({"GET"})
     questions: tuple[str, ...] = ()
     schemas: tuple[str, ...] = ()  # every schema this adapter uses (checked at startup)
+    # Dynamic-host adapters have no fixed host list: the scheduler hands them a per-run allowlist built
+    # from an admitted dataset (never from a page being crawled). ``needs`` names what the scheduler
+    # must put into ``state`` before ``plan`` (e.g. "events").
+    dynamic_hosts: bool = False
+    needs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,8 @@ class FetchPlan:
     schema: str | None = None  # override the spec schema for this plan (follow-ups)
     expected_content_type: str | None = None
     log_url: str | None = None  # what to log instead of url (licensed APIs with person ids)
+    derived_from: str | None = None  # the page this link was found on; the scheduler applies policy.allow_derived_link
+    anchor_text: str = ""
 
 
 @dataclass
@@ -80,6 +89,7 @@ class ParseResult:
     projection: Projection | None = None
     notes: list[str] = field(default_factory=list)
     candidates: list[tuple[str, str, str]] = field(default_factory=list)  # (host, example_url, reason)
+    dropped_rows: list[tuple[str, tuple[str, ...], str]] = field(default_factory=list)  # (url, codes, excerpt) -> quarantine
 
     @property
     def findings(self) -> list[Finding]:
@@ -112,6 +122,7 @@ def run_projection(fetched: Fetched, schema_id: str, now: float, *, spec: Adapte
 
 
 REGISTRY: dict[str, type] = {}
+_LOADED = False
 
 
 def register(cls: type) -> type:
@@ -119,9 +130,21 @@ def register(cls: type) -> type:
     return cls
 
 
-def get_adapter(name: str) -> Adapter:
-    from . import confs_tech, greenhouse, hn, provider_docs, statuspage  # noqa: F401  (registration side effect)
+def _load_all() -> None:
+    """Import every module in this package once so that ``@register`` has run. Adding an adapter
+    is adding a file; nothing here needs editing."""
+    global _LOADED
+    if _LOADED:
+        return
+    from . import __path__ as pkg_path
+    for mod in pkgutil.iter_modules(pkg_path):
+        if mod.name != "base":
+            importlib.import_module(f"{__package__}.{mod.name}")
+    _LOADED = True
 
+
+def get_adapter(name: str) -> Adapter:
+    _load_all()
     try:
         return REGISTRY[name]()
     except KeyError:
@@ -129,6 +152,5 @@ def get_adapter(name: str) -> Adapter:
 
 
 def all_adapters() -> dict[str, type]:
-    from . import confs_tech, greenhouse, hn, provider_docs, statuspage  # noqa: F401
-
+    _load_all()
     return dict(REGISTRY)

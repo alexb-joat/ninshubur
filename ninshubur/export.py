@@ -18,7 +18,7 @@ from .logs import write_private
 from .schedule import status_summary
 
 KIND_LABELS = {
-    "conference_trip": "Conference trips", "cfp_submit": "Calls for papers", "service_request_lead": "Service requests",
+    "conference_prospecting": "Conference prospecting", "cfp_submit": "Calls for papers", "service_request_lead": "Service requests",
     "hiring_signal_outreach": "Hiring signals", "tool_outage": "Provider incidents", "outreach_window": "Outreach windows",
     "pain_content_idea": "Content ideas", "tooling_adopt": "Tooling", "tool_price_change": "Price changes",
     "tool_deprecation": "Deprecations", "local_meeting_suggestion": "Local meetings",

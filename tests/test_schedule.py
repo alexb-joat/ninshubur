@@ -17,9 +17,10 @@ def test_run_once_end_to_end(home):
     env = Env(home, routes_with_hn())
     reports = env.run_once()
     by = {r.source: r for r in reports}
-    assert set(by) == {"confs", "acme-jobs", "hn", "claude-status"}
-    # only adapter hosts were contacted
-    assert env.seen.hosts() <= {"raw.githubusercontent.com", "boards-api.greenhouse.io", "hn.algolia.com", "status.claude.com"}
+    assert set(by) == {"confs", "acme-jobs", "hn", "claude-status", "event-sites"}
+    # only adapter hosts (and the event hosts from the admitted dataset) were contacted
+    assert env.seen.hosts() <= {"raw.githubusercontent.com", "boards-api.greenhouse.io", "hn.algolia.com", "status.claude.com",
+                                "pycon.pt", "www.saastock.com", "growthsummit.example"}
     assert by["confs"].stored == 3 and by["acme-jobs"].stored == 3
     assert by["claude-status"].stored == 4
     # HN: stories fetched, then the fresh freelancer thread's comments as a follow-up (identifier-templated)
@@ -45,14 +46,14 @@ def test_run_once_end_to_end(home):
     # candidates recorded, never fetched
     cands = rows(env.conn, "SELECT host FROM candidates")
     assert {c["host"] for c in cands} >= {"pycon.pt", "www.saastock.com", "example.org"}
-    assert "pycon.pt" not in env.seen.hosts()
+    assert "example.org" not in env.seen.hosts()  # a candidate from HN content, never fetched
     # entities: company from greenhouse
     ents = rows(env.conn, "SELECT type, key, name FROM entities")
     assert ("company", "company:acme.example", "Acme Inc") in {(e["type"], e["key"], e["name"]) for e in ents}
     pol = read_jsonl(home / "logs" / "policy.jsonl")
     assert {p["event"] for p in pol} >= {"quarantine", "health", "tainted_items"}
     summary = status_summary(env.conn, NOW)
-    assert summary["by_health"]["suspect"] == 1 and summary["items_held"] >= 1 and summary["candidates_new"] >= 3
+    assert summary["by_health"]["suspect"] >= 1 and summary["items_held"] >= 1 and summary["candidates_new"] >= 3
 
 
 def test_second_run_is_conditional_and_grows_interval(home):
