@@ -26,6 +26,28 @@ THREE_YEARS = 3 * 365.25 * 86400
 # field reads a nested value. Nothing outside ``fields`` is ever read into a row.
 # ---------------------------------------------------------------------------------------------
 SCHEMAS: dict[str, dict] = {
+    "provider_model.v1": {
+        "max_items": 200,
+        "required": ["provider", "model_id", "page"],
+        "fields": {
+            "provider": {"type": "enum", "values": ["anthropic", "openai"]},
+            "model_id": {"type": "str", "max": 64, "pattern": r"^[a-z0-9][a-z0-9.-]{1,60}$"},
+            "page": {"type": "str", "max": 40, "pattern": r"^[a-z-]+$"},
+            "name": {"type": "str", "max": 80, "text": True},
+            "input_per_mtok": {"type": "float", "min": 0, "max": 10_000},
+            "output_per_mtok": {"type": "float", "min": 0, "max": 10_000},
+            "long_context_threshold": {"type": "int", "min": 1_000, "max": 100_000_000},
+            "long_context_input": {"type": "float", "min": 0, "max": 10_000},
+            "long_context_output": {"type": "float", "min": 0, "max": 10_000},
+            "context": {"type": "int", "min": 1_000, "max": 100_000_000},
+            "max_output": {"type": "int", "min": 100, "max": 100_000_000},
+            "status": {"type": "enum", "values": ["active", "legacy", "deprecated", "retired"]},
+            "retires_at": {"type": "str", "max": 60},
+            "deprecated_at": {"type": "str", "max": 60},
+            "efforts": {"type": "list_str", "max": 12, "max_items": 8},
+            "default_effort": {"type": "str", "max": 12, "pattern": r"^[a-z]+$"},
+        },
+    },
     "confs_tech.v1": {
         "max_items": 500,
         "required": ["name", "url", "startDate"],

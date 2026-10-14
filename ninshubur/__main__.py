@@ -20,6 +20,7 @@ from .config import ConfigError, SourceConfig, load_config
 from .db import connect, ledger_sum, one, rows
 from .envvars import load_dotenv
 from .export import export as export_files, parse_since, weekly_digests
+from .export_facts import export_provider_facts
 from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
 from .home import data_home, ensure_home
@@ -268,15 +269,24 @@ def _test_source(app: App, src: SourceConfig) -> tuple[list, dict]:
         return app.policy.admission_check(src.trust, spec, test, now=app.now()), test
     plan = plans[0]
     f = asyncio.run(app.fetcher.fetch(plan, src, spec))
+    # A probe must not count as a fetch: otherwise the first real run sees the page as unchanged (ETag /
+    # content hash) and never parses it. Forget the state the probe recorded.
+    app.conn.execute("DELETE FROM fetch_state WHERE key=?", (plan.key,))
+    app.conn.commit()
     codes = [x.code for x in f.findings]
     test.update(status=f.status, size=len(f.body), tls_ok="cert_error" not in codes, off_host_redirect="off_host_redirect" in codes,
                 content_type=f.headers.get("content-type"), robots_allowed=f.error != "refused:robots_disallow",
                 unauthenticated=spec.needs_key_env is None, max_bytes=plan.max_bytes, error=f.error, codes=codes)
     if f.status == 200 and not f.findings:
-        proj = run_projection(f, plan.schema or src.schema_id or spec.schema, app.now(), spec=spec)
+        # Parse exactly as a run would (the adapter's own parser, then its schema), so H4 measures the real
+        # extraction rather than a generic JSON projection that non-JSON sources cannot pass.
+        parsed = adapter.parse(src, f, app.now())
+        proj = parsed.projection or run_projection(f, plan.schema or src.schema_id or spec.schema, app.now(), spec=spec)
         test["field_validity"] = round(proj.field_validity, 3)
         test["rows"] = len(proj.rows)
         test["doc_findings"] = [x.code for x in proj.findings]
+        if parsed.notes:
+            test["notes"] = list(parsed.notes)
     else:
         test["field_validity"] = None
     return app.policy.admission_check(src.trust, spec, test, now=app.now()), test
@@ -415,6 +425,10 @@ def cmd_profiles(args, app: App) -> int:
 
 
 def cmd_export(args, app: App) -> int:
+    if args.what == "euboulia-facts":
+        path = export_provider_facts(app.conn, app.home, app.now(), out=Path(args.output) if args.output else None)
+        print(f"written {path}")
+        return 0
     statuses = tuple(x.strip() for x in args.status.split(",") if x.strip())
     if args.profile and args.profile not in app.profiles:
         print(f"unknown profile {args.profile!r}; known: {', '.join(app.profiles) or 'none'}", file=sys.stderr)
@@ -507,8 +521,8 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--outcome", required=True, choices=["won", "lost", "meeting", "reply", "none"])
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
-    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv) or items (csv) to feeds/")
-    ex.add_argument("what", choices=["digest", "suggestions", "items"])
+    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv) or euboulia-facts (json) to feeds/")
+    ex.add_argument("what", choices=["digest", "suggestions", "items", "euboulia-facts"])
     ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
     ex.add_argument("--profile")
     ex.add_argument("--status", default="new,accepted,held", help="comma list; default new,accepted,held")

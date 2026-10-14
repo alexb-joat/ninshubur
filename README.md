@@ -20,7 +20,7 @@ Three rules shape every module:
 ## Status
 
 Phase 1 (policy core, rules-only analysis): `confs_tech`, `greenhouse`, `hn`, `statuspage`
-adapters; builders `cfp_submit`, `conference_trip`, `service_request_lead`,
+adapters, plus `provider_docs` (LLM providers' model documentation, exported with `ninshubur export euboulia-facts` for the Euboulia extension); builders `cfp_submit`, `conference_trip`, `service_request_lead`,
 `hiring_signal_outreach`, `tool_outage`; ICS calendar sink; Markdown/HTML/CSV exports; CLI. No LLM calls yet.
 
 ## Quick start

@@ -71,6 +71,42 @@ sources:
       reviewed_at: 2026-10-12
       review_every_days: 90
 
+  # LLM provider documentation (Tier 0): feeds Euboulia's catalog. Only the pages hard-coded in the adapter
+  # are fetched; the ChatGPT help centre blocks automated readers and is left out on purpose.
+  provider-docs-anthropic:
+    adapter: provider_docs
+    params: {provider: anthropic}
+    trust:
+      tier: 0
+      owner: "Anthropic (platform.claude.com documentation)"
+      owner_url: https://platform.claude.com/docs
+      terms_url: https://www.anthropic.com/legal/consumer-terms
+      licence: "public documentation; robots.txt allows everything but /api/ (checked 2026-10-14)"
+      legal_basis: public_business_info
+      rate_limit: "4 pages, <= 1/day, ETag"
+      expected_content_type: text/markdown|text/plain
+      schema: provider_model.v1
+      reviewed_by: alex
+      reviewed_at: 2026-10-14
+      review_every_days: 90
+
+  provider-docs-openai:
+    adapter: provider_docs
+    params: {provider: openai, models: [gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5]}
+    trust:
+      tier: 0
+      owner: "OpenAI (developers.openai.com and learn.chatgpt.com documentation)"
+      owner_url: https://developers.openai.com/docs
+      terms_url: https://openai.com/policies/terms-of-use/
+      licence: "public documentation; robots.txt allows all (checked 2026-10-14)"
+      legal_basis: public_business_info
+      rate_limit: "one page per listed model plus one index page, <= 1/day, ETag"
+      expected_content_type: text/markdown|text/plain
+      schema: provider_model.v1
+      reviewed_by: alex
+      reviewed_at: 2026-10-14
+      review_every_days: 90
+
   # Disabled: status.claude.com's robots.txt says `Disallow: /api/` for all agents (checked 2026-10-13),
   # so `sources test` refuses it (H2). Kept as a template for status pages that allow /api/v2/.
   # claude-status:

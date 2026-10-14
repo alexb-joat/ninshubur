@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import os
 import sys
 from pathlib import Path
@@ -103,3 +105,10 @@ def test_package_has_no_subprocess_eval_pickle():
     for py in root.rglob("*.py"):
         text = py.read_text(encoding="utf-8")
         assert "subprocess" not in text and "pickle" not in text and "eval(" not in text, py
+
+
+def test_export_euboulia_facts(cli, home):
+    code, out = cli("export", "euboulia-facts")
+    assert code == 0 and "provider-facts.json" in out
+    data = json.loads((home / "feeds" / "provider-facts.json").read_text())
+    assert data["$schema"] == "provider-facts.v1" and data["providers"] == {}

@@ -120,7 +120,7 @@ def register(cls: type) -> type:
 
 
 def get_adapter(name: str) -> Adapter:
-    from . import confs_tech, greenhouse, hn, statuspage  # noqa: F401  (registration side effect)
+    from . import confs_tech, greenhouse, hn, provider_docs, statuspage  # noqa: F401  (registration side effect)
 
     try:
         return REGISTRY[name]()
@@ -129,6 +129,6 @@ def get_adapter(name: str) -> Adapter:
 
 
 def all_adapters() -> dict[str, type]:
-    from . import confs_tech, greenhouse, hn, statuspage  # noqa: F401
+    from . import confs_tech, greenhouse, hn, provider_docs, statuspage  # noqa: F401
 
     return dict(REGISTRY)
