@@ -270,3 +270,16 @@ def test_is_public_address():
     from ninshubur.fetch import is_public_address
     assert is_public_address("93.184.216.34") and is_public_address("2606:2800:220:1:248:1893:25c8:1946")
     assert not is_public_address("10.1.2.3") and not is_public_address("fe80::1") and not is_public_address("not-an-ip")
+
+
+def test_www_twin_redirect_is_followed_but_other_subdomains_are_not(home, policy):
+    routes = {(HOST, "/robots.txt"): {"status": 404, "body": ""}, ("www." + HOST, "/robots.txt"): {"status": 404, "body": ""},
+              (HOST, "/a"): {"status": 308, "headers": {"Location": f"https://www.{HOST}/a"}, "body": ""},
+              ("www." + HOST, "/a"): {"body": {"twin": True}},
+              (HOST, "/b"): {"status": 301, "headers": {"Location": f"https://cdn.{HOST}/b"}, "body": ""},
+              ("cdn." + HOST, "*"): {"body": {"never": True}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/a", key="k"), SRC, SPEC))
+    assert r.ok and r.json() == {"twin": True} and r.final_url == f"https://www.{HOST}/a"
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/b", key="k2"), SRC, SPEC))
+    assert [x.code for x in r.findings] == ["off_host_redirect"] and "cdn." + HOST not in seen.hosts()

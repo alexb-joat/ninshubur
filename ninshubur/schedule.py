@@ -158,6 +158,14 @@ class Scheduler:
                 if any(x.severity == "integrity" for x in f.findings):
                     if spec.dynamic_hosts:
                         report.errors += 1
+                        self.ingestor.policy_log.write({"event": "event_flagged", "source": name, "url": plan.log_url or plan.url,
+                                                        "codes": list(codes), "detail": [x.detail for x in f.findings][:3]})
+                        for x in f.findings:
+                            if x.code == "off_host_redirect" and x.detail and "." in x.detail and not self.policy.host_denied(x.detail):
+                                self.conn.execute(
+                                    """INSERT INTO candidates(host, example_url, found_in_source, reason, count, first_seen, last_seen)
+                                       VALUES (?,?,?,?,1,?,?) ON CONFLICT(host, found_in_source) DO UPDATE SET count=count+1, last_seen=excluded.last_seen""",
+                                    (x.detail.lower(), plan.url, name, "event site moved to another host", now, now))
                         if not dry_run:
                             report.ingests.append(self.ingestor.ingest(src, spec, _flagged(f), f))
                         self._note(adapter, state, plan, ok=False, codes=codes, now=now)

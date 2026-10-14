@@ -206,10 +206,10 @@ class Suggester:
             start, end = d["event_start"]
             end = end or start
             attrs = uj(it["attrs"])
-            if now + 7 * DAY <= start <= now + 90 * DAY:
+            if now <= start <= now + 90 * DAY:
                 phase = "upcoming"
-                w = timing.Window(start - 28 * DAY, start - 7 * DAY, start - 7 * DAY)
-                expires = start
+                w = timing.Window(max(now, start - 28 * DAY), max(now, start - 7 * DAY), max(now + DAY, start - 7 * DAY))
+                expires = end + DAY
             elif end < now and now - end <= 180 * DAY:
                 phase = "held"
                 w = timing.Window(now, now + 21 * DAY, None)

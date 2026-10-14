@@ -216,6 +216,14 @@ def check_url(url: str, *, allow_http_local: bool = False, allow_punycode: bool 
     return None
 
 
+def same_site(a: str, b: str) -> bool:
+    """True when two hosts are the same site modulo a leading ``www.`` (the one redirect shape that is
+    both ubiquitous and harmless). Nothing else counts: a subdomain is a different site here."""
+    a, b = a.lower(), b.lower()
+    strip = lambda h: h[4:] if h.startswith("www.") else h  # noqa: E731
+    return bool(a) and strip(a) == strip(b)
+
+
 def host_of(url: str) -> str:
     try:
         return (urlsplit(url).hostname or "").lower()
@@ -332,7 +340,7 @@ class Policy:
         host, base_host = host_of(url), host_of(base_url)
         if self.host_denied(host):
             return Refusal("host_denied", f"{host} is in denied_hosts")
-        if dl.get("same_host_only", True) and host != base_host:
+        if dl.get("same_host_only", True) and not same_site(host, base_host):
             return Refusal("derived_off_host", f"{host} is not {base_host}")
         parts = urlsplit(url)
         if parts.fragment:

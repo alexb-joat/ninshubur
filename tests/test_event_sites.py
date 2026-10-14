@@ -61,7 +61,7 @@ def test_parse_home_follows_same_host_term_links_only():
     plan = FetchPlan(url="https://pycon.pt/2026", key="event_sites:ev0:home", purpose="event homepage: PyCon")
     res = a.parse(SRC, fetched(plan, (SAMPLES / "event_sites" / "home.html").read_bytes()), NOW)
     urls = [f.url for f in res.followups]
-    assert urls == ["https://pycon.pt/speakers/", "https://pycon.pt/sponsors", "https://pycon.pt/agenda?day=1"]
+    assert urls == ["https://pycon.pt/sponsors", "https://pycon.pt/speakers/", "https://pycon.pt/agenda?day=1"]  # paying companies first
     assert all(f.derived_from == "https://pycon.pt/2026" and f.key.startswith("event_sites:ev0:") for f in res.followups)
     assert ("espc.example", "https://espc.example/speakers", "event subpage on another host") in res.candidates
     assert res.items[0].kind == "prospect_page" and res.items[0].attrs["event_uid"] == "ev0" and res.items[0].attrs["page"] == 0
@@ -169,3 +169,18 @@ def test_injection_row_quarantined_through_pipeline(home):
     assert one(env.conn, "SELECT COUNT(*) AS n FROM entities WHERE name='Honest Person'")["n"] == 1
     held_page = one(env.conn, "SELECT held, tainted FROM items WHERE kind='prospect_page' AND url='https://pycon.pt/speakers/'")
     assert held_page["tainted"] == 1
+
+
+def test_followups_prefer_list_pages_and_sponsors_first():
+    a = get_adapter("event_sites")
+    html = b"""<html><body>
+    <a href="/speaker/aibda/alice">Alice</a><a href="/speaker/aibda/bob">Bob</a><a href="/speaker/aibda/carol">Carol</a>
+    <a href="/aibda/speakers">Speakers</a><a href="/aibda/agenda">Agenda</a><a href="/aibda/sponsors">Sponsors</a>
+    <a href="https://www.ev0.example/aibda/exhibitors">Exhibitors (www twin)</a><a href="/aibda/tickets">Tickets</a>
+    <a href="https://other.example/sponsors">Sponsors elsewhere</a></body></html>"""
+    plan = FetchPlan(url="https://ev0.example/aibda", key="event_sites:ev0:home", purpose="event homepage: AIBDA")
+    res = a.parse(SourceConfig(name="e", adapter="event_sites", params={"pages_per_event": 3}, trust={"legal_basis": "public_business_info"}),
+                  fetched(plan, html), NOW)
+    urls = [f.url for f in res.followups]
+    assert urls == ["https://ev0.example/aibda/sponsors", "https://www.ev0.example/aibda/exhibitors", "https://ev0.example/aibda/speakers"]
+    assert ("other.example", "https://other.example/sponsors", "event subpage on another host") in res.candidates

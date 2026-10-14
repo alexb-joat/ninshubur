@@ -26,7 +26,7 @@ from .adapters.base import AdapterSpec, FetchPlan, Fetched
 from .config import Config, SourceConfig
 from .db import ledger_add, ledger_sum
 from .logs import JsonlLog
-from .policy import Policy, Refusal, check_url, host_of
+from .policy import Policy, Refusal, check_url, host_of, same_site
 
 HARD_CAP = 8_000_000
 ROBOTS_CAP = 512_000
@@ -247,9 +247,17 @@ class Fetcher:
                 hops += 1
                 loc = resp.headers.get("location", "")
                 target = urljoin(url, loc)
-                if hops > self.max_hops or check_url(target) or host_of(target) != host:
+                if hops > self.max_hops or check_url(target) or not same_site(host_of(target), host):
                     result.findings.append(detectors.Finding("integrity", "off_host_redirect", host_of(target) or loc[:60]))
                     break
+                if host_of(target) != host:  # www. <-> apex twin: re-check the gate for the twin, then continue there
+                    twin = host_of(target)
+                    r2 = self.policy.allow_fetch(target, spec_hosts=set(spec.hosts) | {twin}, method=plan.method, allowed_methods=spec.methods,
+                                                 source_health=health, review_due_at=review_due_at, now=now, extra_hosts=extra_hosts)
+                    if r2 or self.policy.host_denied(twin) or (self.refuse_private and self._private_address(twin)):
+                        result.findings.append(detectors.Finding("integrity", "off_host_redirect", twin))
+                        break
+                    host = twin
                 url = target
                 result.final_url = url
                 continue

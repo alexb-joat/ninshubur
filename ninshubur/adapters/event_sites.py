@@ -18,12 +18,14 @@ from ..config import SourceConfig
 from ..items import EntityRef, Item, apply_taint, item_uid
 from ..parse.htmltree import parse_html
 from ..parse.people import extract
-from ..policy import check_url, host_of
+from ..policy import check_url, host_of, same_site
 from ..schemas import get_schema, project
 from .base import AdapterSpec, FetchPlan, Fetched, ParseResult, register
 
 DAY = 86400.0
 PATH_TERMS = ("speaker", "sponsor", "exhibitor", "partner", "lineup", "agenda")
+# follow-up priority: the companies that paid first, then the people, then schedules
+PRIORITY = ("sponsor", "exhibitor", "partner", "speaker", "lineup", "agenda")
 _TERM_RE = re.compile("|".join(PATH_TERMS), re.I)
 PERSON_ROLES = {"speaker", "host", "panelist"}
 
@@ -155,29 +157,41 @@ class EventSites:
 
         if is_home:
             max_pages = int(src.params.get("pages_per_event", 4))
+            cands: list[tuple[tuple, str, str]] = []
             seen: set[str] = set()
-            n = 0
             for href, text, _ in doc.links():
-                if n >= max_pages:
-                    break
                 target = urljoin(page_url, href.strip())
                 if "#" in target:
                     target = target.split("#", 1)[0]
                 if not target or target in seen or target.rstrip("/") == page_url.rstrip("/"):
                     continue
+                seen.add(target)
                 if check_url(target):
                     continue
-                if host_of(target) != page_host:
+                if not same_site(host_of(target), page_host):
                     if _TERM_RE.search(href) or _TERM_RE.search(text):
                         res.candidates.append((host_of(target), target, "event subpage on another host"))
                     continue
-                if not (_TERM_RE.search(urlsplit(target).path) or _TERM_RE.search(text)):
+                path = urlsplit(target).path
+                hay = (path + " " + (text or "")).lower()
+                pri = next((i for i, t in enumerate(PRIORITY) if t in hay), None)
+                if pri is None:
                     continue
-                seen.add(target)
+                # one link per path prefix (the first two segments): the /speakers/ list, not thirty /speaker/<name> pages
+                prefix = "/".join(path.strip("/").split("/")[:2])
+                cands.append(((pri, path.count("/"), len(path)), prefix, target))
+            cands.sort(key=lambda c: c[0])
+            used_prefix: set[str] = set()
+            n = 0
+            for rank, prefix, target in cands:
+                if n >= max_pages or prefix in used_prefix:
+                    continue
+                used_prefix.add(prefix)
                 n += 1
+                text = next((t for h, t, _ in doc.links() if urljoin(page_url, h.strip()).split("#", 1)[0] == target), "")
                 res.followups.append(FetchPlan(url=target, key=f"event_sites:{uid}:{n}", max_bytes=2_000_000,
                                                expected_content_type="text/html", purpose=f"{(text or 'page')[:40]} of {fetched.plan.purpose[16:60]}",
-                                               derived_from=page_url, anchor_text=text[:80]))
+                                               derived_from=page_url, anchor_text=(text or "")[:80]))
         return res
 
     # -- per-event state (called by the scheduler) ---------------------------------------------------
