@@ -19,6 +19,7 @@ from .analyze.suggest import Suggester
 from .config import ConfigError, SourceConfig, load_config
 from .db import connect, ledger_sum, one, rows
 from .envvars import load_dotenv
+from .export import export as export_files, parse_since, weekly_digests
 from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
 from .home import data_home, ensure_home
@@ -103,6 +104,13 @@ def cmd_run(args, app: App) -> int:
         app.fetcher = Fetcher(app.conn, app.policy, app.cfg, app.home, transport=replay_transport(Path(args.replay)))
         app.scheduler.fetcher = app.fetcher
     if args.daemon:
+        def after_tick() -> None:
+            app.suggester.build_all()
+            for sink in app.sinks:
+                sink.write_all()
+            for path in weekly_digests(app.conn, app.suggester, app.home, list(app.profiles), app.now(), app.tz):
+                print(f"weekly digest written: {path}")
+        app.scheduler.after_tick = after_tick
         print(f"daemon: tick every {app.cfg.get('scheduler', 'tick_s')}s; Ctrl-C to stop")
         try:
             asyncio.run(app.scheduler.daemon())
@@ -354,6 +362,14 @@ def cmd_sources_review(args, app: App) -> int:
 
 
 def cmd_sources_candidates(args, app: App) -> int:
+    if args.reject or args.reject_host:
+        if args.reject:
+            n = app.conn.execute("UPDATE candidates SET status='rejected' WHERE id=? AND status='new'", (args.reject,)).rowcount
+        else:
+            n = app.conn.execute("UPDATE candidates SET status='rejected' WHERE status='new' AND (host=? OR host LIKE ?)",
+                                 (args.reject_host.lower(), "%." + args.reject_host.lower())).rowcount
+        print(f"rejected {n} candidate(s)")
+        return 0
     cs = rows(app.conn, "SELECT * FROM candidates WHERE status='new' ORDER BY count DESC, last_seen DESC LIMIT ?", (args.top,))
     if not cs:
         print("no new candidates")
@@ -386,7 +402,33 @@ def cmd_profiles(args, app: App) -> int:
         return 1
     for p in app.profiles.values():
         print(f"{p.name}: {len(p.keywords)} keywords, {len(p.pains)} pains, cities {', '.join(p.cities) or '-'}, "
-              f"home {p.home_base or '-'}, targets {len(p.target_companies)}, tools {len(p.tools_in_use)}, thresholds {p.thresholds}")
+              f"home {p.home_base or '-'}/{p.home_country or '-'}, targets {len(p.target_companies)}, tools {len(p.tools_in_use)}, "
+              f"thresholds {p.thresholds}")
+        if args.pcmd == "check":
+            for kind, why in p.builders_available().items():
+                print(f"    {kind:<24} {why}")
+            if not p.home_country and p.countries:
+                print("    warning: home_country unset; every trip outside the home city is costed as abroad")
+            kinds = {get_adapter(src.adapter).spec.kind for src in app.cfg.sources.values() if src.enabled}
+            print(f"    admitted source kinds: {', '.join(sorted(kinds)) or 'none'}")
+    return 0
+
+
+def cmd_export(args, app: App) -> int:
+    statuses = tuple(x.strip() for x in args.status.split(",") if x.strip())
+    if args.profile and args.profile not in app.profiles:
+        print(f"unknown profile {args.profile!r}; known: {', '.join(app.profiles) or 'none'}", file=sys.stderr)
+        return 2
+    try:
+        path = export_files(app.conn, app.suggester, app.home, what=args.what, fmt=args.format, profile=args.profile,
+                            statuses=statuses, since=parse_since(args.since, app.now()), now=app.now(), tz=app.tz,
+                            out=Path(args.output) if args.output else None)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    print(f"written {path}")
+    if args.format == "html":
+        print("open it in a browser and use Print to PDF for a PDF copy")
     return 0
 
 
@@ -432,6 +474,8 @@ def build_parser() -> argparse.ArgumentParser:
     rv.set_defaults(fn=cmd_sources_review)
     c = ss.add_parser("candidates", help="hosts discovered in content (never fetched)")
     c.add_argument("--top", type=int, default=30)
+    c.add_argument("--reject", type=int, metavar="ID", help="mark one candidate as rejected")
+    c.add_argument("--reject-host", metavar="HOST", help="reject every new candidate on this host (and subdomains)")
     c.set_defaults(fn=cmd_sources_candidates)
     for name in ("enable", "disable"):
         e = ss.add_parser(name)
@@ -463,6 +507,14 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--outcome", required=True, choices=["won", "lost", "meeting", "reply", "none"])
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
+    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv) or items (csv) to feeds/")
+    ex.add_argument("what", choices=["digest", "suggestions", "items"])
+    ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
+    ex.add_argument("--profile")
+    ex.add_argument("--status", default="new,accepted,held", help="comma list; default new,accepted,held")
+    ex.add_argument("--since", metavar="7d", help="only suggestions/items updated in the last N d/w/h")
+    ex.add_argument("-o", "--output", help="file path (default: feeds/<what>-<week>[-profile].<fmt>)")
+    ex.set_defaults(fn=cmd_export)
     sub.add_parser("status", help="source health, held and quarantined counts").set_defaults(fn=cmd_status)
     sub.add_parser("budget", help="daily budgets and per-source stats").set_defaults(fn=cmd_budget)
     return p

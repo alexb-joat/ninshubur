@@ -44,6 +44,13 @@ def main() -> int:
         run(home, "budget")
         run(home, "suggest", "--held")
         run(home, "suggest", "--plan", "45m")
+        run(home, "profiles", "check")
+        for fmt in ("md", "html", "csv"):
+            out = run(home, "export", "digest", "--format", fmt, "--profile", "leadget-internal")
+            path = Path(out.split("written ", 1)[1].splitlines()[0].strip())
+            assert path.exists() and path.stat().st_size > 200, path
+        run(home, "export", "items", "--format", "csv")
+        run(home, "export", "suggestions", "--format", "csv", "--status", "new,accepted,held,done")
         # second run: nothing due, no network
         out = run(home, "run", "--replay", str(SAMPLES))
         assert "nothing due" in out

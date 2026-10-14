@@ -51,6 +51,21 @@ def test_check_and_replay_round_trip(cli, home):
     assert code == 0 and "bytes today" in out
     code, out = cli("sources", "candidates")
     assert code == 0 and "pycon.pt" in out
+    code, out = cli("sources", "candidates", "--reject-host", "pycon.pt")
+    assert code == 0 and "rejected 1" in out
+    code, out = cli("sources", "candidates")
+    assert "pycon.pt" not in out
+    code, out = cli("profiles", "check")
+    assert code == 0 and "conference_trip" in out and "ok" in out
+    for fmt, marker in (("md", "# Ninshubur digest"), ("html", "<!doctype html>"), ("csv", "id,kind,profile")):
+        code, out = cli("export", "digest", "--format", fmt, "--profile", "leadget-eu")
+        assert code == 0 and "written" in out
+        path = Path(out.split("written ", 1)[1].splitlines()[0].strip())
+        assert path.read_text(encoding="utf-8-sig").startswith(marker), fmt
+    code, out = cli("export", "items", "--format", "md")
+    assert code == 2 and "csv only" in out
+    code, out = cli("export", "digest", "--profile", "nope")
+    assert code == 2
     code, out = cli("sources", "review", "hn")
     assert code == 0 and "prompt_injection" in out
     code, out = cli("sources", "review", "hn", "--clear")

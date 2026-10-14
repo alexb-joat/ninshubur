@@ -66,6 +66,7 @@ class Scheduler:
         self.jitter = float(cfg.get("scheduler", "jitter", default=0.10))
         self.max_concurrent = int(cfg.get("scheduler", "max_concurrent_sources", default=4))
         self.adapters: dict[str, Adapter] = {}
+        self.after_tick = None  # optional callable run after each successful tick (digests, sinks)
 
     def adapter(self, name: str) -> Adapter:
         if name not in self.adapters:
@@ -115,6 +116,7 @@ class Scheduler:
             report.note = "adapter produced no plans (check params)"
         integrity = False
         broken_hits = 0
+        seen_keys = {p.key for p in queue}
         for round_no in range(MAX_FOLLOWUP_ROUNDS + 1):
             nxt: list[FetchPlan] = []
             for plan in queue:
@@ -147,7 +149,10 @@ class Scheduler:
                 parsed = adapter.parse(src, f, now)
                 report.ingests.append(self.ingestor.ingest(src, spec, parsed, f))
                 if round_no < MAX_FOLLOWUP_ROUNDS:
-                    nxt.extend(p for p in parsed.followups if p.key != plan.key)
+                    for fp in parsed.followups:
+                        if fp.key not in seen_keys:
+                            seen_keys.add(fp.key)
+                            nxt.append(fp)
             if integrity or not nxt:
                 break
             queue = nxt
@@ -203,6 +208,8 @@ class Scheduler:
             try:
                 await self.run_once()
                 self.ingestor.decay()
+                if self.after_tick:
+                    self.after_tick()
             except Exception as e:  # noqa: BLE001 - a daemon must survive a bad tick
                 self.ingestor.policy_log.write({"event": "tick_error", "error": type(e).__name__, "detail": str(e)[:200]})
             try:

@@ -164,7 +164,7 @@ class Suggester:
             conf = value.confidence(self._reputation(it), 1.0, 1, tier, self.policy)
             relevance = max(0.6 if topic_hit else 0.0, 0.5 if geo_hit else 0.0, lex)
             est = value.estimate("cfp_submit", cfg=self.cfg, policy=self.policy, tier=tier, profile_weight=profile.weight("cfp_submit"),
-                                 relevance=relevance, conf=conf, timing_factor=w.factor(now), minutes=120,
+                                 relevance=relevance, conf=conf, timing_factor=w.factor(now), minutes=value.minutes_for("cfp_submit", self.cfg, 120),
                                  calibration=self._calibration("cfp_submit"))
             reasons = [f"CFP closes {_d(deadline)} ({(deadline - now) / DAY:.0f} days)",
                        f"match: {'topic ' + str(attrs.get('topic')) if topic_hit else ''}{' city/country' if geo_hit else ''}{' keywords ' + ', '.join(matched) if matched else ''}".strip(),
@@ -192,23 +192,28 @@ class Suggester:
             attrs = uj(it["attrs"])
             if attrs.get("online") or not (now < start <= now + 60 * DAY):
                 continue
-            if not (profile.matches_city(attrs.get("city")) or profile.matches_country(attrs.get("country"))):
+            city_hit = profile.matches_city(attrs.get("city"))
+            country_hit = profile.matches_country(attrs.get("country"))
+            topic_hit = str(attrs.get("topic", "")).lower() in {t.lower() for t in profile.topics}
+            if not (city_hit or country_hit or topic_hit):
                 continue
             w = timing.event_trip(start, now)
             tier = self._tier(it)
             conf = value.confidence(self._reputation(it), 1.0 if attrs.get("city") else 0.7, 1, tier, self.policy)
-            travel = value.travel_band(profile.home_base, attrs.get("city"), None, attrs.get("country"))
-            relevance = 0.8 if profile.matches_city(attrs.get("city")) else 0.55
+            travel = value.travel_band(profile.home_base, attrs.get("city"), profile.home_country, attrs.get("country"), self.cfg)
+            relevance = 0.8 if city_hit else (0.55 if country_hit else 0.4)
             est = value.estimate("conference_trip", cfg=self.cfg, policy=self.policy, tier=tier, profile_weight=profile.weight("conference_trip"),
-                                 relevance=relevance, conf=conf, timing_factor=w.factor(now), minutes=240, travel_usd=travel,
+                                 relevance=relevance, conf=conf, timing_factor=w.factor(now),
+                                 minutes=value.minutes_for("conference_trip", self.cfg, 240), travel_usd=travel,
                                  calibration=self._calibration("conference_trip"))
             s = Suggestion(kind="conference_trip", profile=profile.name,
                            title=f"Attend {it['title']} in {attrs.get('city') or attrs.get('country')} ({_d(start)})",
                            steps=[f"Shortlist prospects in {attrs.get('city') or attrs.get('country')} with titles {', '.join(profile.titles[:3]) or 'from profile'}",
                                   f"Decide and book before {_d(w.decide_by or w.deadline or start)}",
                                   f"Propose three meeting slots between {_d(w.start)} and {_d(w.end)} in local business hours"],
-                           reasons=[f"{it['title']} starts {_d(start)} in {attrs.get('city')}, a profile city" if profile.matches_city(attrs.get("city"))
-                                    else f"{it['title']} is in {attrs.get('country')}, a profile country", est.formula],
+                           reasons=[f"{it['title']} starts {_d(start)} in {attrs.get('city')}, a profile city" if city_hit
+                                    else (f"{it['title']} is in {attrs.get('country')}, a profile country" if country_hit
+                                          else f"{it['title']} is on profile topic {attrs.get('topic')} (outside profile geos)"), est.formula],
                            evidence=[_evidence(it, self.source(it["source"]), {"name": it["title"], "startDate": _d(start), "endDate": _d(end) if end else None,
                                                                                 "city": attrs.get("city"), "country": attrs.get("country")})],
                            confidence=conf, est_value=est.value, est_cost=est.cost, cost_parts=est.cost_parts, deadline=w.deadline,
@@ -226,7 +231,8 @@ class Suggester:
             conf = value.confidence(self._reputation(it), 0.8, 1, tier, self.policy)
             est = value.estimate("service_request_lead", cfg=self.cfg, policy=self.policy, tier=tier,
                                  profile_weight=profile.weight("service_request_lead"), relevance=r.score, conf=conf,
-                                 timing_factor=w.factor(now), minutes=10, calibration=self._calibration("service_request_lead"))
+                                 timing_factor=w.factor(now), minutes=value.minutes_for("service_request_lead", self.cfg, 10),
+                                 calibration=self._calibration("service_request_lead"))
             attrs = uj(it["attrs"])
             s = Suggestion(kind="service_request_lead", profile=profile.name, title=f"Reply to a request: {it['title'][:70]}",
                            steps=["Read the post and reply only through the contact method given in the post itself",
@@ -247,7 +253,8 @@ class Suggester:
         out = []
         for it in self._items("hiring", now - 30 * DAY):
             attrs = uj(it["attrs"])
-            company = profile.company_by_board(str(attrs.get("board", ""))) or profile.company_by_key(f"company:{attrs.get('company', '')}")
+            company = (profile.company_by_board(str(attrs.get("board", ""))) or profile.company_by_key(f"company:{attrs.get('company', '')}")
+                       or profile.company_by_name(attrs.get("company")))
             lex, matched, negatives = rel.lexical(it["title"], profile)
             title_hit = any(t.lower() in it["title"].lower() for t in profile.titles)
             if not (company or lex > 0 or title_hit) or negatives:
@@ -259,7 +266,8 @@ class Suggester:
             relevance = max(0.75 if company else 0.0, lex, 0.6 if title_hit else 0.0)
             est = value.estimate("hiring_signal_outreach", cfg=self.cfg, policy=self.policy, tier=tier,
                                  profile_weight=profile.weight("hiring_signal_outreach"), relevance=relevance, conf=conf,
-                                 timing_factor=w.factor(now), minutes=15, calibration=self._calibration("hiring_signal_outreach"))
+                                 timing_factor=w.factor(now), minutes=value.minutes_for("hiring_signal_outreach", self.cfg, 15),
+                                 calibration=self._calibration("hiring_signal_outreach"))
             name = (company or {}).get("name") or attrs.get("company") or attrs.get("board")
             s = Suggestion(kind="hiring_signal_outreach", profile=profile.name, title=f"{name} is hiring: {it['title']}",
                            steps=[f"Reference the posting ({it['url']}) and what the hire implies about their pipeline",
@@ -291,7 +299,8 @@ class Suggester:
             tier = self._tier(it)
             conf = value.confidence(self._reputation(it), 1.0, 1, tier, self.policy)
             est = value.estimate("tool_outage", cfg=self.cfg, policy=self.policy, tier=tier, profile_weight=profile.weight("tool_outage"),
-                                 relevance=1.0, conf=conf, timing_factor=1.0, minutes=0, calibration=self._calibration("tool_outage"))
+                                 relevance=1.0, conf=conf, timing_factor=1.0, minutes=value.minutes_for("tool_outage", self.cfg, 0),
+                                 calibration=self._calibration("tool_outage"))
             started = self._dates(it).get("incident_started", (it.get("published_at") or now, None))[0]
             s = Suggestion(kind="tool_outage", profile=profile.name, title=f"{provider} incident: {it['title']}",
                            steps=["Pause work that depends on this provider or switch to the configured fallback",

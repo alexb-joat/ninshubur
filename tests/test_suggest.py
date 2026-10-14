@@ -164,3 +164,46 @@ def test_corroboration_hold_for_tier2_single_source(home):
     sug2 = Suggester(env.conn, env.policy, env.cfg, load_profiles(home), now=env.clock.now)
     built = [s for s in sug2.build_service_request_lead(list(sug2.profiles.values())[0])]
     assert built and all(s.status == "held" and s.held_reason == "needs_corroboration" for s in built if s.est_value > 300)
+
+
+def test_costs_from_config_and_home_country(home):
+    env, sug = build_env(home)
+    env.cfg.data["costs"] = {"travel_same_city_usd": 0, "travel_same_country_usd": 100, "travel_abroad_usd": 999,
+                             "minutes": {"conference_trip": 60}}
+    profiles = load_profiles(home)
+    p = list(profiles.values())[0]
+    p.home_country = "Ireland"  # Dublin is now a domestic trip
+    sug2 = Suggester(env.conn, env.policy, env.cfg, profiles, now=env.clock.now)
+    trips = {s.title: s for s in sug2.build_conference_trip(p)}
+    dublin = next(s for t, s in trips.items() if "Dublin" in t)
+    lisbon = next(s for t, s in trips.items() if "Lisbon" in t)
+    assert dublin.cost_parts["travel_usd"] == 100 and dublin.cost_parts["human_minutes"] == 60
+    assert lisbon.cost_parts["travel_usd"] == 0 and lisbon.est_cost == pytest.approx(60)
+    assert "60 min" in dublin.reasons[-1]
+
+
+def test_topic_only_trip_ranks_below_geo(home):
+    env, sug = build_env(home)
+    profiles = load_profiles(home)
+    p = list(profiles.values())[0]
+    p.cities, p.countries, p.topics = [], [], ["general"]
+    sug2 = Suggester(env.conn, env.policy, env.cfg, profiles, now=env.clock.now)
+    trips = sug2.build_conference_trip(p)
+    assert trips and all("profile topic general" in s.reasons[0] for s in trips)
+
+
+def test_hn_hiring_comment_matches_target_company_by_name(home):
+    from tests.conftest import DEFAULT_SOURCES, hn_router, load_sample
+    write_config(home, {"hn": DEFAULT_SOURCES["hn"]})
+    write_profiles(home)
+    routes = {("hn.algolia.com", "/robots.txt"): {"status": 404, "body": ""},
+              ("hn.algolia.com", "/api/v1/search_by_date"): hn_router(load_sample("hn/whoishiring_stories.json"), load_sample("hn/whoishiring_comments.json"))}
+    env = Env(home, routes)
+    env.run_once()
+    sug2 = Suggester(env.conn, env.policy, env.cfg, load_profiles(home), now=env.clock.now)
+    built = sug2.build_all()
+    hires = [s for s in built if s.kind == "hiring_signal_outreach"]
+    acme = next(s for s in hires if "Acme Inc" in s.title)
+    assert acme.reasons[0] == "target company Acme Inc" and acme.evidence[0]["tier"] == 3
+    assert acme.status == "held"  # the thread had an injection comment -> source suspect; nothing from it is actionable yet
+    assert not any("Evil Corp" in s.title for s in built)

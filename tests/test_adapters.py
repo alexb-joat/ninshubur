@@ -60,8 +60,8 @@ def test_hn_stories_followups_from_ids_only():
     a = get_adapter("hn")
     src = SourceConfig(name="hn", adapter="hn", params={"show_hn_queries": ["lead gen", "<bad>"]}, trust={"legal_basis": "public_business_info"})
     plans = a.plan(src, {}, NOW)
-    assert [p.key for p in plans] == ["hn:whoishiring:freelancer", "hn:show:lead gen"]
-    res = a.parse(src, fetched(plans[0], load_sample("hn/freelancer_stories.json")), NOW)
+    assert [p.key for p in plans] == ["hn:whoishiring:latest", "hn:whoishiring:freelancer", "hn:show:lead gen"]
+    res = a.parse(src, fetched(plans[1], load_sample("hn/freelancer_stories.json")), NOW)
     assert len(res.items) == 3 and all(i.kind == "thread" and i.tier == 2 for i in res.items)
     assert [f.key for f in res.followups] == ["hn:comments:45400001"]  # only the fresh freelancer thread
     assert res.followups[0].url == "https://hn.algolia.com/api/v1/search_by_date?tags=comment,story_45400001&hitsPerPage=200&page=0"
@@ -118,3 +118,34 @@ def test_adapter_never_fetches_urls_from_content(name):
     for plan in a.plan(src, {}, NOW):
         from ninshubur.policy import host_of
         assert host_of(plan.url) in a.spec.hosts
+
+
+def test_hn_who_is_hiring_threads_and_comments():
+    a = get_adapter("hn")
+    src = SourceConfig(name="hn", adapter="hn", trust={"legal_basis": "public_business_info"})
+    plan = a.plan(src, {}, NOW)[0]
+    assert plan.key == "hn:whoishiring:latest" and "query=" not in plan.url
+    res = a.parse(src, fetched(plan, load_sample("hn/whoishiring_stories.json")), NOW)
+    # October + September "Who is hiring?" are fresh (< 45 d); "Who wants to be hired?" skipped; 2025 freelancer thread stale
+    assert [f.key for f in res.followups] == ["hn:comments:49922569", "hn:comments:49522897"]
+    cplan = FetchPlan(url="https://hn.algolia.com/api/v1/search_by_date?tags=comment,story_49922569", key="hn:comments:49922569", schema="hn_comment.v1")
+    res = a.parse(src, fetched(cplan, load_sample("hn/whoishiring_comments.json")), NOW)
+    by = {i.attrs["author"]: i for i in res.items}
+    acme = by["acme_cto"]
+    assert acme.kind == "hiring" and acme.attrs["company"] == "Acme Inc" and acme.attrs["board"] == "acme-inc"
+    assert set(acme.attrs["roles"]) >= {"sdr", "account executive", "sales"} and acme.entities[0].key == "company:acme-inc"
+    assert acme.tier == 3 and not acme.tainted and acme.url.endswith("49922701")
+    assert by["nimbus_hr"].kind == "hiring" and "growth" in by["nimbus_hr"].attrs["roles"]
+    assert by["quietlabs"].kind == "social" and by["quietlabs"].attrs["classification"] == "OTHER"  # engineer role: no signal
+    assert by["spammer"].taint_severity == "high" and "prompt_injection" in by["spammer"].taint_codes
+    assert by["ops_d"].kind == "hiring" and by["ops_d"].taint_severity == "medium"
+    assert by["x"].kind == "social"
+    assert not any("@" in (i.attrs.get("company") or "") for i in res.items)  # no emails extracted
+
+
+def test_company_of():
+    from ninshubur.adapters.hn import company_of
+    assert company_of("Acme Inc | SDR | Lisbon") == "Acme Inc"
+    assert company_of("no pipes here") is None
+    assert company_of("We are a small team looking for help with our sales process and more | SDR") is None
+    assert company_of("Acme <b>Inc</b>​ | SDR") == "Acme Inc"

@@ -30,6 +30,7 @@ class Profile:
     thresholds: dict[str, float] = field(default_factory=lambda: {"relevance": 0.55, "tier_b": 0.70})
     tiers: dict[str, bool] = field(default_factory=lambda: {"b": False, "c": False})
     home_base: str | None = None
+    home_country: str | None = None
     target_companies: list[dict] = field(default_factory=list)
     tools_in_use: list[dict] = field(default_factory=list)
     weights: dict[str, float] = field(default_factory=dict)
@@ -55,6 +56,31 @@ class Profile:
             if key in (f"company:{c.get('domain')}", f"company:{c.get('greenhouse')}", f"company:{c.get('lever')}"):
                 return c
         return None
+
+    def company_by_name(self, name: str | None) -> dict | None:
+        if not name:
+            return None
+        n = name.strip().lower()
+        for c in self.target_companies:
+            cn = str(c.get("name") or "").strip().lower()
+            if cn and (cn == n or cn in n or n in cn):
+                return c
+        return None
+
+    def builders_available(self) -> dict[str, str]:
+        """Which suggestion kinds this profile can feed, and why not otherwise (for `profiles check`)."""
+        out = {}
+        out["conference_trip"] = "ok" if (self.cities or self.countries or self.topics) else "needs geos.cities/countries or topics"
+        out["cfp_submit"] = "ok" if (self.topics or self.cities or self.countries or self.keywords) else "needs topics, geos or keywords"
+        out["service_request_lead"] = "ok" if (self.keywords or self.pains) else "needs keywords or pains"
+        if self.target_companies:
+            out["hiring_signal_outreach"] = "ok"
+        elif self.titles or self.keywords:
+            out["hiring_signal_outreach"] = "title/keyword match only (add target_companies for company matches)"
+        else:
+            out["hiring_signal_outreach"] = "needs target_companies, titles or keywords"
+        out["tool_outage"] = "ok" if self.tools_in_use else "needs tools_in_use"
+        return out
 
     def weight(self, kind: str) -> float:
         return float(self.weights.get(kind, 1.0))
@@ -117,7 +143,7 @@ def _profile(name: str, p: dict) -> Profile:
         negative_keywords=_terms(p.get("negative_keywords"), "negative_keywords", name),
         example_texts=[str(t) for t in (p.get("example_texts") or [])], thresholds=thresholds,
         tiers={"b": bool((p.get("tiers") or {}).get("b", False)), "c": bool((p.get("tiers") or {}).get("c", False))},
-        home_base=p.get("home_base"), target_companies=[dict(c) for c in (p.get("target_companies") or [])],
+        home_base=p.get("home_base"), home_country=p.get("home_country"), target_companies=[dict(c) for c in (p.get("target_companies") or [])],
         tools_in_use=[dict(t) for t in (p.get("tools_in_use") or [])],
         weights={str(k): float(v) for k, v in (p.get("weights") or {}).items()}, topics=_terms(p.get("topics"), "topics", name),
     )

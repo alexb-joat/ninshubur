@@ -13,6 +13,20 @@ scheduler: {tick_s: 30, max_concurrent_sources: 4, per_host_rps: 1.0, boost_cool
 retention_months: 12
 corroboration_value_usd: 300
 
+# Costs used for ranking (USD and minutes). Tune these to your reality; the formula is shown in every suggestion.
+costs:
+  travel_same_city_usd: 0
+  travel_same_country_usd: 150
+  travel_abroad_usd: 600
+  minutes: {conference_trip: 240, cfp_submit: 120, hiring_signal_outreach: 15, service_request_lead: 10, tool_outage: 0}
+# Expected value per suggestion kind before relevance/confidence/timing scaling (placeholders until feedback calibrates them).
+base_value_usd:
+  service_request_lead: 400
+  hiring_signal_outreach: 250
+  conference_trip: 1500
+  cfp_submit: 800
+  tool_outage: 50
+
 sinks:
   ics: {path: feeds/timings.ics}
   trello: {enabled: false, key_env: TRELLO_KEY, token_env: TRELLO_TOKEN, list_id: ""}
@@ -42,7 +56,7 @@ sources:
 
   hn-freelancer:
     adapter: hn
-    params: {freelancer_threads: true, show_hn_queries: [lead generation, outbound]}
+    params: {whoishiring: true, freelancer_threads: true, show_hn_queries: [lead generation, outbound]}
     trust:
       tier: 2
       owner: "Algolia (HN Search API)"

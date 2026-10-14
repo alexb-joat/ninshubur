@@ -41,12 +41,20 @@ def estimate(kind: str, *, cfg: Config, policy: Policy, tier: int, profile_weigh
     return Estimate(round(value, 2), round(cost, 2), conf, parts, formula)
 
 
-def travel_band(home_base: str | None, city: str | None, home_country: str | None, country: str | None) -> float:
-    """Phase 1 bands; Phase 4 replaces this with haversine from cities.json."""
+def travel_band(home_base: str | None, city: str | None, home_country: str | None, country: str | None,
+                cfg: Config | None = None) -> float:
+    """Bands from config ``costs``; Phase 4 replaces this with haversine from cities.json."""
+    same_city = float(cfg.get("costs", "travel_same_city_usd", default=0)) if cfg else 0.0
+    same_country = float(cfg.get("costs", "travel_same_country_usd", default=150)) if cfg else 150.0
+    abroad = float(cfg.get("costs", "travel_abroad_usd", default=600)) if cfg else 600.0
     if not city or not home_base:
-        return 600.0
+        return abroad
     if city.strip().lower() == home_base.strip().lower():
-        return 0.0
+        return same_city
     if home_country and country and home_country.strip().lower() == country.strip().lower():
-        return 150.0
-    return 600.0
+        return same_country
+    return abroad
+
+
+def minutes_for(kind: str, cfg: Config, default: float) -> float:
+    return float(cfg.get("costs", "minutes", kind, default=default))

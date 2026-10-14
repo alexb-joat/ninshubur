@@ -35,6 +35,11 @@ DEFAULTS: dict[str, Any] = {
         "cfp_submit": 800, "local_meeting_suggestion": 150, "pain_content_idea": 60, "tooling_adopt": 100,
         "tool_deprecation": 300, "tool_price_change": 100, "tool_outage": 50,
     },
+    "costs": {
+        "travel_same_city_usd": 0, "travel_same_country_usd": 150, "travel_abroad_usd": 600,
+        "minutes": {"conference_trip": 240, "cfp_submit": 120, "hiring_signal_outreach": 15, "service_request_lead": 10,
+                    "tool_outage": 0, "outreach_window": 15, "local_meeting_suggestion": 20},
+    },
     "sinks": {
         "ics": {"path": "feeds/timings.ics"},
         "trello": {"enabled": False, "key_env": "TRELLO_KEY", "token_env": "TRELLO_TOKEN", "list_id": ""},

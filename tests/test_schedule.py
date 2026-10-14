@@ -24,8 +24,8 @@ def test_run_once_end_to_end(home):
     assert by["claude-status"].stored == 4
     # HN: stories fetched, then the fresh freelancer thread's comments as a follow-up (identifier-templated)
     hn_paths = [c for c in env.seen.calls if c[0] == "hn.algolia.com"]
-    assert len(hn_paths) == 3  # robots + stories + one comments page
-    assert by["hn"].fetched == 2
+    assert len(hn_paths) == 4  # robots + latest threads + freelancer search + ONE comments page (deduped across plans)
+    assert by["hn"].fetched == 3
     hn = by["hn"]
     assert hn.dropped == 1  # the injection comment never stored
     assert hn.held >= 1 and env.source("hn")["health"] == "suspect"
