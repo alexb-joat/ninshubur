@@ -211,3 +211,6 @@ def test_allow_fetch_extra_hosts(policy: Policy, now: float):
     assert policy.allow_fetch("https://event.example/x", spec_hosts=set(), now=now).code == "host_not_in_spec"
     assert policy.allow_fetch("https://event.example/x", spec_hosts=set(), extra_hosts={"event.example"}, now=now) is None
     assert policy.allow_fetch("https://www.linkedin.com/x", spec_hosts=set(), extra_hosts={"www.linkedin.com"}, now=now).code == "host_denied"
+    assert policy.allow_fetch("https://www.event.example/x", spec_hosts=set(), extra_hosts={"event.example"}, now=now) is None  # www twin
+    assert policy.allow_fetch("https://cdn.event.example/x", spec_hosts=set(), extra_hosts={"event.example"}, now=now).code == "host_not_in_spec"
+    assert policy.allow_fetch("https://www.hn.algolia.com/x", spec_hosts={"hn.algolia.com"}, now=now).code == "host_not_in_spec"  # fixed hosts stay exact

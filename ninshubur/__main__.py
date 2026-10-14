@@ -137,7 +137,7 @@ def cmd_run(args, app: App) -> int:
 
 
 def _badges(s: dict) -> str:
-    tier = min((e.get("tier", 3) for e in s["evidence"]), default=3)
+    tier = max((e.get("tier", 3) for e in s["evidence"]), default=3)  # the weakest evidence sets the badge
     b = [f"T{tier}"]
     if tier >= 2:
         b.append("unverified")

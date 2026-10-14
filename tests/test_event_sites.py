@@ -133,6 +133,8 @@ def test_end_to_end_crawl_and_prospecting_suggestion(home):
     assert py.status == "new" and 0 < py.est_cost <= 120 and py.cost_parts["travel_usd"] == 0
     assert any("unverified" in r for r in py.reasons) and py.evidence[0]["values"]["name"] == "PyCon Portugal"
     assert len(py.evidence) == 5 and all(e["tier"] == 2 for e in py.evidence[1:])
+    from ninshubur.export import badges
+    assert badges({"evidence": py.evidence, "status": "new"})[:2] == ["T2", "unverified"]  # weakest evidence, not the T1 dataset row
     assert "Keynote TBA" not in " ".join(py.steps)  # no title -> not a matched speaker
     assert not any("trip" in s.kind for s in built)
 

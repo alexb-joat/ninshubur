@@ -121,7 +121,7 @@ def _dt(ts: float | None, tz: ZoneInfo) -> str:
 
 
 def badges(s: dict) -> list[str]:
-    tier = min((e.get("tier", 3) for e in s["evidence"]), default=3)
+    tier = max((e.get("tier", 3) for e in s["evidence"]), default=3)  # the weakest evidence sets the badge
     b = [f"T{tier}"]
     if tier >= 2:
         b.append("unverified")

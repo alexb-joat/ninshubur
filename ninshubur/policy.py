@@ -317,8 +317,9 @@ class Policy:
         host = host_of(url)
         if self.host_denied(host):
             return Refusal("host_denied", f"{host} is in denied_hosts")
-        hosts = {h.lower() for h in spec_hosts} | {h.lower() for h in extra_hosts}
-        if host not in hosts:
+        hosts = {h.lower() for h in spec_hosts}
+        dyn = {h.lower() for h in extra_hosts}
+        if host not in hosts and host not in dyn and not any(same_site(host, h) for h in dyn):
             return Refusal("host_not_in_spec", f"{host} is not one of the adapter's hosts")
         if method.upper() not in {m.upper() for m in allowed_methods}:
             return Refusal("method_not_allowed", f"{method} not allowed for this adapter")
