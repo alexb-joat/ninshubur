@@ -41,6 +41,8 @@ ninshubur status                    # health, held, quarantined, candidates
 
 ## How LeadGet uses it
 
+The full operator guide is [docs/USAGE.md](docs/USAGE.md). In short:
+
 1. **One profile per client** in `~/.ninshubur/profiles.yaml` (start from `client-template` in
    `profiles.example.yaml`): cities and countries, titles, keywords and pains, target companies,
    providers in use, home base and home country. `ninshubur profiles check` says which suggestion
