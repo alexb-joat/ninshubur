@@ -70,7 +70,7 @@ class Profile:
     def builders_available(self) -> dict[str, str]:
         """Which suggestion kinds this profile can feed, and why not otherwise (for `profiles check`)."""
         out = {}
-        out["conference_trip"] = "ok" if (self.cities or self.countries or self.topics) else "needs geos.cities/countries or topics"
+        out["conference_prospecting"] = "ok" if (self.cities or self.countries or self.topics) else "needs geos.cities/countries or topics (crawled events outside them still rank at 0.5)"
         out["cfp_submit"] = "ok" if (self.topics or self.cities or self.countries or self.keywords) else "needs topics, geos or keywords"
         out["service_request_lead"] = "ok" if (self.keywords or self.pains) else "needs keywords or pains"
         if self.target_companies:

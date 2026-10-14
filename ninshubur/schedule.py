@@ -120,13 +120,27 @@ class Scheduler:
         state.pop("events", None)  # not persisted
         if not queue:
             report.note = "adapter produced no plans (check params)"
+        integrity, broken_hits = await self._crawl(src, adapter, spec, state, queue, extra_hosts, report, boosted, now)
+        self._reschedule(src, spec, report, broken_hits, integrity)
+        self.conn.execute("UPDATE sources SET state=? WHERE name=?", (j(state), name))
+        cur = self.ingestor.source(name)
+        report.health = cur["health"] if cur else "ok"
+        report.next_due_at = float(cur["next_due_at"]) if cur else 0.0
+        return report
+
+    async def _crawl(self, src: SourceConfig, adapter, spec, state: dict, queue: list[FetchPlan], extra_hosts: set[str],
+                     report: RunReport, boosted: bool, now: float, *, dry_run: bool = False, collect: list | None = None) -> tuple[bool, int]:
+        """Fetch a queue of plans with follow-ups (<= MAX_FOLLOWUP_ROUNDS), under every policy gate.
+        ``dry_run`` parses but never ingests; parsed results go to ``collect``."""
+        name = src.name
         integrity = False
         broken_hits = 0
         seen_keys = {p.key for p in queue}
         for round_no in range(MAX_FOLLOWUP_ROUNDS + 1):
             nxt: list[FetchPlan] = []
             for plan in queue:
-                health = (self.ingestor.source(name) or row)["health"]
+                row = self.ingestor.source(name)
+                health = row["health"] if row else "ok"
                 if plan.derived_from:
                     r = self.policy.allow_derived_link(plan.url, base_url=plan.derived_from, adapter=spec.name, anchor_text=plan.anchor_text)
                     if r:
@@ -143,24 +157,26 @@ class Scheduler:
                     continue
                 if any(x.severity == "integrity" for x in f.findings):
                     if spec.dynamic_hosts:
-                        # one hostile event site is flagged on its own; the batch source stays up
                         report.errors += 1
-                        report.ingests.append(self.ingestor.ingest(src, spec, _flagged(f), f))
+                        if not dry_run:
+                            report.ingests.append(self.ingestor.ingest(src, spec, _flagged(f), f))
                         self._note(adapter, state, plan, ok=False, codes=codes, now=now)
                         continue
-                    report.ingests.append(self.ingestor.integrity_event(src, f))
+                    if not dry_run:
+                        report.ingests.append(self.ingestor.integrity_event(src, f))
                     integrity = True
                     break
-                if f.findings:  # binary magic etc. at transport level but not integrity
+                if f.findings:
                     report.errors += 1
-                    report.ingests.append(self.ingestor.ingest(src, spec, _flagged(f), f))
+                    if not dry_run:
+                        report.ingests.append(self.ingestor.ingest(src, spec, _flagged(f), f))
                     self._note(adapter, state, plan, ok=False, codes=codes, now=now)
                     continue
                 if f.error or f.status is None:
                     report.errors += 1
                     self._note(adapter, state, plan, ok=False, codes=(f.error or "no_status",), now=now)
                     continue
-                if f.status == 304 or (f.status == 200 and not f.changed):
+                if f.status == 304 or (f.status == 200 and not f.changed and not dry_run):
                     report.unchanged += 1
                     self._note(adapter, state, plan, ok=True, codes=(), now=now)
                     continue
@@ -172,9 +188,15 @@ class Scheduler:
                     continue
                 report.changed += 1
                 parsed = adapter.parse(src, f, now)
-                ing = self.ingestor.ingest(src, spec, parsed, f)
-                report.ingests.append(ing)
-                self._note(adapter, state, plan, ok=True, codes=tuple(ing.codes), now=now)
+                if collect is not None:
+                    collect.append((plan, f, parsed))
+                if dry_run:
+                    codes_after: tuple = tuple(x.code for x in parsed.findings)
+                else:
+                    ing = self.ingestor.ingest(src, spec, parsed, f)
+                    report.ingests.append(ing)
+                    codes_after = tuple(ing.codes)
+                self._note(adapter, state, plan, ok=True, codes=codes_after, now=now)
                 if round_no < MAX_FOLLOWUP_ROUNDS:
                     for fp in parsed.followups:
                         if fp.key not in seen_keys:
@@ -183,12 +205,37 @@ class Scheduler:
             if integrity or not nxt:
                 break
             queue = nxt
-        self._reschedule(src, spec, report, broken_hits, integrity)
-        self.conn.execute("UPDATE sources SET state=? WHERE name=?", (j(state), name))
+        return integrity, broken_hits
+
+    async def crawl_event(self, name: str, event: dict, *, dry_run: bool = False) -> tuple[RunReport, list]:
+        """`lookup`: crawl one event now, outside the daily cap but under every other rule."""
+        src = self.cfg.sources[name]
+        adapter = self.adapter(src.adapter)
+        spec = adapter.spec
+        row = self.ingestor.ensure_source(src, spec)
+        report = RunReport(source=name, health=row["health"])
+        state = uj(row["state"])
+        if row["health"] not in ("ok", "suspect"):
+            report.note = f"not fetchable: health={row['health']}"
+            return report, []
+        plan = FetchPlan(url=event["url"], key=f"event_sites:{event['uid']}:home", max_bytes=2_000_000,
+                         expected_content_type="text/html", purpose=f"event homepage: {event.get('title', '')[:60]}")
+        collected: list = []
+        now = self.now()
+        # "crawl now" means re-read the pages: forget conditional-request state for this event first
+        self.conn.execute("DELETE FROM fetch_state WHERE key LIKE ?", (f"event_sites:{event['uid']}:%",))
+        if dry_run:
+            # a dry run leaves no trace beyond the fetch log and byte ledger
+            saved = dict(state)
+            await self._crawl(src, adapter, spec, state, [plan], {host_of(event["url"])}, report, False, now, dry_run=True, collect=collected)
+            self.conn.execute("DELETE FROM fetch_state WHERE key LIKE ?", (f"event_sites:{event['uid']}:%",))
+            state = saved
+        else:
+            await self._crawl(src, adapter, spec, state, [plan], {host_of(event["url"])}, report, False, now, collect=collected)
+            self.conn.execute("UPDATE sources SET state=? WHERE name=?", (j(state), name))
         cur = self.ingestor.source(name)
         report.health = cur["health"] if cur else "ok"
-        report.next_due_at = float(cur["next_due_at"]) if cur else 0.0
-        return report
+        return report, collected
 
     @staticmethod
     def _note(adapter, state: dict, plan: FetchPlan, *, ok: bool, codes: tuple, now: float) -> None:
@@ -245,7 +292,13 @@ class Scheduler:
             async with sem:
                 return await self.run_source(n, force=force)
 
-        return list(await asyncio.gather(*(one_source(n) for n in names)))
+        # Sources whose adapter needs data from other sources (event_sites needs the events) run after the rest,
+        # so a first run already has something to plan from.
+        dependent = [n for n in names if self.adapter(self.cfg.sources[n].adapter).spec.needs]
+        primary = [n for n in names if n not in dependent]
+        reports = list(await asyncio.gather(*(one_source(n) for n in primary)))
+        reports += list(await asyncio.gather(*(one_source(n) for n in dependent)))
+        return reports
 
     async def daemon(self, *, stop: asyncio.Event | None = None, tick_s: float | None = None) -> None:
         tick = float(tick_s or self.cfg.get("scheduler", "tick_s", default=30))

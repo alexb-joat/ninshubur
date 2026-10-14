@@ -17,9 +17,9 @@ from . import __version__
 from .adapters.base import all_adapters, get_adapter, run_projection
 from .analyze.suggest import Suggester
 from .config import ConfigError, SourceConfig, load_config
-from .db import connect, ledger_sum, one, rows
+from .db import connect, j, ledger_sum, one, rows, uj
 from .envvars import load_dotenv
-from .export import export as export_files, parse_since, weekly_digests
+from .export import export as export_files, parse_since, prospects_for_event, weekly_digests
 from .export_facts import export_provider_facts
 from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
@@ -165,6 +165,14 @@ def _print_suggestion(app: App, s: dict, full: bool = False) -> None:
             vals = ", ".join(f"{k}={v}" for k, v in e.get("values", {}).items())
             print(f"      {e.get('url')}  [{e.get('source')} T{e.get('tier')}] fetched {app.local(e.get('fetched_at'))}  {vals}")
         print(f"    status {s['status']}  created {app.local(s['created_at'])}")
+        if s["kind"] == "conference_prospecting" and s["entity_keys"]:
+            pr = prospects_for_event(app.conn, s["entity_keys"][0][6:])
+            print(f"    prospects ({len(pr)}, unverified; verify role and company before contact):")
+            for r in pr:
+                flag = " [page held]" if r.get("page_held") else ""
+                print(f"      {r['role']:<9} {r['name'][:32]:<32} {(r.get('title') or '')[:28]:<28} {(r.get('company') or r.get('domain') or '')[:28]:<28} "
+                      f"{(r.get('handle') or '')[:44]:<44} {r['source_url'][:50]}{flag}")
+            print("    full list: ninshubur export prospects --event " + s["entity_keys"][0][6:])
 
 
 def _minutes(s: str) -> int:
@@ -218,6 +226,54 @@ def cmd_feedback(args, app: App) -> int:
         return 2
     for sink in app.sinks:
         sink.write_all()
+    return 0
+
+
+def _resolve_event(app: App, ref: str) -> dict | None:
+    """An event item by id, uid or title fragment, or the event behind a #suggestion id."""
+    if ref.startswith("#"):
+        sg = app.suggester.get(int(ref[1:]))
+        if not sg or sg["kind"] != "conference_prospecting":
+            return None
+        ref = sg["entity_keys"][0][6:]
+    r = one(app.conn, "SELECT id, uid, url, title FROM items WHERE kind='event' AND (uid=? OR CAST(id AS TEXT)=?)", (ref, ref))
+    if r is None:
+        r = one(app.conn, "SELECT id, uid, url, title FROM items WHERE kind='event' AND title LIKE ? ORDER BY published_at DESC LIMIT 1", (f"%{ref}%",))
+    return r
+
+
+def cmd_lookup(args, app: App) -> int:
+    srcs = [s for s in app.cfg.sources.values() if s.adapter == "event_sites" and s.enabled]
+    if not srcs:
+        print("no admitted event_sites source in config.yaml (see config.example.yaml)", file=sys.stderr)
+        return 2
+    ev = _resolve_event(app, args.event)
+    if not ev or not ev["url"]:
+        print(f"no event matching {args.event!r} with a URL", file=sys.stderr)
+        return 2
+    if args.replay:
+        from .replay import replay_transport
+        app.fetcher = Fetcher(app.conn, app.policy, app.cfg, app.home, transport=replay_transport(Path(args.replay)))
+        app.scheduler.fetcher = app.fetcher
+    print(f"{'dry run: ' if args.dry_run else ''}{ev['title']} ({ev['url']})")
+    report, collected = asyncio.run(app.scheduler.crawl_event(srcs[0].name, dict(ev), dry_run=args.dry_run))
+    print(f"fetched {report.fetched} refused {report.refused} errors {report.errors} | stored {report.stored} dropped {report.dropped} held {report.held} | {report.note}".rstrip(" |"))
+    for plan, f, parsed in collected:
+        it = parsed.items[0] if parsed.items else None
+        a = it.attrs if it else {}
+        print(f"  {f.final_url or plan.url}")
+        print(f"    {a.get('persons', 0)} people, {a.get('orgs', 0)} organisations via {a.get('layer') or 'sections'}; "
+              f"{len(parsed.dropped_rows)} hostile rows dropped; contact data seen: {a.get('contact_data', 0)}; "
+              f"follow-ups: {len(parsed.followups)}; candidates: {len(parsed.candidates)}"
+              + (f"; findings: {', '.join(x.code for x in parsed.findings)}" if parsed.findings else ""))
+        if args.dry_run and it:
+            for e in it.entities[:40]:
+                print(f"      {e.role or e.type:<9} {e.name[:32]:<32} {(e.title or '')[:28]:<28} {(e.company or e.domain or '')[:28]:<28} {e.handle or ''}")
+            if len(it.entities) > 40:
+                print(f"      ... {len(it.entities) - 40} more")
+    if not args.dry_run:
+        app.suggester.build_all()
+        print("suggestions rebuilt; `ninshubur suggest --kind conference_prospecting`")
     return 0
 
 
@@ -365,6 +421,21 @@ def cmd_sources_review(args, app: App) -> int:
                             "ORDER BY ts DESC LIMIT 20", (args.name,)):
         print(f"  {app.local(q['ts'])}  {q['severity']:<9} {q['action']:<18} {q['detector_codes']}  "
               f"url#{q['url_hash'] or '-'} excerpt#{q['excerpt_hash'] or '-'}")
+    state = uj(row["state"])
+    flagged = {uid: st for uid, st in (state.get("per_event") or {}).items() if st.get("flagged") or int(st.get("fails", 0)) >= 3}
+    if flagged:
+        print(f"  per-event flags ({len(flagged)}):")
+        for uid, st in list(flagged.items())[:30]:
+            ev = one(app.conn, "SELECT title FROM items WHERE uid=?", (uid,))
+            print(f"    {uid}  {(ev or {}).get('title', '?')[:50]:<50} fails {st.get('fails', 0)} {','.join(st.get('flagged', []))}")
+    if args.clear_event:
+        pe = state.setdefault("per_event", {})
+        if args.clear_event in pe:
+            pe[args.clear_event] = {"fails": 0, "pages": int(pe[args.clear_event].get("pages", 0))}
+            app.conn.execute("UPDATE sources SET state=? WHERE name=?", (j(state), args.name))
+            print(f"cleared event {args.clear_event}")
+        else:
+            print(f"no per-event state for {args.clear_event}", file=sys.stderr)
     if args.clear:
         row = app.ingestor.clear(args.name)
         print(f"cleared: health {row['health']}, reputation {row['reputation']:.2f}")
@@ -434,9 +505,10 @@ def cmd_export(args, app: App) -> int:
         print(f"unknown profile {args.profile!r}; known: {', '.join(app.profiles) or 'none'}", file=sys.stderr)
         return 2
     try:
-        path = export_files(app.conn, app.suggester, app.home, what=args.what, fmt=args.format, profile=args.profile,
+        fmt = "csv" if args.what in ("items", "prospects") and args.format == "md" else args.format
+        path = export_files(app.conn, app.suggester, app.home, what=args.what, fmt=fmt, profile=args.profile,
                             statuses=statuses, since=parse_since(args.since, app.now()), now=app.now(), tz=app.tz,
-                            out=Path(args.output) if args.output else None)
+                            out=Path(args.output) if args.output else None, event=args.event)
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
@@ -485,6 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
     rv = ss.add_parser("review", help="show quarantine reasons; --clear restores a quarantined source")
     rv.add_argument("name")
     rv.add_argument("--clear", action="store_true")
+    rv.add_argument("--clear-event", metavar="UID", help="reset one event's flags (event_sites)")
     rv.set_defaults(fn=cmd_sources_review)
     c = ss.add_parser("candidates", help="hosts discovered in content (never fetched)")
     c.add_argument("--top", type=int, default=30)
@@ -522,13 +595,19 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
     ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv) or euboulia-facts (json) to feeds/")
-    ex.add_argument("what", choices=["digest", "suggestions", "items", "euboulia-facts"])
+    ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "euboulia-facts"])
+    ex.add_argument("--event", help="prospects: one event (item id or uid)")
     ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
     ex.add_argument("--profile")
     ex.add_argument("--status", default="new,accepted,held", help="comma list; default new,accepted,held")
     ex.add_argument("--since", metavar="7d", help="only suggestions/items updated in the last N d/w/h")
     ex.add_argument("-o", "--output", help="file path (default: feeds/<what>-<week>[-profile].<fmt>)")
     ex.set_defaults(fn=cmd_export)
+    lk = sub.add_parser("lookup", help="crawl one event's pages now (event id, uid, title fragment or #suggestion)")
+    lk.add_argument("event")
+    lk.add_argument("--dry-run", action="store_true", help="fetch and extract, store nothing, print what was found")
+    lk.add_argument("--replay", metavar="DIR", help="serve samples from DIR instead of the network")
+    lk.set_defaults(fn=cmd_lookup)
     sub.add_parser("status", help="source health, held and quarantined counts").set_defaults(fn=cmd_status)
     sub.add_parser("budget", help="daily budgets and per-source stats").set_defaults(fn=cmd_budget)
     return p

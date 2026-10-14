@@ -35,12 +35,67 @@ def parse_since(s: str | None, now: float) -> float | None:
     return now - float(n) * mult
 
 
+PROSPECT_COLUMNS = ["event", "event_date", "role", "name", "title", "company", "domain", "handle", "source_url", "fetched_at", "seen_events"]
+
+
+def prospects_for_event(conn: sqlite3.Connection, event_uid: str) -> list[dict]:
+    """Every person and organisation linked to an event's crawled pages, with the page it came from."""
+    return rows(conn, """SELECT e.type, e.name, e.title, e.company, e.domain, e.handle, e.seen_events, ie.role, i.url AS source_url,
+                                i.fetched_at, i.held AS page_held, i.tainted AS page_tainted
+                         FROM items i JOIN item_entities ie ON ie.item_id=i.id JOIN entities e ON e.id=ie.entity_id
+                         WHERE i.kind='prospect_page' AND json_extract(i.attrs, '$.event_uid')=? AND e.forgotten_at IS NULL
+                         ORDER BY CASE ie.role WHEN 'sponsor' THEN 0 WHEN 'exhibitor' THEN 1 WHEN 'partner' THEN 2 ELSE 3 END, e.name""",
+                (event_uid,))
+
+
+def prospect_rows(conn: sqlite3.Connection, *, event: str | None = None, profile: str | None = None, since: float | None = None,
+                  tz: ZoneInfo) -> list[dict]:
+    """Flat prospect rows for CSV. ``event`` is an item id or uid; ``profile`` limits to events that have a
+    prospecting suggestion for that profile."""
+    where, params = [], []
+    if event:
+        where.append("(ev.uid=? OR CAST(ev.id AS TEXT)=?)")
+        params += [event, event]
+    if profile:
+        where.append("ev.uid IN (SELECT substr(json_extract(s.entity_keys, '$[0]'), 7) FROM suggestions s WHERE s.kind='conference_prospecting' AND s.profile=?)")
+        params.append(profile)
+    if since is not None:
+        where.append("i.fetched_at >= ?")
+        params.append(since)
+    sql = f"""SELECT ev.title AS event, (SELECT at FROM item_dates d WHERE d.item_id=ev.id AND d.kind='event_start') AS event_date,
+                     ie.role, e.name, e.title, e.company, e.domain, e.handle, i.url AS source_url, i.fetched_at, e.seen_events
+              FROM items i JOIN item_entities ie ON ie.item_id=i.id JOIN entities e ON e.id=ie.entity_id
+              JOIN items ev ON ev.kind='event' AND ev.uid=json_extract(i.attrs, '$.event_uid')
+              WHERE i.kind='prospect_page' AND e.forgotten_at IS NULL {('AND ' + ' AND '.join(where)) if where else ''}
+              ORDER BY event_date, ev.title, CASE ie.role WHEN 'sponsor' THEN 0 WHEN 'exhibitor' THEN 1 WHEN 'partner' THEN 2 ELSE 3 END, e.name"""
+    out = []
+    for r in rows(conn, sql, params):
+        r = dict(r)
+        r["event_date"] = _day(r["event_date"], tz)
+        r["fetched_at"] = _dt(r["fetched_at"], tz)
+        out.append(r)
+    return out
+
+
+def render_csv_prospects(rows_: list[dict]) -> str:
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(PROSPECT_COLUMNS)
+    for r in rows_:
+        w.writerow([r.get(c) if r.get(c) is not None else "" for c in PROSPECT_COLUMNS])
+    return "\ufeff" + buf.getvalue()
+
+
 def gather(conn: sqlite3.Connection, suggester: Suggester, *, profile: str | None, statuses: tuple[str, ...],
            since: float | None, now: float, tz: ZoneInfo) -> dict:
     """One data-gathering pass shared by every renderer."""
     sugg = suggester.list(status=statuses, profile=profile, top=10_000)
     if since is not None:
         sugg = [s for s in sugg if s["updated_at"] >= since]
+    prospects: dict[int, list[dict]] = {}
+    for s in sugg:
+        if s["kind"] == "conference_prospecting" and s["entity_keys"]:
+            prospects[s["id"]] = prospects_for_event(conn, s["entity_keys"][0][6:])[:25]
     by_kind: dict[str, list[dict]] = {}
     for s in sugg:
         by_kind.setdefault(s["kind"], []).append(s)
@@ -53,6 +108,7 @@ def gather(conn: sqlite3.Connection, suggester: Suggester, *, profile: str | Non
         "candidates": cands, "counts": {k: len(v) for k, v in by_kind.items()},
         "total_value": sum(s["est_value"] for s in live), "total_minutes": sum(float(s["cost_parts"].get("human_minutes", 0)) for s in live),
         "held": [s for s in sugg if s["status"] == "held"],
+        "prospects": prospects,
     }
 
 
@@ -104,6 +160,16 @@ def render_md(d: dict) -> str:
                 vals = ", ".join(f"{k}={v}" for k, v in e.get("values", {}).items())
                 out.append(f"- [{e.get('url')}]({e.get('url')}) ({e.get('source')}, T{e.get('tier')}, fetched {_dt(e.get('fetched_at'), tz)}) {vals}")
             out.append("")
+            pr = d.get("prospects", {}).get(s["id"])
+            if pr:
+                out.append("Prospects (unverified; top 25):")
+                out.append("")
+                out.append("| Role | Name | Title | Company | Domain | Handle | Page |")
+                out.append("|---|---|---|---|---|---|---|")
+                for r in pr:
+                    out.append(f"| {r['role']} | {r['name']} | {r.get('title') or ''} | {r.get('company') or ''} | {r.get('domain') or ''} | "
+                               f"{r.get('handle') or ''} | {r['source_url']} |")
+                out.append("")
     if d["held"]:
         out.append("## Held (not actionable until the source is reviewed or corroborated)")
         out.append("")
@@ -168,7 +234,16 @@ def render_html(d: dict) -> str:
                 href = e(url) if url.startswith("https://") else ""
                 link = f"<a href=\"{href}\">{e(url)}</a>" if href else e(url)
                 out.append(f"<li>{link} ({e(str(ev.get('source')))}, T{ev.get('tier')}, fetched {_dt(ev.get('fetched_at'), tz)}) {e(vals)}</li>")
-            out.append("</ul></div>")
+            out.append("</ul>")
+            pr = d.get("prospects", {}).get(s["id"])
+            if pr:
+                out.append("<p>Prospects (unverified; top 25):</p><table><tr><th>Role</th><th>Name</th><th>Title</th><th>Company</th><th>Domain</th><th>Handle</th><th>Page</th></tr>")
+                for r in pr:
+                    hd = r.get("handle") or ""
+                    out.append(f"<tr><td>{e(r['role'])}</td><td>{e(r['name'])}</td><td>{e(r.get('title') or '')}</td><td>{e(r.get('company') or '')}</td>"
+                               f"<td>{e(r.get('domain') or '')}</td><td>{e(hd)}</td><td>{e(r['source_url'])}</td></tr>")
+                out.append("</table>")
+            out.append("</div>")
     if d["held"]:
         out.append("<h2>Held</h2><p class=\"meta\">Not actionable until the source is reviewed or the claim is corroborated.</p><ul>")
         out += [f"<li>#{s['id']} [{e(s['kind'])}] {e(s['title'])}: {e(str(s.get('held_reason')))}</li>" for s in d["held"]]
@@ -235,11 +310,16 @@ def default_name(what: str, fmt: str, profile: str | None, now: float) -> str:
 
 
 def export(conn: sqlite3.Connection, suggester: Suggester, home: Path, *, what: str, fmt: str, profile: str | None,
-           statuses: tuple[str, ...], since: float | None, now: float, tz: ZoneInfo, out: Path | None = None) -> Path:
+           statuses: tuple[str, ...], since: float | None, now: float, tz: ZoneInfo, out: Path | None = None,
+           event: str | None = None) -> Path:
     if what == "items":
         if fmt != "csv":
             raise ValueError("items export is csv only")
         text = render_csv_items(conn, since=since, tz=tz)
+    elif what == "prospects":
+        if fmt != "csv":
+            raise ValueError("prospects export is csv only")
+        text = render_csv_prospects(prospect_rows(conn, event=event, profile=profile, since=since, tz=tz))
     else:
         d = gather(conn, suggester, profile=profile, statuses=statuses, since=since, now=now, tz=tz)
         if fmt == "md":

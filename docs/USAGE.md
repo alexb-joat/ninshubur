@@ -49,7 +49,7 @@ hours). `run --force` fetches anyway.
     - value = 250 base x 1.00 weight x 0.50 relevance x 0.26 confidence x ...
 ```
 
-- **kind** in brackets. Today: `conference_trip`, `cfp_submit`, `hiring_signal_outreach`,
+- **kind** in brackets. Today: `conference_prospecting`, `cfp_submit`, `hiring_signal_outreach`,
   `service_request_lead`, `tool_outage`.
 - **T0 to T3** is the trust tier of the evidence. T0 is first party or licensed, T1 curated
   open data, T2 an aggregator, T3 user-generated content. `unverified` means T2 or T3 from a
@@ -120,7 +120,7 @@ One profile per client, in `~/.ninshubur/profiles.yaml`. Copy the `client-templa
 | `topics` | conference categories | confs.tech topics: general, javascript, devops, data, python ... |
 | `target_companies` | hiring signals | `name` matches "Who is hiring?" posts; a `greenhouse` slug lets you admit their job board |
 | `tools_in_use` | outage alerts | providers the client depends on |
-| `home_base`, `home_country` | trip cost bands | where the person who would travel for this client sits |
+| `home_base`, `home_country` | reserved for local-meeting suggestions (later phase) | where the person working this client sits |
 | `weights.<kind>` | value multiplier | 1.2 if this client values hiring signals more, and so on |
 
 Then:
@@ -141,6 +141,47 @@ config if any fails. That is deliberate: a source nobody vouched for is never fe
 A distributed team: profiles are per client *and* per person who works them. If two people in
 different countries cover the same client, make two profiles with different home bases.
 
+## 6b. Conference prospecting
+
+Conferences are prospect lists, not trips. The companies that paid for a stand, a sponsorship or a
+talk are the target; speakers are secondary. Ninshubur crawls each event's own website for those
+lists, under the `event-sites` source (see `config.example.yaml`).
+
+**What is crawled.** For every event in the conference dataset that is upcoming or was held in the
+last year: the event homepage and up to four pages on the *same host* whose link path or text says
+speaker, sponsor, exhibitor, partner, lineup or agenda. At most 20 events a day by default
+(`events_per_day`), one request per second per host, robots.txt honoured. Upcoming events are
+re-crawled weekly, held events once. Pages on another host (a separate speakers site, a ticketing
+platform) are never fetched; they appear in `sources candidates` for a human.
+
+**What is kept.** Per person: name, title, company, talk, role, and a public LinkedIn profile URL if
+the page shows one (stored as text, never visited: LinkedIn is a denied host). Per organisation:
+name, website domain (never visited), role (sponsor, exhibitor, partner, organizer). Emails, phone
+numbers, photos, bios and addresses on a page are counted and discarded. Person rows keep the
+12-month retention and `forget` rules.
+
+**What a hostile page can and cannot do.** Scripts, frames and styles never run: the page is parsed
+into a bounded tree and those elements are discarded. Every extracted text is taint-scanned; a
+speaker "bio" carrying an injected instruction drops that row (a quarantine row records only
+hashes) and holds the page while clean rows stay. A wall of thousands of planted cards, a page
+that is not HTML, a redirect to another host, or a host that resolves to a private address flags
+that one event and never reaches the others. Everything extracted is marked **unverified**: a
+planted fake speaker can at worst produce a suggestion that says "verify before contact".
+
+```bash
+ninshubur suggest --kind conference_prospecting          # one suggestion per crawled event
+ninshubur show 12                                         # ... with the prospect table
+ninshubur export prospects --format csv --event 2026-saastock   # or --profile <client>, --since 30d
+ninshubur lookup "SaaStock" --dry-run                     # crawl one event now, store nothing, print what was found
+ninshubur lookup "#12"                                    # crawl the event behind suggestion 12 now (outside the daily cap)
+ninshubur sources review event-sites                      # per-event flags; --clear-event <uid> resets one
+```
+
+Two phases per event: **upcoming** (window from four weeks to one week before the start: pre-event
+outreach, meetings during the event week) and **held** (up to six months after: "what did the event
+deliver?" outreach to the companies that paid for presence). Value scales with how many companies
+bought presence and how many match the client profile; cost is research minutes only.
+
 ## 7. Tuning before real work starts
 
 All numbers live in `~/.ninshubur/config.yaml`. After an edit: `ninshubur check`, then
@@ -149,19 +190,17 @@ All numbers live in `~/.ninshubur/config.yaml`. After an edit: `ninshubur check`
 | Setting | What it changes | Default |
 |---|---|---|
 | `timezone` | all displayed dates | Europe/Belgrade |
-| `costs.travel_same_city_usd / travel_same_country_usd / travel_abroad_usd` | travel cost bands per trip | 0 / 150 / 600 |
-| `costs.minutes.<kind>` | human minutes charged per kind | trip 240, cfp 120, hiring 15, request 10 |
+| `costs.minutes.<kind>` | human minutes charged per kind | prospecting 20 (+3 per matched prospect), cfp 120, hiring 15, request 10 |
 | `budgets.hourly_rate_usd` | what a minute of your time is worth | 60 |
-| `base_value_usd.<kind>` | expected value before scaling | trip 1500, cfp 800, request 400, hiring 250, outage 50 |
+| `base_value_usd.<kind>` | expected value before scaling | prospecting 600, cfp 800, request 400, hiring 250, outage 50 |
 | `corroboration_value_usd` | above this, single T2/T3 evidence is held | 300 |
 | `budgets.daily_bytes` | download cap per day | 200 MB |
 | `scheduler.tick_s`, `scheduler.per_host_rps` | daemon cadence, politeness | 30 s, 1 request/s |
 | `sources.<name>.params` | what a source looks for (e.g. HN `show_hn_queries`) | per source |
 | `profiles.<name>.thresholds.relevance` (profiles.yaml) | how strict matching is | 0.55 |
 
-Start with the two that decide the ranking: `costs.travel_abroad_usd` (what a trip from your
-base really costs) and `base_value_usd.conference_trip` / `hiring_signal_outreach` (what one has
-historically been worth in closed business). The formula line in every suggestion shows the
+Start with the two that decide the ranking: `base_value_usd.conference_prospecting` and
+`base_value_usd.hiring_signal_outreach` (what one has historically been worth in closed business). The formula line in every suggestion shows the
 effect immediately.
 
 ## 8. Running it unattended

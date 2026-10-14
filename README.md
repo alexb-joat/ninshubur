@@ -65,7 +65,7 @@ The full operator guide is [docs/USAGE.md](docs/USAGE.md). In short:
    in every suggestion shows which number to change. Accept/dismiss/done feed the calibration
    counters that later phases use.
 
-Suggestion kinds today: `conference_trip` (event in a profile city/country/topic within 60 days),
+Suggestion kinds today: `conference_prospecting` (the companies and speakers listed on an upcoming or recently held event's site; see docs/USAGE.md),
 `cfp_submit` (call for papers closing in 3-90 days), `hiring_signal_outreach` (a target company or
 a matching role is hiring: Greenhouse boards and HN "Who is hiring?" posts), `service_request_lead`
 (a public "seeking freelancer" style request matching the profile), `tool_outage` (a major incident

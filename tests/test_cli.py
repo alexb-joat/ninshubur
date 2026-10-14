@@ -58,14 +58,37 @@ def test_check_and_replay_round_trip(cli, home):
     code, out = cli("sources", "candidates")
     assert "pycon.pt" not in out
     code, out = cli("profiles", "check")
-    assert code == 0 and "conference_trip" in out and "ok" in out
+    assert code == 0 and "conference_prospecting" in out and "ok" in out
     for fmt, marker in (("md", "# Ninshubur digest"), ("html", "<!doctype html>"), ("csv", "id,kind,profile")):
         code, out = cli("export", "digest", "--format", fmt, "--profile", "leadget-eu")
         assert code == 0 and "written" in out
         path = Path(out.split("written ", 1)[1].splitlines()[0].strip())
         assert path.read_text(encoding="utf-8-sig").startswith(marker), fmt
+    code, out = cli("export", "prospects")
+    assert code == 0 and "written" in out
+    ppath = Path(out.split("written ", 1)[1].splitlines()[0].strip())
+    ptext = ppath.read_text(encoding="utf-8-sig")
+    assert ptext.splitlines()[0] == "event,event_date,role,name,title,company,domain,handle,source_url,fetched_at,seen_events"
+    assert "Jane Doe" in ptext and "https://www.linkedin.com/in/janedoe" in ptext and "Orbit Systems" in ptext
+    code, out = cli("export", "prospects", "--event", "nope-uid")
+    assert code == 0 and Path(out.split("written ", 1)[1].splitlines()[0].strip()).read_text(encoding="utf-8-sig").count("\n") == 1
+    code, out = cli("suggest", "--kind", "conference_prospecting", "--top", "1")
+    assert code == 0 and out.startswith("#")
+    pid = out.split()[0][1:]
+    code, out = cli("show", pid)
+    assert code == 0 and "prospects (" in out and "unverified" in out and "export prospects --event" in out
+    code, out = cli("lookup", "PyCon", "--dry-run", "--replay", str(SAMPLES))
+    assert code == 0 and out.startswith("dry run: PyCon Portugal") and "people" in out and "Jane Doe" in out
+    code, out = cli("lookup", "#" + pid, "--replay", str(SAMPLES))
+    assert code == 0 and "suggestions rebuilt" in out
+    code, out = cli("lookup", "no-such-event-zzz")
+    assert code == 2
+    code, out = cli("sources", "review", "event-sites")
+    assert code == 0
+    code, out = cli("sources", "review", "event-sites", "--clear-event", "nope")
+    assert code == 0 and "no per-event state" in out
     code, out = cli("export", "items", "--format", "md")
-    assert code == 2 and "csv only" in out
+    assert code == 0  # items/prospects default to csv
     code, out = cli("export", "digest", "--profile", "nope")
     assert code == 2
     code, out = cli("sources", "review", "hn")

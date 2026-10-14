@@ -50,6 +50,12 @@ def main() -> int:
             path = Path(out.split("written ", 1)[1].splitlines()[0].strip())
             assert path.exists() and path.stat().st_size > 200, path
         run(home, "export", "items", "--format", "csv")
+        run(home, "export", "prospects", "--format", "csv")
+        out = run(home, "suggest", "--kind", "conference_prospecting", "--top", "1")
+        pid = out.splitlines()[0].split()[0] if out.startswith("#") else None
+        if pid:
+            run(home, "show", pid[1:])
+            run(home, "lookup", pid, "--dry-run", "--replay", str(SAMPLES))
         run(home, "export", "suggestions", "--format", "csv", "--status", "new,accepted,held,done")
         # second run: nothing due, no network
         out = run(home, "run", "--replay", str(SAMPLES))

@@ -91,3 +91,21 @@ def test_weekly_digest_once_per_week(home):
     assert weekly_digests(env.conn, sug, home, ["leadget-eu"], now + 3600, TZ) == []
     assert weekly_digests(env.conn, sug, home, ["leadget-eu"], now + 8 * 86400, TZ)
     assert one(env.conn, "SELECT value FROM meta WHERE key='last_digest_week'")["value"] == "2026-W43"
+
+
+def test_prospect_rows_and_csv(home):
+    from ninshubur.export import prospect_rows, render_csv_prospects
+    env, sug = built_env(home)
+    rows_ = prospect_rows(env.conn, tz=TZ)
+    assert rows_ and {r["role"] for r in rows_} >= {"speaker", "sponsor", "partner"}
+    jane = next(r for r in rows_ if r["name"] == "Jane Doe")
+    assert jane["event"] == "PyCon Portugal" and jane["event_date"] == "2026-11-10" and jane["handle"].endswith("/in/janedoe")
+    assert jane["source_url"] == "https://pycon.pt/speakers/" and jane["seen_events"] >= 1
+    only = prospect_rows(env.conn, event="nope", tz=TZ)
+    assert only == []
+    by_profile = prospect_rows(env.conn, profile="leadget-eu", tz=TZ)
+    assert by_profile and all(r["event"] in {"PyCon Portugal", "SaaStock Dublin", "Remote Growth Summit"} for r in by_profile)
+    csv_text = render_csv_prospects(rows_)
+    assert csv_text.startswith("\ufeff") and "hello@expo.example" not in csv_text and "Eve Mallory" not in csv_text
+    d = gather(env.conn, sug, profile="leadget-eu", statuses=("new",), since=None, now=env.clock.now(), tz=TZ)
+    assert d["prospects"] and "| Role | Name |" in render_md(d) and "<th>Handle</th>" in render_html(d)

@@ -25,6 +25,25 @@ lawful reading is the only reading the code can take.
   excerpt and the date; accounts marked `noindex`, not `discoverable`, or labelled
   `!no-unauthenticated` are skipped.
 
+## Event websites (speakers, sponsors, exhibitors)
+
+- **What:** the public speaker and sponsor listings that event organisers publish on their own sites,
+  for events in an admitted curated dataset. Per person: name, title, company, talk, role and the
+  public LinkedIn profile URL the organiser printed next to the name (stored as text; LinkedIn is a
+  denied host and is never visited). Per organisation: name, domain, role.
+- **Not:** bios, photos, emails, phone numbers, addresses, anything behind a login, attendee lists
+  (which are not public), pages on other hosts than the event's own.
+- **Legal basis:** `public_business_info`. A speaker or sponsor has chosen to be listed in a
+  professional capacity at a business event; the use is B2B outreach about a service relevant to
+  that capacity. Legitimate-interest assessment (to be signed off by Alex before Phase 4): purpose
+  (B2B prospecting), necessity (the listing is the only source of who paid for presence), balance
+  (professional context only, no sensitive data, 12-month retention, erasure on request via `forget`,
+  no automated decisions, no profiling beyond title/company matching), transparency (identifying
+  User-Agent with a contact address on every request; robots.txt honoured).
+- **Retention and erasure:** `retention_until = fetched_at + 12 months`; `ninshubur forget person "<name>"`
+  removes the person and every link; the erasure is logged with hashes only.
+- **Volume:** at most 20 events a day, five pages per event, one request per second per host.
+
 ## Per-source terms (to re-verify at each trust review)
 
 | Source | Notes |
@@ -33,6 +52,7 @@ lawful reading is the only reading the code can take.
 | Hacker News (Algolia API) | Public API without a key; published request ceiling to verify (commonly cited 10 000/h); we self-cap at 1 req/s and a few dozen requests a day. Comment text is user content: taint-scanned, Tier 3. |
 | Greenhouse / Lever | Public job-board APIs, `content=false`; only id, title, dates, location, URL. |
 | Statuspage | Public JSON summaries of providers we depend on. |
+| Event websites | Each organiser's own terms; robots.txt honoured; same-host public listings only; see above. |
 | arXiv | At least 3 s between requests, identifying User-Agent. |
 | Stack Exchange | CC BY-SA content needs attribution when quoted; quota 300/day keyless, honour `backoff`. |
 | Nominatim (OSMF) | Max 1 req/s, at most 4 req/min for recurring scripts, identifying UA, results cached 180 d, ODbL attribution. |
