@@ -157,6 +157,11 @@ def hn_router(stories: bytes, comments: bytes):
     return route
 
 
+def public_resolver(host: str) -> list[str]:
+    """Tests never touch DNS: every host "resolves" to a public address."""
+    return ["93.184.216.34"]
+
+
 class Env:
     def __init__(self, home: Path, routes: dict, clock=None):
         from ninshubur.config import load_config
@@ -174,7 +179,7 @@ class Env:
         self.cfg = load_config(home, policy=self.policy)
         self.conn = connect(home)
         self.fetcher = Fetcher(self.conn, self.policy, self.cfg, home, transport=make_transport(routes, self.seen),
-                               sleep=self.clock.sleep, now=self.clock.now)
+                               sleep=self.clock.sleep, now=self.clock.now, resolve=public_resolver)
         self.ingestor = Ingestor(self.conn, self.policy, self.cfg, home, now=self.clock.now)
         self.scheduler = Scheduler(self.conn, self.policy, self.cfg, home, self.fetcher, self.ingestor,
                                    now=self.clock.now, rng=random.Random(1))

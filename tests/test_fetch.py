@@ -15,7 +15,7 @@ from ninshubur.db import connect, rows
 from ninshubur.fetch import Fetcher, RobotsCache
 from ninshubur.logs import read_jsonl
 from ninshubur.policy import Policy
-from tests.conftest import NOW, Seen, make_transport
+from tests.conftest import NOW, Seen, make_transport, public_resolver
 
 HOST = "api.example"
 SPEC = AdapterSpec(name="t", kind="events", hosts=frozenset({HOST}), schema="confs_tech.v1", schemas=("confs_tech.v1",),
@@ -40,12 +40,13 @@ class Clock:
         self.t += s
 
 
-def make(home: Path, policy: Policy, routes: dict, seen: Seen | None = None, clock: Clock | None = None):
+def make(home: Path, policy: Policy, routes: dict, seen: Seen | None = None, clock: Clock | None = None, resolve=None):
     clock = clock or Clock()
     conn = connect(home)
     cfg = load_config(home, policy=policy)
     seen = seen or Seen()
-    f = Fetcher(conn, policy, cfg, home, transport=make_transport(routes, seen), sleep=clock.sleep, now=clock.now)
+    f = Fetcher(conn, policy, cfg, home, transport=make_transport(routes, seen), sleep=clock.sleep, now=clock.now,
+                resolve=resolve or public_resolver)
     return f, conn, seen, clock
 
 
@@ -246,3 +247,26 @@ def test_unknown_host_in_transport_is_599(home, policy):
     f, conn, seen, _ = make(home, policy, {})
     r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
     assert r.status == 599 and not r.ok
+
+
+@pytest.mark.parametrize("addr", ["127.0.0.1", "10.0.0.5", "192.168.1.9", "172.16.0.1", "169.254.169.254", "100.64.0.1", "::1", "fd00::1", "::ffff:10.0.0.5", "0.0.0.0"])
+def test_private_addresses_are_never_contacted(home, policy, addr):
+    f, conn, seen, _ = make(home, policy, {(HOST, "*"): {"body": {}}}, resolve=lambda h: [addr])
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.error == "refused:private_address" and seen.calls == []
+    assert read_jsonl(home / "logs" / "policy.jsonl")[-1]["code"] == "private_address"
+
+
+def test_public_address_and_resolver_failure(home, policy):
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): {"body": {}}},
+                            resolve=lambda h: ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"])
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).status == 200
+    f2, conn2, seen2, _ = make(home, policy, {(HOST, "/x"): {"body": {}}}, resolve=lambda h: (_ for _ in ()).throw(OSError("dns down")))
+    r = run(f2.fetch(FetchPlan(url=f"https://{HOST}/x", key="k2"), SRC, SPEC))
+    assert r.error != "refused:private_address"  # unresolvable is left to the transport, not treated as private
+
+
+def test_is_public_address():
+    from ninshubur.fetch import is_public_address
+    assert is_public_address("93.184.216.34") and is_public_address("2606:2800:220:1:248:1893:25c8:1946")
+    assert not is_public_address("10.1.2.3") and not is_public_address("fe80::1") and not is_public_address("not-an-ip")

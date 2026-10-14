@@ -130,6 +130,32 @@ SCHEMAS: dict[str, dict] = {
             "updated_at": {"type": "datetime"},
         },
     },
+    # People and organisations extracted from event web pages (adapter event_sites). Names obey NAME_RULE;
+    # the handle may only be a LinkedIn profile URL, stored as text and never fetched.
+    "event_person.v1": {
+        "max_items": 300,
+        "required": ["name", "role"],
+        "fields": {
+            "name": {"type": "str", "max": 60, "text": True, "pattern": r"^(?!.*(\d|@|https?:))[^\W\d_][\w'’.-]*(?: [^\W\d_][\w'’.-]*){1,4}$"},
+            "title": {"type": "str", "max": 120, "text": True},
+            "company": {"type": "str", "max": 120, "text": True},
+            "talk": {"type": "str", "max": 200, "text": True},
+            "handle": {"type": "url", "hosts": ["linkedin.com", "www.linkedin.com"], "path_prefix": "/in/"},
+            "role": {"type": "enum", "values": ["speaker", "host", "panelist"]},
+            "layer": {"type": "enum", "values": ["jsonld", "microdata", "cards"]},
+        },
+    },
+    "event_org.v1": {
+        "max_items": 300,
+        "required": ["name", "role"],
+        "fields": {
+            "name": {"type": "str", "max": 120, "text": True},
+            "domain": {"type": "host"},
+            "role": {"type": "enum", "values": ["sponsor", "exhibitor", "partner", "organizer"]},
+            "tier_text": {"type": "str", "max": 40},
+            "layer": {"type": "enum", "values": ["jsonld", "microdata", "cards", "section"]},
+        },
+    },
 }
 
 
@@ -146,7 +172,7 @@ def get_schema(schema_id: str) -> dict:
     return s
 
 
-_TYPES = {"str", "date", "datetime", "int", "float", "bool", "enum", "url", "list_str"}
+_TYPES = {"str", "date", "datetime", "int", "float", "bool", "enum", "url", "host", "list_str"}
 
 
 def validate_schema(schema_id: str, s: dict) -> None:
@@ -346,7 +372,21 @@ def _coerce(value: Any, spec: dict, now: float, *, allowlisted_hosts: tuple[str,
         clean = value.strip()
         if check_url(clean, allow_punycode=bool(spec.get("allow_punycode"))):
             return None, False
+        if spec.get("hosts"):
+            from urllib.parse import urlsplit as _us
+            u = _us(clean)
+            if (u.hostname or "").lower() not in {h.lower() for h in spec["hosts"]}:
+                return None, False
+            if spec.get("path_prefix") and not u.path.startswith(spec["path_prefix"]):
+                return None, False
         return clean, True
+    if t == "host":
+        if not isinstance(value, str):
+            return None, False
+        h = value.strip().lower().rstrip(".")
+        if not h or len(h) > 253 or check_url("https://" + h + "/"):
+            return None, False
+        return h, True
     if t == "list_str":
         if not isinstance(value, list):
             return None, False
@@ -394,6 +434,10 @@ def project(data: Any, schema: dict, now: float | None = None, *, detectors_cfg:
             continue
         row: dict = {}
         taint: list[detectors.Finding] = []
+        pre = rec.get("_pretaint")
+        if isinstance(pre, list):  # findings an extractor made on text it looked at but does not hand over (e.g. bios)
+            taint.extend(detectors.Finding(str(sev), str(code)) for sev, code in pre
+                         if isinstance(sev, str) and sev in detectors.SEVERITIES and isinstance(code, str))
         bad_required = False
         for name, spec in fields.items():
             raw = _walk(rec, spec.get("path")) if spec.get("path") else rec.get(name)

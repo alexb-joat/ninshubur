@@ -179,3 +179,35 @@ def test_never_invariants_have_no_code_path():
         for b in banned:
             assert b not in text, f"{py.name} contains {b!r}"
     assert isinstance(Check("H1", True, ""), Check)
+
+
+def test_derived_links_policy(policy: Policy):
+    base = "https://event.example/"
+    ok = policy.allow_derived_link("https://event.example/speakers/", base_url=base, adapter="event_sites")
+    assert ok is None
+    assert policy.allow_derived_link("https://event.example/sponsors", base_url=base, adapter="hn").code == "derived_links_not_allowed"
+    assert policy.allow_derived_link("https://other.example/speakers", base_url=base, adapter="event_sites").code == "derived_off_host"
+    assert policy.allow_derived_link("https://event.example/tickets", base_url=base, adapter="event_sites").code == "derived_path_term"
+    assert policy.allow_derived_link("https://event.example/people", base_url=base, adapter="event_sites", anchor_text="Our speakers") is None
+    assert policy.allow_derived_link("https://event.example/speakers#top", base_url=base, adapter="event_sites").code == "derived_fragment"
+    assert policy.allow_derived_link("https://event.example/speakers?x=" + "a" * 300, base_url=base, adapter="event_sites").code == "derived_query_too_long"
+    assert policy.allow_derived_link("http://event.example/speakers", base_url=base, adapter="event_sites").code == "url_not_https"
+    assert policy.allow_derived_link("https://www.linkedin.com/in/x", base_url="https://www.linkedin.com/", adapter="event_sites").code == "host_denied"
+    assert policy.allow_derived_link("javascript:alert(1)", base_url=base, adapter="event_sites").code == "url_scheme"
+
+
+def test_derived_links_user_policy_tightens_only(home: Path):
+    (home / "policy.yaml").write_text(yaml.safe_dump({"fetch": {
+        "derived_links": {"allowed_adapters": ["event_sites", "hn"], "max_per_document": 2, "path_terms": ["speaker"], "same_host_only": False},
+        "refuse_private_addresses": False}}))
+    p = Policy.load(home)
+    dl = p.get("fetch", "derived_links")
+    assert dl["allowed_adapters"] == ["event_sites"] and dl["max_per_document"] == 2 and dl["path_terms"] == ["speaker"]
+    assert dl["same_host_only"] is True and p.get("fetch", "refuse_private_addresses") is True
+    assert p.allow_derived_link("https://e.example/sponsors", base_url="https://e.example/", adapter="event_sites").code == "derived_path_term"
+
+
+def test_allow_fetch_extra_hosts(policy: Policy, now: float):
+    assert policy.allow_fetch("https://event.example/x", spec_hosts=set(), now=now).code == "host_not_in_spec"
+    assert policy.allow_fetch("https://event.example/x", spec_hosts=set(), extra_hosts={"event.example"}, now=now) is None
+    assert policy.allow_fetch("https://www.linkedin.com/x", spec_hosts=set(), extra_hosts={"www.linkedin.com"}, now=now).code == "host_denied"

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
+import socket
 import sqlite3
 import time
 import urllib.robotparser
@@ -41,6 +43,27 @@ class HostState:
     errors: list[float] = field(default_factory=list)
     paused_until: float = 0.0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+def resolve_host(host: str) -> list[str]:
+    try:
+        return sorted({ai[4][0] for ai in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)})
+    except socket.gaierror:
+        return []
+
+
+def is_public_address(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(addr.split("%", 1)[0])
+    except ValueError:
+        return False
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        return False
+    if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network("100.64.0.0/10"):  # CGNAT
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and (ip.ipv4_mapped is not None and not is_public_address(str(ip.ipv4_mapped))):
+        return False
+    return True
 
 
 class HostGate:
@@ -123,7 +146,8 @@ class Fetcher:
     def __init__(self, conn: sqlite3.Connection, policy: Policy, cfg: Config, home: Path, *,
                  transport: httpx.AsyncBaseTransport | None = None,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-                 now: Callable[[], float] = time.time):
+                 now: Callable[[], float] = time.time,
+                 resolve: Callable[[str], list[str]] | None = None):
         self.conn = conn
         self.policy = policy
         self.cfg = cfg
@@ -138,6 +162,9 @@ class Fetcher:
         self.ratio_max = float(policy.get("fetch", "decompression_ratio_max", default=100))
         self.max_hops = int(policy.get("fetch", "max_hops", default=2))
         self.daily_bytes = int(cfg.get("budgets", "daily_bytes", default=200_000_000))
+        self.refuse_private = bool(policy.get("fetch", "refuse_private_addresses", default=True))
+        self.resolve = resolve or resolve_host
+        self._addr_cache: dict[str, tuple[float, str | None]] = {}
         self._client = httpx.AsyncClient(
             transport=transport, follow_redirects=False, trust_env=False, verify=True,
             timeout=httpx.Timeout(30.0, connect=10.0), headers={"User-Agent": cfg.user_agent, "Accept-Encoding": "gzip"},
@@ -172,6 +199,10 @@ class Fetcher:
         paused = self.gate.paused(host)
         if paused > 0:
             return self.refuse(plan, src.name, Refusal("circuit_open", f"{host} paused for {int(paused)}s after repeated errors"))
+        if self.refuse_private:
+            bad = self._private_address(host)
+            if bad:
+                return self.refuse(plan, src.name, Refusal("private_address", f"{host} resolves to {bad}"))
 
         crawl_delay: float | None = None
         if self.policy.get("fetch", "robots", "honour", default=True):
@@ -249,6 +280,24 @@ class Fetcher:
         result.duration_ms = int((self.now() - t0) * 1000)
         self._record(result, src, state, conditional, boosted)
         return result
+
+    def _private_address(self, host: str) -> str | None:
+        """Return the first non-public address ``host`` resolves to, or None. Cached for 10 minutes."""
+        now = self.now()
+        hit = self._addr_cache.get(host)
+        if hit and hit[0] > now - 600:
+            return hit[1]
+        bad: str | None = None
+        try:
+            addrs = self.resolve(host)
+        except OSError:
+            addrs = []
+        for a in addrs:
+            if not is_public_address(a):
+                bad = a
+                break
+        self._addr_cache[host] = (now, bad)
+        return bad
 
     # -- internals ------------------------------------------------------------------------------
     async def _request(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int):

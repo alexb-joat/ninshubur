@@ -57,6 +57,10 @@ MERGE_RULES: dict[tuple[str, ...], str] = {
     ("fetch", "per_host_rps_max"): "min",
     ("fetch", "robots", "cache_s"): "min",
     ("fetch", "robots", "default_crawl_delay_s"): "max",
+    ("fetch", "derived_links", "allowed_adapters"): "intersection",
+    ("fetch", "derived_links", "max_per_document"): "min",
+    ("fetch", "derived_links", "path_terms"): "intersection",
+    ("fetch", "derived_links", "max_query_len"): "min",
     ("admission", "min_field_validity"): "max",
     ("reputation", "suspect_below"): "max",
     ("reputation", "quarantine_below"): "max",
@@ -79,6 +83,8 @@ MERGE_RULES: dict[tuple[str, ...], str] = {
 TRUE_ONLY: frozenset[tuple[str, ...]] = frozenset({
     ("fetch", "https_only_except_local"),
     ("fetch", "robots", "honour"),
+    ("fetch", "refuse_private_addresses"),
+    ("fetch", "derived_links", "same_host_only"),
     ("detectors", "medium_holds"),
     ("person_data", "social", "skip_noindex"),
     ("person_data", "social", "skip_undiscoverable"),
@@ -289,8 +295,13 @@ class Policy:
 
     def allow_fetch(self, url: str, *, spec_hosts: Iterable[str], method: str = "GET",
                     allowed_methods: Iterable[str] = ("GET",), source_health: str = "ok",
-                    review_due_at: float | None = None, now: float | None = None) -> Refusal | None:
-        """The single admission gate for a network request. None means allowed."""
+                    review_due_at: float | None = None, now: float | None = None,
+                    extra_hosts: Iterable[str] = ()) -> Refusal | None:
+        """The single admission gate for a network request. None means allowed.
+
+        ``extra_hosts`` is the per-run allowlist a dynamic-host adapter receives from the scheduler
+        (hosts of event URLs taken from an admitted Tier 1 dataset); it is never derived from the page
+        being fetched."""
         now = time.time() if now is None else now
         code = check_url(url, allow_http_local=False)
         if code:
@@ -298,7 +309,7 @@ class Policy:
         host = host_of(url)
         if self.host_denied(host):
             return Refusal("host_denied", f"{host} is in denied_hosts")
-        hosts = {h.lower() for h in spec_hosts}
+        hosts = {h.lower() for h in spec_hosts} | {h.lower() for h in extra_hosts}
         if host not in hosts:
             return Refusal("host_not_in_spec", f"{host} is not one of the adapter's hosts")
         if method.upper() not in {m.upper() for m in allowed_methods}:
@@ -307,6 +318,31 @@ class Policy:
             return Refusal("source_health", f"source health is {source_health}")
         if review_due_at is not None and review_due_at <= now:
             return Refusal("review_overdue", "source review is overdue (H8)")
+        return None
+
+    def allow_derived_link(self, url: str, *, base_url: str, adapter: str, anchor_text: str = "") -> Refusal | None:
+        """May ``adapter`` follow ``url`` found on the page ``base_url``? The only relaxation of the
+        never-fetch-content-URLs rule, and a narrow one."""
+        dl = self.get("fetch", "derived_links", default={}) or {}
+        if adapter not in set(_as_list(dl.get("allowed_adapters"))):
+            return Refusal("derived_links_not_allowed", f"adapter {adapter} may not follow links")
+        code = check_url(url)
+        if code:
+            return Refusal(code, f"derived url rejected: {url[:120]}")
+        host, base_host = host_of(url), host_of(base_url)
+        if self.host_denied(host):
+            return Refusal("host_denied", f"{host} is in denied_hosts")
+        if dl.get("same_host_only", True) and host != base_host:
+            return Refusal("derived_off_host", f"{host} is not {base_host}")
+        parts = urlsplit(url)
+        if parts.fragment:
+            return Refusal("derived_fragment", "fragment links are the same page")
+        if len(parts.query) > int(dl.get("max_query_len", 200)):
+            return Refusal("derived_query_too_long", "query string over the limit")
+        terms = [str(t).lower() for t in _as_list(dl.get("path_terms"))]
+        hay = (parts.path + " " + parts.query + " " + (anchor_text or "")).lower()
+        if terms and not any(t in hay for t in terms):
+            return Refusal("derived_path_term", "link path/text matches none of the allowed terms")
         return None
 
     # -- admission ----------------------------------------------------------------------------

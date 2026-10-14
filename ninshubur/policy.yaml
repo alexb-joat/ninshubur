@@ -25,6 +25,16 @@ fetch:
   max_body_bytes_hard: 8000000
   decompression_ratio_max: 100
   per_host_rps_max: 1.0
+  # Hostnames that resolve to loopback, private, link-local, CGNAT or ULA addresses are never contacted.
+  refuse_private_addresses: true
+  # The one relaxation of "never fetch a URL found in content": an adapter listed here may follow links
+  # discovered on a page it was admitted to fetch, under every constraint below. Nothing else may.
+  derived_links:
+    allowed_adapters: [event_sites]
+    same_host_only: true
+    max_per_document: 4
+    path_terms: [speaker, sponsor, exhibitor, partner, lineup, agenda]
+    max_query_len: 200
   # Documented invariants. There is no code path for any of these; tests assert it.
   never: [login, captcha_bypass, paywall_bypass, proxies, fingerprint_evasion]
 
