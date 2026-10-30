@@ -20,7 +20,10 @@ DEFAULTS: dict[str, Any] = {
     "timezone": "Europe/Lisbon",
     "llm": {
         "local": {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b", "embed_model": "nomic-embed-text",
-                  "timeout_s": 60},
+                  "timeout_s": 60, "concurrency": 1},
+        # An OpenAI-compatible router (e.g. Trioditis). It may forward to cloud models, so it always counts as remote.
+        "router": {"enabled": False, "base_url": "http://127.0.0.1:8787/v1", "api_key_env": "NINSHUBUR_ROUTER_KEY",
+                   "timeout_s": 120, "concurrency": 4, "models": {}},
         "cloud": {"enabled": False, "base_url": "https://api.openai.com/v1", "api_key_env": "NINSHUBUR_CLOUD_KEY",
                   "model": "gpt-5-mini", "price_usd_per_mtok": {"input": 0.25, "output": 2.0}},
         "caps": {"daily_usd": 0.50, "daily_tokens": 300000},
@@ -161,6 +164,24 @@ def _validate_llm(cfg: Config) -> None:
     cloud = cfg.get("llm", "cloud", "base_url")
     if cfg.get("llm", "cloud", "enabled") and check_url(str(cloud)) is not None:
         raise ConfigError(f"llm.cloud.base_url must be https, got {cloud!r}")
+    router = str(cfg.get("llm", "router", "base_url", default="") or "")
+    if cfg.get("llm", "router", "enabled"):
+        if check_url(router, allow_http_local=True) is not None:
+            raise ConfigError(f"llm.router.base_url must be https, or http on this machine, got {router!r}")
+        if router.rstrip("/") == str(local).rstrip("/"):
+            # Same address: the "local" slot would be the router, and person data could reach a cloud model.
+            raise ConfigError("llm.local.base_url must not be the router's address (llm.router.base_url)")
+        models = cfg.get("llm", "router", "models", default={}) or {}
+        if not isinstance(models, dict) or not models:
+            raise ConfigError("llm.router.models must list at least one model with price_usd_per_mtok")
+        for name, m in models.items():
+            price = (m or {}).get("price_usd_per_mtok") if isinstance(m, dict) else None
+            if not isinstance(price, dict) or any(float(price.get(k, -1)) < 0 for k in ("input", "output")):
+                raise ConfigError(f"llm.router.models.{name}.price_usd_per_mtok needs input and output >= 0")
+    for slot in ("local", "router"):
+        c = int(cfg.get("llm", slot, "concurrency", default=1) or 0)
+        if not 1 <= c <= 16:
+            raise ConfigError(f"llm.{slot}.concurrency must be between 1 and 16")
     if cfg.get("llm", "person_data") != "local_only":
         raise ConfigError("llm.person_data must be 'local_only'")
     for k in ("daily_usd", "daily_tokens"):

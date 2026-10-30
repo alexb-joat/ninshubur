@@ -9,13 +9,15 @@ from pathlib import Path
 import pytest
 
 from ninshubur.__main__ import main
-from tests.conftest import SAMPLES, write_config, write_profiles
+from tests.conftest import NOW, SAMPLES, write_config, write_profiles
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
-def cli(home, capsys):
+def cli(home, capsys, monkeypatch):
+    # The replay samples are dated around 2026-10-12; pin the app's clock there so the test does not age.
+    monkeypatch.setattr("ninshubur.__main__.time.time", lambda: NOW)
     write_config(home)
     write_profiles(home)
 

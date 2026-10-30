@@ -45,12 +45,15 @@ class App:
         check_registry()
         self.conn = connect(self.home)
         self.now = time.time
-        self.fetcher = Fetcher(self.conn, self.policy, self.cfg, self.home, transport=transport)
-        self.ingestor = Ingestor(self.conn, self.policy, self.cfg, self.home)
-        self.scheduler = Scheduler(self.conn, self.policy, self.cfg, self.home, self.fetcher, self.ingestor, rng=random.Random())
-        self.suggester = Suggester(self.conn, self.policy, self.cfg, self.profiles)
-        self.sinks = [IcsSink(self.conn, self.home, str(self.cfg.get("sinks", "ics", "path", default="feeds/timings.ics")))]
-        self.feedback = Feedback(self.conn, self.sinks)
+        # One clock for every component, so a test (or a replay) can pin it in one place.
+        self.fetcher = Fetcher(self.conn, self.policy, self.cfg, self.home, transport=transport, now=self.now)
+        self.ingestor = Ingestor(self.conn, self.policy, self.cfg, self.home, now=self.now)
+        self.scheduler = Scheduler(self.conn, self.policy, self.cfg, self.home, self.fetcher, self.ingestor, now=self.now,
+                                   rng=random.Random())
+        self.suggester = Suggester(self.conn, self.policy, self.cfg, self.profiles, now=self.now)
+        self.sinks = [IcsSink(self.conn, self.home, str(self.cfg.get("sinks", "ics", "path", default="feeds/timings.ics")),
+                              now=self.now)]
+        self.feedback = Feedback(self.conn, self.sinks, now=self.now)
         tz_name = str(self.cfg.get("timezone", default="UTC"))
         try:
             self.tz = ZoneInfo(tz_name)
