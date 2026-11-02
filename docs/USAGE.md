@@ -213,7 +213,9 @@ journalctl --user -u ninshubur -f
 ```
 
 The daemon runs `run` every tick, rebuilds suggestions, refreshes the calendar feed and writes
-the weekly digests. It opens no network port.
+the weekly digests. It opens no network port. When sources are due but none of their hosts
+resolves or has a route (a laptop waking before Wi-Fi is back), it waits instead of fetching and
+writes `offline` and `online` to `logs/policy.jsonl`; a waiting source is not counted as failing.
 
 ## 9. Moving it to a shared machine
 
@@ -241,7 +243,7 @@ exports are.
 | a source shows `suspect` or `quarantined` | `ninshubur sources review <name>`; `--clear` after reading the reasons |
 | a source shows `review_overdue` | update `reviewed_at` in its trust block after re-checking its terms |
 | a source shows `broken` | it answered 403/404/410 five times; the URL or the service changed |
-| nothing fetched | `ninshubur run --force`; check `~/.ninshubur/logs/fetch.jsonl` |
+| nothing fetched | `ninshubur run --force`; check `~/.ninshubur/logs/fetch.jsonl`, where a network error carries its reason in `detail` |
 | something was refused | `~/.ninshubur/logs/policy.jsonl` has the reason and the rule |
 | the queue is empty | `ninshubur profiles check`; the profile may lack the fields a kind needs |
 

@@ -52,6 +52,28 @@ def resolve_host(host: str) -> list[str]:
         return []
 
 
+def reachable(host: str) -> bool:
+    """Whether ``host`` resolves and this machine has a route to it. Both checks stay on this machine: the DNS
+    lookup a fetch makes anyway, and a UDP connect, which picks a route without sending anything."""
+    for addr in resolve_host(host):
+        family = socket.AF_INET6 if ":" in addr else socket.AF_INET
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as s:
+                s.connect((addr.split("%", 1)[0], 443))
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def root_cause(e: BaseException) -> str:
+    """The innermost reason behind a network error ("[Errno -3] Temporary failure in name resolution"), not
+    httpx's wrapper ("All connection attempts failed")."""
+    while (e.__cause__ or e.__context__) is not None:
+        e = e.__cause__ or e.__context__  # type: ignore[assignment]
+    return (str(e) or type(e).__name__)[:160]
+
+
 def is_public_address(addr: str) -> bool:
     try:
         ip = ipaddress.ip_address(addr.split("%", 1)[0])
@@ -233,6 +255,7 @@ class Fetcher:
                 resp, body, raw_bytes, err = await self._request(plan.method, url, headers, plan.body, max_bytes)
             except (httpx.HTTPError, OSError) as e:  # network/TLS errors
                 result.error = type(e).__name__
+                result.error_detail = root_cause(e)
                 if isinstance(e, httpx.ConnectError) and "certificate" in str(e).lower():
                     result.findings.append(detectors.Finding("integrity", "cert_error", str(e)[:80]))
                 self.gate.note_error(host)
@@ -384,4 +407,5 @@ class Fetcher:
              int(boosted), error))
         self.fetch_log.write({"source": src.name, "url": plan.log_url or plan.url, "status": r.status, "bytes": nbytes,
                               "changed": changed, "duration_ms": r.duration_ms, "conditional": conditional,
-                              "boosted": boosted, "error": error})
+                              "boosted": boosted, "error": error,
+                              **({"detail": r.error_detail} if r.error_detail else {})})

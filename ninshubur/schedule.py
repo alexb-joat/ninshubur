@@ -17,7 +17,7 @@ from typing import Callable
 from .adapters.base import Adapter, FetchPlan, get_adapter
 from .config import Config, SourceConfig
 from .db import one, rows, uj, j
-from .fetch import Fetcher
+from .fetch import Fetcher, reachable
 from .ingest import Ingestor, IngestReport
 from .policy import Policy, host_of
 
@@ -54,7 +54,8 @@ class RunReport:
 
 class Scheduler:
     def __init__(self, conn: sqlite3.Connection, policy: Policy, cfg: Config, home: Path, fetcher: Fetcher,
-                 ingestor: Ingestor, now: Callable[[], float] = time.time, rng: random.Random | None = None):
+                 ingestor: Ingestor, now: Callable[[], float] = time.time, rng: random.Random | None = None,
+                 reachable: Callable[[str], bool] = reachable):
         self.conn = conn
         self.policy = policy
         self.cfg = cfg
@@ -63,6 +64,8 @@ class Scheduler:
         self.ingestor = ingestor
         self.now = now
         self.rng = rng or random.Random()
+        self.reachable = reachable
+        self.offline_since: float | None = None
         self.jitter = float(cfg.get("scheduler", "jitter", default=0.10))
         self.max_concurrent = int(cfg.get("scheduler", "max_concurrent_sources", default=4))
         self.adapters: dict[str, Adapter] = {}
@@ -308,12 +311,32 @@ class Scheduler:
         reports += list(await asyncio.gather(*(one_source(n) for n in dependent)))
         return reports
 
+    async def network_ready(self) -> bool:
+        """Whether a fixed host of any enabled source is reachable. A laptop that wakes from sleep runs the daemon
+        before Wi-Fi is back; fetching then would fail every due source and back each one off for days."""
+        hosts = sorted({h for s in self.cfg.sources.values() if s.enabled for h in self.adapter(s.adapter).spec.hosts})
+        if not hosts:
+            return True
+        for host in hosts:
+            if await asyncio.to_thread(self.reachable, host):
+                if self.offline_since is not None:
+                    self.ingestor.policy_log.write({"event": "online", "waited_s": int(self.now() - self.offline_since)})
+                    self.offline_since = None
+                return True
+        if self.offline_since is None:
+            self.offline_since = self.now()
+            self.ingestor.policy_log.write({"event": "offline", "detail": f"none of {len(hosts)} source hosts is reachable; "
+                                                                          "due sources wait for the network"})
+        return False
+
     async def daemon(self, *, stop: asyncio.Event | None = None, tick_s: float | None = None) -> None:
         tick = float(tick_s or self.cfg.get("scheduler", "tick_s", default=30))
         stop = stop or asyncio.Event()
         while not stop.is_set():
             try:
-                await self.run_once()
+                self.sync_sources()
+                if not self.due() or await self.network_ready():
+                    await self.run_once()
                 self.ingestor.decay()
                 if self.after_tick:
                     self.after_tick()

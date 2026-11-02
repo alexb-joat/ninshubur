@@ -283,3 +283,24 @@ def test_www_twin_redirect_is_followed_but_other_subdomains_are_not(home, policy
     assert r.ok and r.json() == {"twin": True} and r.final_url == f"https://www.{HOST}/a"
     r = run(f.fetch(FetchPlan(url=f"https://{HOST}/b", key="k2"), SRC, SPEC))
     assert [x.code for x in r.findings] == ["off_host_redirect"] and "cdn." + HOST not in seen.hosts()
+
+
+def test_network_errors_log_their_underlying_reason(home, policy):
+    def unreachable(req):
+        try:
+            raise OSError(101, "Network is unreachable")
+        except OSError as e:
+            raise httpx.ConnectError("All connection attempts failed") from e
+
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): unreachable})
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.error == "ConnectError" and r.error_detail == "[Errno 101] Network is unreachable"
+    assert read_jsonl(home / "logs" / "fetch.jsonl")[-1]["detail"] == "[Errno 101] Network is unreachable"
+
+
+def test_reachable_needs_an_address_and_a_route(monkeypatch):
+    from ninshubur import fetch
+    monkeypatch.setattr(fetch, "resolve_host", lambda h: [])
+    assert fetch.reachable("example.org") is False  # no DNS answer: offline
+    monkeypatch.setattr(fetch, "resolve_host", lambda h: ["127.0.0.1"])
+    assert fetch.reachable("example.org") is True  # loopback always has a route, and a UDP connect sends nothing

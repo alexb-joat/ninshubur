@@ -64,6 +64,7 @@ class Fetched:
     duration_ms: int = 0
     final_url: str = ""
     error: str | None = None
+    error_detail: str | None = None  # the underlying reason for a network error, for the fetch log
     findings: list[Finding] = field(default_factory=list)
     fetched_at: float = 0.0
 

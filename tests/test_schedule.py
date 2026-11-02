@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from ninshubur.db import rows, one
 from ninshubur.logs import read_jsonl
 from ninshubur.schedule import status_summary
@@ -119,3 +121,34 @@ def test_clear_restores_a_quarantined_source(home):
     row = env.ingestor.clear("confs")
     assert row["health"] == "ok" and abs(row["reputation"] - 0.75 * 0.8) < 1e-9
     assert one(env.conn, "SELECT COUNT(*) AS n FROM taint_events")["n"] == 0
+
+
+def one_tick(env) -> None:
+    """One pass of the daemon loop, then stop."""
+    async def go():
+        stop = asyncio.Event()
+        env.scheduler.after_tick = stop.set
+        await env.scheduler.daemon(stop=stop, tick_s=0.01)
+    asyncio.run(go())
+
+
+def test_daemon_waits_for_the_network_after_waking(home):
+    """Woken from sleep before Wi-Fi was back, the daemon used to fetch at once, fail every due source and back it off."""
+    from tests.conftest import DEFAULT_SOURCES
+    write_config(home, {"confs": DEFAULT_SOURCES["confs"]})
+    env = Env(home, SAMPLE_ROUTES)
+    env.scheduler.reachable = lambda host: False
+    one_tick(env)
+    one_tick(env)
+    assert env.seen.calls == []
+    row = env.source("confs")
+    assert row["fail_count"] == 0 and row["last_run_at"] is None and row["next_due_at"] <= NOW
+
+    def events():
+        return [p["event"] for p in read_jsonl(home / "logs" / "policy.jsonl") if p["event"] in ("offline", "online")]
+    assert events() == ["offline"]  # said once, not on every tick
+    env.scheduler.reachable = lambda host: host == "raw.githubusercontent.com"
+    one_tick(env)
+    row = env.source("confs")
+    assert row["last_run_at"] is not None and row["fail_count"] == 0 and env.seen.calls
+    assert events() == ["offline", "online"]
