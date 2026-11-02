@@ -334,7 +334,8 @@ def _test_source(app: App, src: SourceConfig) -> tuple[list, dict]:
     app.conn.commit()
     codes = [x.code for x in f.findings]
     test.update(status=f.status, size=len(f.body), tls_ok="cert_error" not in codes, off_host_redirect="off_host_redirect" in codes,
-                content_type=f.headers.get("content-type"), robots_allowed=f.error != "refused:robots_disallow",
+                content_type=f.headers.get("content-type"),
+                robots_allowed=f.error not in ("refused:robots_disallow", "refused:robots_unreachable"),
                 unauthenticated=spec.needs_key_env is None, max_bytes=plan.max_bytes, error=f.error, codes=codes)
     if f.status == 200 and not f.findings:
         # Parse exactly as a run would (the adapter's own parser, then its schema), so H4 measures the real

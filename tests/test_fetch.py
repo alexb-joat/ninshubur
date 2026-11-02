@@ -199,6 +199,8 @@ def test_robots_disallow_and_crawl_delay(home, policy):
 def test_robots_403_means_no_robots_allowed():
     assert RobotsCache.evaluate("", 403, "https://h/x", "Ninshubur/0.1") == (False, None)
     assert RobotsCache.evaluate("", 404, "https://h/x", "Ninshubur/0.1") == (True, None)
+    assert RobotsCache.evaluate("", 503, "https://h/x", "Ninshubur/0.1") == (False, None)  # unreachable: RFC 9309 2.3.1.4
+    assert RobotsCache.evaluate("", None, "https://h/x", "Ninshubur/0.1") == (False, None)  # network error
     allowed, delay = RobotsCache.evaluate("User-agent: Ninshubur\nDisallow: /\nUser-agent: *\nAllow: /", 200,
                                           "https://h/x", "Ninshubur/0.1")
     assert allowed is False
@@ -244,7 +246,7 @@ def test_byte_budget_gate(home, policy):
 
 def test_unknown_host_in_transport_is_599(home, policy):
     """The mock answers 599 for anything unrouted, so a stray fetch cannot pass silently."""
-    f, conn, seen, _ = make(home, policy, {})
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}})
     r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
     assert r.status == 599 and not r.ok
 
@@ -304,3 +306,32 @@ def test_reachable_needs_an_address_and_a_route(monkeypatch):
     assert fetch.reachable("example.org") is False  # no DNS answer: offline
     monkeypatch.setattr(fetch, "resolve_host", lambda h: ["127.0.0.1"])
     assert fetch.reachable("example.org") is True  # loopback always has a route, and a UDP connect sends nothing
+
+
+def test_unreadable_robots_disallows_for_ten_minutes_not_a_day(home, policy):
+    """A robots.txt lost to a network error used to be remembered for a day as "no robots.txt: everything allowed"."""
+    state = {"robots": "down"}
+
+    def robots(req):
+        if state["robots"] == "down":
+            raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution")
+        return httpx.Response(200, text="User-agent: *\nDisallow: /private\n", headers={"Content-Type": "text/plain"})
+
+    f, conn, seen, clock = make(home, policy, {(HOST, "/robots.txt"): robots, (HOST, "/x"): {"body": {}}})
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.error == "refused:robots_unreachable" and [c[1] for c in seen.calls] == ["/robots.txt"]
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).error == "refused:robots_unreachable"
+    assert [c[1] for c in seen.calls] == ["/robots.txt"]  # not asked again within ten minutes
+    state["robots"] = "up"
+    clock.t += 601
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).ok
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/private/y", key="k2"), SRC, SPEC)).error == "refused:robots_disallow"
+
+
+def test_failed_lookup_is_not_remembered_as_a_public_address(home, policy):
+    answers = iter([[], ["10.0.0.5"]])  # DNS down, then back with a private address
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): {"body": {}}},
+                            resolve=lambda h: next(answers))
+    run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.error == "refused:private_address"

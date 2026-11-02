@@ -30,6 +30,7 @@ from .policy import Policy, Refusal, check_url, host_of, same_site
 
 HARD_CAP = 8_000_000
 ROBOTS_CAP = 512_000
+ROBOTS_UNREACHABLE_TTL_S = 600
 REDIRECT_CODES = {301, 302, 303, 307, 308}
 BREAKER_ERRORS = 5
 BREAKER_WINDOW_S = 600
@@ -138,9 +139,16 @@ class RobotsCache:
 
     def cached(self, host: str) -> dict | None:
         r = self.conn.execute("SELECT body, fetched_at, status, crawl_delay FROM robots WHERE host=?", (host,)).fetchone()
-        if r and r["fetched_at"] > self.now() - self.ttl:
-            return dict(r)
-        return None
+        if r is None:
+            return None
+        ttl = min(self.ttl, ROBOTS_UNREACHABLE_TTL_S) if self.unreachable(r["status"]) else self.ttl
+        return dict(r) if r["fetched_at"] > self.now() - ttl else None
+
+    @staticmethod
+    def unreachable(status: int | None) -> bool:
+        """A network error or a 5xx answer: robots.txt could not be read (RFC 9309 2.3.1.4). Everything on the
+        host is disallowed until it can be, and it is asked again after ten minutes, not a day."""
+        return status is None or status >= 500
 
     def store(self, host: str, body: str, status: int | None, crawl_delay: float | None) -> None:
         self.conn.execute("INSERT OR REPLACE INTO robots(host, body, fetched_at, status, crawl_delay) VALUES (?,?,?,?,?)",
@@ -148,9 +156,9 @@ class RobotsCache:
 
     @staticmethod
     def evaluate(body: str, status: int | None, url: str, ua: str) -> tuple[bool, float | None]:
-        if status in (401, 403):
-            return False, None  # robots says the whole host is off limits to robots
-        if status is None or status >= 400 or not body.strip():
+        if RobotsCache.unreachable(status) or status in (401, 403):
+            return False, None  # unreadable, or the whole host is off limits to robots
+        if status >= 400 or not body.strip():
             return True, None
         rp = urllib.robotparser.RobotFileParser()
         rp.parse(body.splitlines())
@@ -229,7 +237,10 @@ class Fetcher:
 
         crawl_delay: float | None = None
         if self.policy.get("fetch", "robots", "honour", default=True):
-            allowed, crawl_delay = await self._robots_allow(host, plan.url, spec)
+            allowed, crawl_delay, robots_status = await self._robots_allow(host, plan.url, spec)
+            if not allowed and RobotsCache.unreachable(robots_status):
+                return self.refuse(plan, src.name, Refusal("robots_unreachable", f"robots.txt on {host} could not be read "
+                                                           f"({robots_status or 'network error'}); asked again in 10 min"))
             if not allowed:
                 return self.refuse(plan, src.name, Refusal("robots_disallow", f"robots.txt disallows {urlsplit(plan.url).path}"))
 
@@ -328,7 +339,8 @@ class Fetcher:
             if not is_public_address(a):
                 bad = a
                 break
-        self._addr_cache[host] = (now, bad)
+        if addrs:  # a failed lookup is no answer: remembering it would skip this check once DNS is back
+            self._addr_cache[host] = (now, bad)
         return bad
 
     # -- internals ------------------------------------------------------------------------------
@@ -359,7 +371,7 @@ class Fetcher:
             await resp.aclose()
         return resp, b"".join(chunks), resp.num_bytes_downloaded, finding
 
-    async def _robots_allow(self, host: str, url: str, spec: AdapterSpec) -> tuple[bool, float | None]:
+    async def _robots_allow(self, host: str, url: str, spec: AdapterSpec) -> tuple[bool, float | None, int | None]:
         ua = self.cfg.user_agent
         rec = self.robots.cached(host)
         if rec is None:
@@ -377,7 +389,7 @@ class Fetcher:
             self.robots.store(host, body, status, delay)
             rec = {"body": body, "status": status, "crawl_delay": delay}
         allowed, delay = RobotsCache.evaluate(rec["body"], rec["status"], url, ua)
-        return allowed, delay
+        return allowed, delay, rec["status"]
 
     def _record(self, r: Fetched, src: SourceConfig, state, conditional: bool, boosted: bool) -> None:
         plan = r.plan
