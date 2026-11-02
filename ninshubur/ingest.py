@@ -79,14 +79,13 @@ class Ingestor:
                               (src.name, 1.0, 1.0, 1.0, 1.0))
         else:
             self.conn.execute(
-                """UPDATE sources SET adapter=?, kind=?, params=?, enabled=?, tier=?, owner=?, owner_url=?, terms_url=?, licence=?,
+                """UPDATE sources SET adapter=?, kind=?, params=?, tier=?, owner=?, owner_url=?, terms_url=?, licence=?,
                    legal_basis=?, rate_limit=?, expected_content_type=?, schema_id=?, reviewed_by=?, reviewed_at=?,
                    review_every_days=?, base_interval_s=?, max_interval_s=?, updated_at=? WHERE name=?""",
-                (src.adapter, spec.kind, j(src.params), int(src.enabled), tier, t.get("owner"), t.get("owner_url"), t.get("terms_url"),
+                (src.adapter, spec.kind, j(src.params), tier, t.get("owner"), t.get("owner_url"), t.get("terms_url"),
                  t.get("licence"), src.legal_basis, t.get("rate_limit"), src.expected_content_type, src.schema_id,
                  t.get("reviewed_by"), src.reviewed_at_ts(), int(t.get("review_every_days", 0)), base, mx, now, src.name))
-            if row["health"] == "disabled" and src.enabled:
-                self.set_health(src.name, "ok", "re-enabled from config")
+            self.set_enabled(src.name, src.enabled, "re-enabled from config" if src.enabled else "disabled in config")
         return one(self.conn, "SELECT * FROM sources WHERE name=?", (src.name,))  # type: ignore[return-value]
 
     def source(self, name: str) -> dict | None:
@@ -100,6 +99,18 @@ class Ingestor:
             self.policy_log.write({"event": "health", "source": name, "from": row["health"], "to": health, "reason": reason})
         self.conn.execute("UPDATE sources SET health=?, health_reason=?, updated_at=? WHERE name=?",
                           (health, reason, self.now(), name))
+
+    def set_enabled(self, name: str, enabled: bool, reason: str) -> None:
+        """Pause or resume a source. Its health is left alone, so a quarantine outlasts a pause: only
+        `sources review --clear` ends one."""
+        row = self.source(name)
+        if row is None:
+            return
+        if bool(row["enabled"]) != enabled:
+            self.policy_log.write({"event": "enabled" if enabled else "paused", "source": name, "reason": reason})
+        self.conn.execute("UPDATE sources SET enabled=?, updated_at=? WHERE name=?", (int(enabled), self.now(), name))
+        if enabled and row["health"] == "disabled":  # removed from config earlier, or paused by a version that used health
+            self.set_health(name, "ok", reason)
 
     def scale(self, tier: int) -> float:
         """Reputation deltas and thresholds in policy.yaml are written for Tier 0 (0.90). Lower tiers

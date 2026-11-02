@@ -100,7 +100,23 @@ def test_check_and_replay_round_trip(cli, home):
     code, out = cli("sources", "disable", "hn")
     assert code == 0
     code, out = cli("sources", "list")
-    assert code == 0 and "disabled" in out
+    assert code == 0 and "paused" in out
+
+
+def test_resuming_a_quarantined_source_keeps_the_quarantine(cli, home):
+    from ninshubur.db import connect
+    cli("status")
+    conn = connect(home)
+    conn.execute("UPDATE sources SET health='quarantined', health_reason='4 taint events in 24h' WHERE name='event-sites'")
+    conn.commit()
+    code, out = cli("sources", "disable", "event-sites")
+    assert code == 0 and "still quarantined (4 taint events in 24h)" in out
+    code, out = cli("status")
+    assert "quarantined (paused)" in out
+    code, out = cli("sources", "enable", "event-sites")
+    assert code == 0 and "until `ninshubur sources review event-sites --clear`" in out
+    code, out = cli("status")
+    assert "event-sites" in out and "quarantined" in out and "(paused)" not in out
 
 
 def test_sources_test_refuses_bad_source(cli, home, monkeypatch):

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from .analyze.suggest import Suggester
 from .db import rows, uj
 from .logs import write_private
-from .schedule import status_summary
+from .schedule import health_label, status_summary
 
 KIND_LABELS = {
     "conference_prospecting": "Conference prospecting", "cfp_submit": "Calls for papers", "service_request_lead": "Service requests",
@@ -182,7 +182,7 @@ def render_md(d: dict) -> str:
     out.append("|---|---|---|---|---|---|---|")
     for src in d["sources"]:
         due = (src["reviewed_at"] or 0) + (src["review_every_days"] or 0) * 86400
-        out.append(f"| {src['name']} | {src['adapter']} | {src['tier']} | {src['reputation']:.2f} | {src['health']} | "
+        out.append(f"| {src['name']} | {src['adapter']} | {src['tier']} | {src['reputation']:.2f} | {health_label(src)} | "
                    f"{_dt(src['next_due_at'], tz)} | {_day(due, tz)} |")
     out.append("")
     if d["candidates"]:
@@ -252,7 +252,7 @@ def render_html(d: dict) -> str:
     for src in d["sources"]:
         due = (src["reviewed_at"] or 0) + (src["review_every_days"] or 0) * 86400
         out.append(f"<tr><td>{e(src['name'])}</td><td>{e(src['adapter'])}</td><td>{src['tier']}</td><td>{src['reputation']:.2f}</td>"
-                   f"<td>{e(src['health'])}</td><td>{_dt(src['next_due_at'], tz)}</td><td>{_day(due, tz)}</td></tr>")
+                   f"<td>{e(health_label(src))}</td><td>{_dt(src['next_due_at'], tz)}</td><td>{_day(due, tz)}</td></tr>")
     out.append("</table>")
     if d["candidates"]:
         out.append("<h2>Candidate hosts (never fetched)</h2><ul>")

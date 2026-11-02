@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from .adapters.base import Adapter, FetchPlan, get_adapter
-from .config import Config, SourceConfig
+from .config import Config, ConfigError, SourceConfig, load_config
 from .db import one, rows, uj, j
 from .fetch import Fetcher, reachable
 from .ingest import Ingestor, IngestReport
@@ -70,6 +70,7 @@ class Scheduler:
         self.max_concurrent = int(cfg.get("scheduler", "max_concurrent_sources", default=4))
         self.adapters: dict[str, Adapter] = {}
         self.after_tick = None  # optional callable run after each successful tick (digests, sinks)
+        self._config_stamp = self._stamp()
 
     def adapter(self, name: str) -> Adapter:
         if name not in self.adapters:
@@ -77,14 +78,44 @@ class Scheduler:
         return self.adapters[name]
 
     # -- registry sync --------------------------------------------------------------------------
+    def _stamp(self) -> tuple[int, int] | None:
+        try:
+            st = self.cfg.path.stat() if self.cfg.path else None
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size) if st else None
+
+    def reload_sources(self) -> bool:
+        """Follow edits to config.yaml made while the daemon runs (`sources enable/disable`, `sources add`, a hand
+        edit), which it used to undo on its next tick. Only the sources are reloaded; a change to any other setting is
+        logged as needing a restart. A file that no longer loads keeps the running sources and is logged too."""
+        stamp = self._stamp()
+        if stamp is None or stamp == self._config_stamp:
+            return False
+        self._config_stamp = stamp
+        try:
+            new = load_config(path=self.cfg.path, policy=self.policy)
+        except ConfigError as e:
+            self.ingestor.policy_log.write({"event": "config_reload_failed", "detail": str(e)[:200]})
+            return False
+        changed = sorted(n for n in set(new.sources) | set(self.cfg.sources) if new.sources.get(n) != self.cfg.sources.get(n))
+        restart = sorted(k for k in set(new.data) | set(self.cfg.data) if k != "sources" and new.data.get(k) != self.cfg.data.get(k))
+        self.cfg.sources = new.sources
+        self.cfg.data["sources"] = new.data.get("sources") or {}
+        self.ingestor.policy_log.write({"event": "config_reloaded", "sources": changed,
+                                        **({"restart_needed_for": restart} if restart else {})})
+        return True
+
     def sync_sources(self) -> list[str]:
         names = []
         for src in self.cfg.sources.values():
             self.ingestor.ensure_source(src, self.adapter(src.adapter).spec)
             names.append(src.name)
         for row in rows(self.conn, "SELECT name, health FROM sources"):
-            if row["name"] not in self.cfg.sources and row["health"] != "disabled":
-                self.ingestor.set_health(row["name"], "disabled", "removed from config")
+            if row["name"] not in self.cfg.sources:
+                self.ingestor.set_enabled(row["name"], False, "removed from config")
+                if row["health"] in ("ok", "suspect"):  # a quarantine or a lapsed review stays on record
+                    self.ingestor.set_health(row["name"], "disabled", "removed from config")
         return names
 
     def due(self, now: float | None = None, force: bool = False) -> list[dict]:
@@ -334,6 +365,7 @@ class Scheduler:
         stop = stop or asyncio.Event()
         while not stop.is_set():
             try:
+                self.reload_sources()
                 self.sync_sources()
                 if not self.due() or await self.network_ready():
                     await self.run_once()
@@ -357,11 +389,18 @@ def _flagged(f):
     return ParseResult(projection=p)
 
 
+def health_label(row: dict) -> str:
+    """Health as shown to a person: a paused source keeps its health, so "quarantined (paused)" stays visible."""
+    if row["enabled"] or row["health"] == "disabled":
+        return row["health"]
+    return "paused" if row["health"] == "ok" else f"{row['health']} (paused)"
+
+
 def status_summary(conn: sqlite3.Connection, now: float) -> dict:
-    srcs = rows(conn, "SELECT name, adapter, tier, reputation, health, health_reason, interval_s, next_due_at, last_run_at, last_change_at, fail_count, reviewed_at, review_every_days FROM sources ORDER BY name")
+    srcs = rows(conn, "SELECT name, adapter, tier, reputation, enabled, health, health_reason, interval_s, next_due_at, last_run_at, last_change_at, fail_count, reviewed_at, review_every_days FROM sources ORDER BY name")
     by_health: dict[str, int] = {}
     for s in srcs:
-        by_health[s["health"]] = by_health.get(s["health"], 0) + 1
+        by_health[health_label(s)] = by_health.get(health_label(s), 0) + 1
     held = one(conn, "SELECT COUNT(*) AS n FROM items WHERE held=1")
     tainted = one(conn, "SELECT COUNT(*) AS n FROM items WHERE tainted=1")
     quarantine = one(conn, "SELECT COUNT(*) AS n FROM quarantine WHERE ts>=?", (now - 7 * 86400,))

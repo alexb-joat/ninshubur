@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from ninshubur.db import rows, one
 from ninshubur.logs import read_jsonl
@@ -152,3 +153,61 @@ def test_daemon_waits_for_the_network_after_waking(home):
     row = env.source("confs")
     assert row["last_run_at"] is not None and row["fail_count"] == 0 and env.seen.calls
     assert events() == ["offline", "online"]
+
+
+def edit_config(home, sources: dict, mtime_ns: int, extra: dict | None = None) -> None:
+    """Rewrite config.yaml as another process would, with a distinct timestamp however fast the test runs."""
+    p = write_config(home, sources, extra)
+    os.utime(p, ns=(mtime_ns, mtime_ns))
+
+
+def test_a_pause_keeps_the_quarantine_and_the_running_daemon_follows_it(home):
+    """`sources disable` used to overwrite a quarantine, and a running daemon turned the source back on at its next tick."""
+    from tests.conftest import DEFAULT_SOURCES
+    confs = dict(DEFAULT_SOURCES["confs"])
+    write_config(home, {"confs": confs})
+    routes = {("raw.githubusercontent.com", "/robots.txt"): {"status": 404, "body": ""},
+              ("raw.githubusercontent.com", "*"): {"status": 302, "headers": {"Location": "https://evil.example/"}, "body": ""}}
+    env = Env(home, routes)  # the daemon: config loaded once, at start
+    env.run_once()
+    assert env.source("confs")["health"] == "quarantined"
+    calls = len(env.seen.calls)
+
+    edit_config(home, {"confs": {**confs, "enabled": False}}, 1)  # `ninshubur sources disable confs`
+    env.ingestor.set_enabled("confs", False, "disabled by operator")
+    one_tick(env)
+    row = env.source("confs")
+    assert (row["enabled"], row["health"]) == (0, "quarantined")
+
+    edit_config(home, {"confs": confs}, 2)  # `ninshubur sources enable confs`
+    env.ingestor.set_enabled("confs", True, "enabled by operator")
+    one_tick(env)
+    row = env.source("confs")
+    assert (row["enabled"], row["health"]) == (1, "quarantined")
+
+    edit_config(home, {}, 3)  # removed from config, then added back
+    one_tick(env)
+    assert (env.source("confs")["enabled"], env.source("confs")["health"]) == (0, "quarantined")
+    edit_config(home, {"confs": confs}, 4)
+    one_tick(env)
+    assert env.source("confs")["health"] == "quarantined" and len(env.seen.calls) == calls
+
+    pol = read_jsonl(home / "logs" / "policy.jsonl")
+    assert [p["reason"] for p in pol if p["event"] in ("paused", "enabled")] == [
+        "disabled by operator", "enabled by operator", "removed from config", "re-enabled from config"]
+    assert [p["sources"] for p in pol if p["event"] == "config_reloaded"] == [["confs"]] * 4
+    assert not [p for p in pol if p["event"] == "health" and p["to"] != "quarantined"]
+
+
+def test_a_config_that_no_longer_loads_keeps_the_running_sources(home):
+    from tests.conftest import DEFAULT_SOURCES
+    write_config(home, {"confs": DEFAULT_SOURCES["confs"]})
+    env = Env(home, SAMPLE_ROUTES)
+    (home / "config.yaml").write_text("sources: [half, written")
+    os.utime(home / "config.yaml", ns=(1, 1))
+    assert env.scheduler.reload_sources() is False and set(env.scheduler.cfg.sources) == {"confs"}
+    assert read_jsonl(home / "logs" / "policy.jsonl")[-1]["event"] == "config_reload_failed"
+    edit_config(home, {"confs": DEFAULT_SOURCES["confs"]}, 2, extra={"scheduler": {"tick_s": 60}})
+    assert env.scheduler.reload_sources() is True
+    last = read_jsonl(home / "logs" / "policy.jsonl")[-1]
+    assert last["event"] == "config_reloaded" and last["sources"] == [] and last["restart_needed_for"] == ["scheduler"]

@@ -28,7 +28,7 @@ from .ingest import Ingestor
 from .logs import write_private
 from .policy import Policy, PolicyError
 from .profiles import ProfileError, load_profiles
-from .schedule import Scheduler, status_summary
+from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
 
@@ -287,7 +287,7 @@ def cmd_status(args, app: App) -> int:
     for src in s["sources"]:
         due = (src["reviewed_at"] or 0) + (src["review_every_days"] or 0) * 86400
         reason = f"  ({src['health_reason']})" if src["health_reason"] and src["health"] != "ok" else ""
-        print(f"  {src['name']:<20} {src['adapter']:<12} T{src['tier']} rep {src['reputation']:.2f} {src['health']:<14} "
+        print(f"  {src['name']:<20} {src['adapter']:<12} T{src['tier']} rep {src['reputation']:.2f} {health_label(src):<20} "
               f"next {app.local(src['next_due_at']):<16} review {app.day(due)}{reason}")
     print(f"items held {s['items_held']}, tainted {s['items_tainted']}; quarantine rows (7 d) {s['quarantine_7d']}; "
           f"new candidates {s['candidates_new']}")
@@ -313,7 +313,8 @@ def cmd_sources_list(args, app: App) -> int:
     app.scheduler.sync_sources()
     for src in app.cfg.sources.values():
         row = app.ingestor.source(src.name) or {}
-        print(f"{src.name:<20} {src.adapter:<12} T{src.tier} rep {row.get('reputation', 0):.2f} {row.get('health', '?'):<14} "
+        print(f"{src.name:<20} {src.adapter:<12} T{src.tier} rep {row.get('reputation', 0):.2f} "
+              f"{health_label(row) if row else '?':<20} "
               f"owner {src.trust.get('owner')!s:<30} licence {src.trust.get('licence')}  review {app.day(src.review_due_at())}")
     return 0
 
@@ -476,8 +477,13 @@ def cmd_sources_toggle(args, app: App) -> int:
     enable = args.cmd == "enable"
     data["sources"][args.name]["enabled"] = enable
     write_private(path, yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
-    app.ingestor.set_health(args.name, "ok" if enable else "disabled", f"{args.cmd}d by operator")
-    print(f"{args.name} {args.cmd}d")
+    app.ingestor.set_enabled(args.name, enable, f"{args.cmd}d by operator")
+    row = app.ingestor.source(args.name)
+    held = row and row["health"] not in ("ok", "suspect", "disabled")
+    until = "its trust block's reviewed_at is renewed" if held and row["health"] == "review_overdue" \
+        else f"`ninshubur sources review {args.name} --clear`"
+    print(f"{args.name} {args.cmd}d" + (f"; still {row['health']} ({row['health_reason'] or '-'})" if held else "")
+          + (f": it fetches nothing until {until}" if held and enable else ""))
     return 0
 
 
@@ -568,8 +574,9 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--reject", type=int, metavar="ID", help="mark one candidate as rejected")
     c.add_argument("--reject-host", metavar="HOST", help="reject every new candidate on this host (and subdomains)")
     c.set_defaults(fn=cmd_sources_candidates)
-    for name in ("enable", "disable"):
-        e = ss.add_parser(name)
+    for name, about in (("enable", "resume a paused source (a quarantine stays until `review --clear`)"),
+                        ("disable", "pause a source (its health and any quarantine stay on record)")):
+        e = ss.add_parser(name, help=about)
         e.add_argument("name")
         e.set_defaults(fn=cmd_sources_toggle, cmd=name)
     pr = sub.add_parser("profiles", help="list profiles")

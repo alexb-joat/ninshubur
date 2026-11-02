@@ -217,6 +217,11 @@ the weekly digests. It opens no network port. When sources are due but none of t
 resolves or has a route (a laptop waking before Wi-Fi is back), it waits instead of fetching and
 writes `offline` and `online` to `logs/policy.jsonl`; a waiting source is not counted as failing.
 
+A running daemon follows changes to `sources` in `config.yaml` within one tick (`sources enable`,
+`sources disable`, `sources add`, a hand edit). Any other setting, and `profiles.yaml`, needs a
+restart: `systemctl --user restart ninshubur`. Pausing leaves a source's health alone, so a
+quarantine lasts until `sources review <name> --clear`.
+
 ## 9. Moving it to a shared machine
 
 The folder `~/.ninshubur/` is the entire state. To move: install on the new machine (section 1),
@@ -241,6 +246,7 @@ exports are.
 |---|---|
 | "refusing to run" | the message names the config or policy line |
 | a source shows `suspect` or `quarantined` | `ninshubur sources review <name>`; `--clear` after reading the reasons |
+| a source shows `paused` | someone ran `sources disable`; `sources enable <name>` resumes it |
 | a source shows `review_overdue` | update `reviewed_at` in its trust block after re-checking its terms |
 | a source shows `broken` | it answered 403/404/410 five times; the URL or the service changed |
 | nothing fetched | `ninshubur run --force`; check `~/.ninshubur/logs/fetch.jsonl`, where a network error carries its reason in `detail` |
