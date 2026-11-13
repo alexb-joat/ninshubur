@@ -335,6 +335,31 @@ postings is judged on the 12 that match your terms best. The check proves the ci
 not that the reason follows from them. How often a model agrees with a person is measured
 separately, against a label sheet (below).
 
+### The label sheet
+
+To know how far to trust a model's answers, label a sample yourself and compare.
+
+```bash
+ninshubur export label-sheet --profile acme --sample 100 --seed 7
+```
+
+writes `feeds/label-sheet-acme-seed7.csv` and, beside it, `label-sheet-acme-seed7.csv.meta.json`.
+Open the CSV in a spreadsheet, read each row's `evidence`, and type one of the profile's labels in
+`label` (`note` is free text). Judge from the evidence shown: it is what the model is given.
+
+- **Blind.** The sheet holds the name, the evidence lines and two empty cells. Nothing a model
+  answered is read when it is built.
+- **Stratified.** Companies are grouped by the sources their evidence came from and by whether they
+  have few, some or many evidence lines (thirds of all companies). Rows are shared out over the
+  groups in proportion, each group gets at least one row when the sample allows, and the row order
+  does not follow the groups. The counts are in the meta file.
+- **Repeatable.** The same seed draws the same rows on any machine. If more rows are asked for
+  than there are companies with evidence, all are taken and the command says so.
+- **Safe.** An existing sheet is never replaced unless you pass `--force`; `-o` writes elsewhere.
+
+The meta file records the question, the labels, the seed and, per row, the group, a hash of the
+evidence and the item ids, so a later comparison can prove the model was asked on the same lines.
+
 ## 7. Tuning before real work starts
 
 All numbers live in `~/.ninshubur/config.yaml`. After an edit: `ninshubur check`, then

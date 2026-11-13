@@ -27,6 +27,7 @@ from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
 from .home import data_home, ensure_home
 from .ingest import Ingestor
+from .labelsheet import LabelSheetError, meta_path as label_meta_path, write as write_label_sheet
 from .llm import LLMClient, LLMError
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
@@ -685,6 +686,27 @@ def cmd_export(args, app: App) -> int:
     if args.profile and args.profile not in app.profiles:
         print(f"unknown profile {args.profile!r}; known: {', '.join(app.profiles) or 'none'}", file=sys.stderr)
         return 2
+    if args.what == "label-sheet":
+        if not args.profile:
+            print("label-sheet needs --profile (the sheet is drawn for one profile's question)", file=sys.stderr)
+            return 2
+        profile = app.profiles[args.profile]
+        try:
+            path, sheet = write_label_sheet(qualify_subjects(app, profile) if profile.qualify else [], profile, app.home,
+                                            sample=args.sample, seed=args.seed, now=app.now(),
+                                            out=Path(args.output) if args.output else None, force=args.force)
+        except LabelSheetError as e:
+            print(e, file=sys.stderr)
+            return 2
+        q = profile.qualify
+        print(f"written {path}")
+        print(f"  {len(sheet.rows)} row(s) drawn from {sheet.population} with seed {sheet.seed}, over {len(sheet.strata)} strata "
+              f"(counts in {label_meta_path(path).name}); no model output is in the sheet")
+        if len(sheet.rows) < sheet.asked:
+            print(f"  note: {sheet.asked} were asked for, but only {sheet.population} have evidence")
+        print(f"  question: {q.question}")
+        print(f"  fill the label column with one of: {', '.join(q.labels)}; note is free text; leave the other columns as they are")
+        return 0
     try:
         fmt = "csv" if args.what in ("items", "prospects") and args.format == "md" else args.format
         path = export_files(app.conn, app.suggester, app.home, what=args.what, fmt=fmt, profile=args.profile,
@@ -800,8 +822,12 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--outcome", required=True, choices=["won", "lost", "meeting", "reply", "none"])
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
-    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv) or euboulia-facts (json) to feeds/")
-    ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "euboulia-facts"])
+    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv) or "
+                                       "euboulia-facts (json) to feeds/")
+    ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts"])
+    ex.add_argument("--sample", type=int, default=100, metavar="N", help="label-sheet: how many rows to draw (default 100)")
+    ex.add_argument("--seed", type=int, default=7, help="label-sheet: the same seed draws the same rows (default 7)")
+    ex.add_argument("--force", action="store_true", help="label-sheet: replace an existing sheet (its labels are lost)")
     ex.add_argument("--event", help="prospects: one event (item id or uid)")
     ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
     ex.add_argument("--profile")
