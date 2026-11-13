@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from ninshubur.analyze.suggest import Suggester
 from ninshubur.db import one
-from ninshubur.export import export, gather, parse_since, render_csv_suggestions, render_html, render_md, weekly_digests
+from ninshubur.export import _cell, export, gather, parse_since, render_csv_items, render_csv_prospects, render_csv_suggestions, render_html, render_md, weekly_digests
 from ninshubur.profiles import load_profiles
 from tests.conftest import NOW, SAMPLE_ROUTES, Env, hn_router, load_sample, write_config, write_profiles
 
@@ -109,3 +109,85 @@ def test_prospect_rows_and_csv(home):
     assert csv_text.startswith("\ufeff") and "hello@expo.example" not in csv_text and "Eve Mallory" not in csv_text
     d = gather(env.conn, sug, profile="agency-eu", statuses=("new",), since=None, now=env.clock.now(), tz=TZ)
     assert d["prospects"] and "| Role | Name |" in render_md(d) and "<th>Handle</th>" in render_html(d)
+
+
+HOSTILE = ["=HYPERLINK(\"http://evil.example\",\"x\")", "+SUM(1+1)", "-2+3", "@SUM(1+1)", "\t=1+1", "\r=1+1", "  =1+1", "\n=1+1"]
+
+
+def test_cell_rule():
+    for bad in HOSTILE:
+        assert _cell(bad) == "'" + bad
+    assert _cell(None) == "" and _cell("") == "" and _cell("   ") == "   "
+    for same in ("Jane Doe", "PyCon Portugal 2026", "a=b", "x-y", "me@example.test", "'=already", "-5", "+3.50", "-1.00", "0.5", "é=ü"):
+        assert _cell(same) == same
+    assert _cell(7) == 7 and _cell(-1.5) == -1.5 and _cell(0) == 0
+    assert _cell(True) is True
+
+    class Sneaky:
+        def __str__(self):
+            return "=1+1"
+
+    assert _cell(Sneaky()) == "'=1+1" and _cell(["a", "b"]) == "['a', 'b']"
+
+
+def _parsed(text, columns):
+    recs = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    assert len(recs) > 1 and {len(r) for r in recs} == {columns}
+    return recs
+
+
+def test_csv_separator_inside_a_value_stays_inside_its_cell():
+    from ninshubur.export import PROSPECT_COLUMNS
+    base = {c: "ok" for c in PROSPECT_COLUMNS}
+    text = render_csv_prospects([dict(base, name="a;=1+1", company="x\t=cmd|' /c calc'!A0", seen_events=3)])
+    header, row = text.lstrip("\ufeff").splitlines()
+    assert header == ",".join(PROSPECT_COLUMNS)  # our own text, bare
+    assert '"a;=1+1"' in row and "\"x\t=cmd|' /c calc'!A0\"" in row and '"3"' in row  # every data cell quoted
+    assert _parsed(text, len(PROSPECT_COLUMNS))[1][PROSPECT_COLUMNS.index("name")] == "a;=1+1"
+
+
+def test_csv_prospects_guards_formulas(home):
+    from ninshubur.export import PROSPECT_COLUMNS
+    base = {c: "ok" for c in PROSPECT_COLUMNS}
+    base["seen_events"] = 3
+    rows_ = [dict(base, name=h, title=h, company=h) for h in HOSTILE]
+    rows_.append(dict(base, name="Ada Example", title="", company=None, seen_events=0))
+    recs = _parsed(render_csv_prospects(rows_), len(PROSPECT_COLUMNS))
+    ni, ti, ci, si = (PROSPECT_COLUMNS.index(c) for c in ("name", "title", "company", "seen_events"))
+    for rec, h in zip(recs[1:], HOSTILE):
+        assert rec[ni] == rec[ti] == rec[ci] == "'" + h
+    last = recs[-1]
+    assert last[ni] == "Ada Example" and last[ti] == "" and last[ci] == "" and last[si] == "0" and last[0] == "ok"
+
+
+def test_csv_suggestions_guards_formulas(home):
+    env, sug = built_env(home)
+    d = gather(env.conn, sug, profile="agency-eu", statuses=("new", "accepted", "held"), since=None, now=env.clock.now(), tz=TZ)
+    clean = list(csv.reader(io.StringIO(render_csv_suggestions(d).lstrip("\ufeff"))))
+    d["suggestions"] = d["suggestions"][:len(HOSTILE)]
+    for s, h in zip(d["suggestions"], HOSTILE):
+        s["title"] = h
+        s["steps"] = [h, "Ordinary step"]
+    d["suggestions"][0]["roi"] = -2.5
+    recs = _parsed(render_csv_suggestions(d), len(clean[0]))
+    title_i, steps_i, roi_i = (clean[0].index(c) for c in ("title", "steps", "roi"))
+    for rec, h in zip(recs[1:], HOSTILE):
+        assert rec[title_i] == "'" + h and rec[steps_i] == "'" + h + " | Ordinary step"
+    assert recs[1][roi_i] == "-2.50"  # a formatted negative number is not a formula
+    assert len(recs) == len(d["suggestions"]) + 1 and recs[0] == clean[0]
+    assert all(r[title_i] not in HOSTILE for r in recs[1:])
+
+
+def test_csv_items_guards_formulas(home):
+    env, sug = built_env(home)
+    clean = _parsed(render_csv_items(env.conn, since=None, tz=TZ), 11)
+    ids = [r["id"] for r in env.conn.execute("SELECT id FROM items ORDER BY id LIMIT ?", (len(HOSTILE),)).fetchall()]
+    assert len(ids) == len(HOSTILE)
+    for i, h in zip(ids, HOSTILE):
+        env.conn.execute("UPDATE items SET title=? WHERE id=?", (h, i))
+    env.conn.commit()
+    recs = _parsed(render_csv_items(env.conn, since=None, tz=TZ), 11)
+    assert len(recs) == len(clean)
+    titles = {r[2] for r in recs[1:]}
+    assert {"'" + h for h in HOSTILE} <= titles and not titles & set(HOSTILE)
+    assert [r[3:] for r in recs[1:]] == [r[3:] for r in clean[1:]]  # the other columns are untouched

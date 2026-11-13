@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import html
 import io
+import re
 import sqlite3
 import time
 from datetime import datetime
@@ -77,12 +78,42 @@ def prospect_rows(conn: sqlite3.Connection, *, event: str | None = None, profile
     return out
 
 
+_FORMULA_START = "=+-@"
+_PLAIN_NUMBER = re.compile(r"[+-]?\d+(\.\d+)?")
+
+
+def _cell(value):
+    """One CSV cell, safe to open in a spreadsheet (OWASP "CSV Injection"). Crawled text is untrusted, and Excel,
+    LibreOffice and Sheets run a cell that starts with = + - @ as a formula. Rule: None becomes ""; numbers (int,
+    float, bool) pass through unchanged so numeric columns stay numeric; any other value is turned into text first; a string gets a leading apostrophe when
+    it starts with a tab or carriage return, or when its first character after any leading whitespace (spaces,
+    newlines, tabs) is one of = + - @. The text is prefixed, never stripped or changed. A string that is only a
+    plain decimal number ("-5", "+3.50", "-1.00") is left alone: it is a number, not a formula, and the formatted
+    money columns can be negative. Everything else is returned unchanged."""
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return value
+    if not isinstance(value, str):
+        value = str(value)  # a list or mapping from crawled attributes is written as text, so it is checked as text
+    first = value.lstrip()[:1]
+    if (value[:1] in ("\t", "\r") or (first and first in _FORMULA_START)) and not _PLAIN_NUMBER.fullmatch(value):
+        return "'" + value
+    return value
+
+
+def _writer(buf: io.StringIO, header: list[str] | tuple[str, ...]):
+    """A csv writer for rows of crawled text. Every data cell is quoted, so a ';' or a tab inside a value cannot
+    start a new cell (and a formula) in a program that splits on them. The header is our own text and stays bare."""
+    buf.write(",".join(header) + "\n")
+    return csv.writer(buf, lineterminator="\n", quoting=csv.QUOTE_ALL)
+
+
 def render_csv_prospects(rows_: list[dict]) -> str:
     buf = io.StringIO()
-    w = csv.writer(buf, lineterminator="\n")
-    w.writerow(PROSPECT_COLUMNS)
+    w = _writer(buf, PROSPECT_COLUMNS)
     for r in rows_:
-        w.writerow([r.get(c) if r.get(c) is not None else "" for c in PROSPECT_COLUMNS])
+        w.writerow([_cell(r.get(c)) for c in PROSPECT_COLUMNS])
     return "\ufeff" + buf.getvalue()
 
 
@@ -271,15 +302,15 @@ ITEM_COLUMNS = ["source", "kind", "title", "url", "published_at", "city", "count
 def render_csv_suggestions(d: dict) -> str:
     tz = ZoneInfo(d["tz"])
     buf = io.StringIO()
-    w = csv.writer(buf, lineterminator="\n")
-    w.writerow(SUGGESTION_COLUMNS)
+    w = _writer(buf, SUGGESTION_COLUMNS)
     for s in d["suggestions"]:
         ev = s["evidence"][0] if s["evidence"] else {}
-        w.writerow([s["id"], s["kind"], s.get("profile") or "", s["status"], s.get("held_reason") or "", s["title"],
-                    f"{s['est_value']:.2f}", f"{s['est_cost']:.2f}", f"{s['roi']:.2f}", f"{s['confidence']:.2f}",
-                    _day(s.get("deadline"), tz), _day(s.get("best_window_start"), tz), _day(s.get("best_window_end"), tz),
-                    _day(s["expires_at"], tz), ev.get("source", ""), ev.get("tier", ""), ev.get("url", ""), _dt(ev.get("fetched_at"), tz),
-                    " | ".join(s["steps"]), " | ".join(s["reasons"])])
+        w.writerow([_cell(v) for v in (
+            s["id"], s["kind"], s.get("profile") or "", s["status"], s.get("held_reason") or "", s["title"],
+            f"{s['est_value']:.2f}", f"{s['est_cost']:.2f}", f"{s['roi']:.2f}", f"{s['confidence']:.2f}",
+            _day(s.get("deadline"), tz), _day(s.get("best_window_start"), tz), _day(s.get("best_window_end"), tz),
+            _day(s["expires_at"], tz), ev.get("source", ""), ev.get("tier", ""), ev.get("url", ""), _dt(ev.get("fetched_at"), tz),
+            " | ".join(s["steps"]), " | ".join(s["reasons"]))])
     return "﻿" + buf.getvalue()
 
 
@@ -292,13 +323,13 @@ def render_csv_items(conn: sqlite3.Connection, *, since: float | None, tz: ZoneI
         params.append(since)
     sql += " GROUP BY i.id ORDER BY i.source, i.kind, i.published_at DESC"
     buf = io.StringIO()
-    w = csv.writer(buf, lineterminator="\n")
-    w.writerow(ITEM_COLUMNS)
+    w = _writer(buf, ITEM_COLUMNS)
     for r in rows(conn, sql, params):
         a = uj(r["attrs"])
         dates = "; ".join(f"{p.split('=')[0]} {_day(float(p.split('=')[1]), tz)}" for p in (r["dates"] or "").split(",") if "=" in p)
-        w.writerow([r["source"], r["kind"], r["title"], r["url"] or "", _day(r["published_at"], tz), a.get("city", ""), a.get("country", ""),
-                    a.get("company", ""), dates, r["tainted"], r["held"]])
+        w.writerow([_cell(v) for v in (
+            r["source"], r["kind"], r["title"], r["url"] or "", _day(r["published_at"], tz), a.get("city", ""), a.get("country", ""),
+            a.get("company", ""), dates, r["tainted"], r["held"])])
     return "﻿" + buf.getvalue()
 
 

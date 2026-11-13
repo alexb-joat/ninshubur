@@ -101,6 +101,8 @@ ninshubur export suggestions --format csv                   # one row per sugges
 ninshubur export items --format csv                         # everything gathered
 ```
 
+In every CSV export (suggestions, items, prospects), a cell that begins with `=`, `+`, `-` or `@` (or a tab or carriage return) is prefixed with an apostrophe, so crawled text does not run as a spreadsheet formula. Every data cell is quoted, so a `;` or a tab inside a value cannot start a new cell.
+
 Files land in `~/.ninshubur/feeds/`, named by ISO week and profile. The digest has a section per
 kind sorted by value, a "Held" section, the sources table and the candidate hosts. It is written
 for us: it shows formulas, tiers and held reasons. Do not forward it to a client as is.
