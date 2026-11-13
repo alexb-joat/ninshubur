@@ -199,6 +199,27 @@ Each `run` also refreshes the `signals` table (one row per clean hiring posting,
 postings published in the same second share a row)
 and `company_aliases` (the decisions above) for anyone reading the database directly.
 
+Hiring suggestions follow the same keys: one per company and profile, covering every posting of
+the last 30 days (`<Name> is hiring: <n> roles (<most relevant title>)`, the five newest postings as
+evidence, the total in the reasons). A new posting updates that suggestion instead of adding one.
+A dismissal (or accept, or done) sticks until the company posts a role Ninshubur had not seen
+when you decided; then a new suggestion starts.
+
+Databases from before this change hold one hiring suggestion per posting. The next `run` expires
+the ones a company suggestion now covers (never the ones you already decided). To see the numbers
+first:
+
+```
+$ ninshubur suggest --regroup-dry-run
+dry run, nothing written: 1 live per-posting hiring suggestion(s)
+  1 of them belong to 1 company key(s) and expire on the next `ninshubur run`
+  2 per-company suggestion row(s) will be created: agency-eu 1, agency-us 1
+  0 live per-company suggestion(s) whose postings moved to another key (an alias) expire
+  0 are past their own expiry date and expire on the next run anyway
+  0 cover no posting that still qualifies; they stay live until their own expiry date
+  1 per-posting suggestion(s) a person accepted, dismissed or marked done stay untouched
+```
+
 ## 6b. Conference prospecting
 
 Conferences are prospect lists, not trips. The companies that paid for a stand, a sponsorship or a

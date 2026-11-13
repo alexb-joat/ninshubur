@@ -87,10 +87,13 @@ def test_builders_end_to_end(home):
     tainted = next(s for t, s in leads.items() if "outbound SDR contractor" in t)
     assert tainted.status == "held" and tainted.held_reason == "evidence_tainted"
     assert not any("Ignore all previous" in s.title for s in built)
-    # hiring_signal_outreach: Acme is a target company -> all three postings, SDR first by title match too
+    # hiring_signal_outreach: Acme is a target company -> one suggestion for its three postings, newest first
     hires = by_kind["hiring_signal_outreach"]
-    assert len(hires) == 3 and all(s.evidence[0]["tier"] == 0 for s in hires)
-    assert all(s.entity_keys[0] == "company:acme.example" for s in hires)
+    assert len(hires) == 1 and len(hires[0].evidence) == 3 and all(e["tier"] == 0 for e in hires[0].evidence)
+    acme = hires[0]
+    assert acme.entity_keys == ["company:acme.example"] and acme.item_ids == sorted(acme.item_ids) and len(acme.item_ids) == 3
+    assert acme.title == "Acme Inc is hiring: 3 roles (Sales Development Representative)"
+    assert acme.evidence[0]["values"]["title"] == "Sales Development Representative" and acme.reasons[1].startswith("3 open postings")
     # tool_outage: major incident on anthropic/claude, tools_in_use matches
     out = by_kind["tool_outage"]
     assert len(out) == 1 and out[0].est_cost == 0 and "major impact" in out[0].reasons[0]
@@ -223,3 +226,218 @@ def test_hiring_roles_alone_are_a_signal_and_past_decide_by_is_said(home):
     nimbus = next(s for s in hires if "Nimbus" in s.title)
     assert nimbus.reasons[0].startswith("hiring for ") and "growth" in nimbus.reasons[0]
     assert not any(s.kind == "conference_trip" for s in built)
+
+
+# --- one hiring suggestion per company ----------------------------------------------------------------
+TWO_PROFILES = {
+    "agency-eu": {"titles": ["Account Executive"], "target_companies": [{"name": "Acme Inc", "domain": "acme.example", "greenhouse": "acme"}]},
+    "agency-us": {"titles": ["Account Executive"], "target_companies": [{"name": "Acme Inc", "domain": "acme.example"}]},
+}
+
+
+def company_env(home, profiles=None):
+    from tests.test_companies import SOURCES
+    write_config(home, SOURCES)
+    write_profiles(home, profiles or TWO_PROFILES)
+    env = Env(home, {})
+    env.scheduler.sync_sources()
+    return env, Suggester(env.conn, env.policy, env.cfg, load_profiles(home), now=env.clock.now, home=home)
+
+
+def live_hiring(conn, profile=None):
+    q = "SELECT * FROM suggestions WHERE kind='hiring_signal_outreach' AND status IN ('new','held')"
+    return [r for r in rows(conn, q) if profile is None or r["profile"] == profile]
+
+
+def test_one_suggestion_per_company_with_capped_evidence(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"agency-eu": TWO_PROFILES["agency-eu"]})
+    ids = [add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", title=f"Account Executive {i}", at=NOW - (i + 1) * DAY)
+           for i in range(8)]
+    add_item(env.conn, "hn", "Quiet Labs", title="Account Executive")
+    built = [s for s in sug.build_all() if s.kind == "hiring_signal_outreach"]
+    assert sorted(s.entity_keys[0] for s in built) == ["company:acme.example", "company:quiet-labs"]
+    acme = next(s for s in built if s.entity_keys == ["company:acme.example"])
+    assert acme.item_ids == sorted(ids) and acme.title == "Acme Inc is hiring: 8 roles (Account Executive 0)"
+    assert [e["values"]["title"] for e in acme.evidence] == [f"Account Executive {i}" for i in range(5)]  # the 5 newest
+    assert "8 open postings" in acme.reasons[1] and "evidence lists the 5 most recent" in acme.reasons[1]
+    assert acme.best_window[0] == timing.hiring_post(NOW - DAY).start  # window from the newest posting
+    assert not any(k.startswith("job:") for s in built for k in s.entity_keys)
+    quiet = next(s for s in built if s.entity_keys == ["company:quiet-labs"])
+    assert quiet.title == "Quiet Labs is hiring: Account Executive" and quiet.reasons[1].startswith("posted ")
+
+
+def test_hold_considers_every_posting_and_the_least_trusted_tier(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"agency-eu": TWO_PROFILES["agency-eu"]})
+    for i in range(6):
+        add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - (i + 1) * DAY)
+    old_hn = add_item(env.conn, "hn", "Acme Inc", at=NOW - 20 * DAY, held=1)  # oldest, Tier 2 source, held
+    s = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    assert old_hn in s.item_ids and s.status == "held" and s.held_reason == "source_suspect"
+    assert [e["tier"] for e in s.evidence] == [0, 0, 0, 0, 0, 2]  # the weakest posting is shown, so the badge is honest
+    env.conn.execute("UPDATE items SET held=0 WHERE id=?", (old_hn,))
+    s = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    assert s.status == "new" and s.confidence <= 0.95
+
+
+def test_a_new_posting_next_week_updates_the_same_suggestion(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"agency-eu": TWO_PROFILES["agency-eu"]})
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - DAY)
+    first = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    env.clock.advance(8 * DAY)
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", title="Account Executive II", at=env.clock.now() - 3600)
+    second = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    assert second.id == first.id and second.fingerprint == first.fingerprint and len(second.item_ids) == 2
+    assert len(live_hiring(env.conn)) == 1
+    assert fingerprint("hiring_signal_outreach", second.entity_keys, NOW) != fingerprint("hiring_signal_outreach", second.entity_keys, NOW + 8 * DAY)
+
+
+def test_two_profiles_matching_one_company_each_get_their_own(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home)
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme")
+    built = [s for s in sug.build_all() if s.kind == "hiring_signal_outreach"]
+    assert sorted(s.profile for s in built) == ["agency-eu", "agency-us"] and len({s.fingerprint for s in built}) == 2
+    assert sorted(r["profile"] for r in live_hiring(env.conn)) == ["agency-eu", "agency-us"]
+
+
+def test_a_decision_sticks_until_the_company_posts_again(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"agency-eu": TWO_PROFILES["agency-eu"]})
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - DAY, first_seen=NOW - DAY)
+    s = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    Feedback(env.conn, [], now=env.clock.now).dismiss(s.id, "not now")
+    env.clock.advance(3600)
+    sug.build_all()
+    assert sug.get(s.id)["status"] == "dismissed" and live_hiring(env.conn) == []
+    env.clock.advance(DAY)
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", title="Account Executive II", at=env.clock.now(), first_seen=env.clock.now())
+    again = next(x for x in sug.build_all() if x.kind == "hiring_signal_outreach")
+    assert again.id != s.id and again.status == "new" and sug.get(s.id)["status"] == "dismissed"
+    sug.build_all()
+    assert [r["id"] for r in live_hiring(env.conn)] == [again.id]
+
+
+def _old_row(conn, profile, item_id, job, status, expires=NOW + 30 * DAY):
+    conn.execute(
+        """INSERT INTO suggestions(fingerprint, kind, profile, title, steps, reasons, evidence, confidence, est_value, est_cost,
+           expires_at, status, created_at, updated_at, entity_keys, item_ids)
+           VALUES (?, 'hiring_signal_outreach', ?, 'old', '[]', '[]', '[]', 0.5, 10, 5, ?, ?, ?, ?, ?, ?)""",
+        (f"old-{item_id}-{status}", profile, expires, status, NOW - DAY, NOW - DAY,
+         json.dumps(["company:acme.example", f"job:{job}"]), json.dumps([item_id])))
+
+
+def test_regroup_dry_run_counts_exactly_what_the_rebuild_expires(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home)
+    a1 = add_item(env.conn, "acme-jobs", "Acme Inc", board="acme")
+    a2 = add_item(env.conn, "acme-jobs", "Acme Inc", board="acme")
+    q = add_item(env.conn, "hn", "Quiet Labs", title="Account Executive")
+    gone = add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - 60 * DAY)  # no longer qualifies
+    _old_row(env.conn, "agency-eu", a1, 1, "new")
+    _old_row(env.conn, "agency-eu", a2, 2, "held")
+    _old_row(env.conn, "agency-us", q, 3, "new")
+    _old_row(env.conn, "agency-eu", gone, 4, "new")
+    _old_row(env.conn, "agency-eu", a1, 5, "dismissed")
+    _old_row(env.conn, "agency-us", a2, 6, "accepted")
+    stale = add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - 70 * DAY)
+    _old_row(env.conn, "agency-us", stale, 7, "held", expires=NOW - DAY)  # past its own expiry date
+    before = env.conn.total_changes
+    dry = sug.regroup(dry_run=True)
+    assert env.conn.total_changes == before  # counts only
+    assert dry == {"live_per_posting": 5, "expire": 3, "companies": 2, "stay_live": 1, "past_expiry": 1, "moved": 0,
+                   "new_rows": {"agency-eu": 2, "agency-us": 2}, "decided_untouched": 2}
+    company_rows = lambda: [r for r in live_hiring(env.conn) if r["title"] != "old"]  # noqa: E731
+    assert company_rows() == []
+    sug.build_all()
+    assert sug.last_regroup == dry
+    made = {}
+    for r in company_rows():
+        made[r["profile"]] = made.get(r["profile"], 0) + 1
+    assert made == dry["new_rows"]  # dry-run rows per profile == rows the real rebuild created
+    olds = {r["fingerprint"]: r["status"] for r in rows(env.conn, "SELECT fingerprint, status FROM suggestions WHERE title='old'")}
+    assert olds == {f"old-{a1}-new": "expired", f"old-{a2}-held": "expired", f"old-{q}-new": "expired",
+                    f"old-{gone}-new": "new", f"old-{stale}-held": "expired", f"old-{a1}-dismissed": "dismissed", f"old-{a2}-accepted": "accepted"}
+    assert sug.regroup(dry_run=True)["expire"] == 0
+
+
+def test_cli_regroup_dry_run(home, capsys, monkeypatch):
+    from ninshubur.__main__ import main
+    from tests.test_companies import add_item
+    monkeypatch.setattr("ninshubur.__main__.time.time", lambda: NOW)
+    env, _ = company_env(home)
+    a1 = add_item(env.conn, "acme-jobs", "Acme Inc", board="acme")
+    _old_row(env.conn, "agency-eu", a1, 1, "new")
+    _old_row(env.conn, "agency-us", a1, 2, "done")
+    assert main(["suggest", "--regroup-dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines() == [
+        "dry run, nothing written: 1 live per-posting hiring suggestion(s)",
+        "  1 of them belong to 1 company key(s) and expire on the next `ninshubur run`",
+        "  2 per-company suggestion row(s) will be created: agency-eu 1, agency-us 1",
+        "  0 live per-company suggestion(s) whose postings moved to another key (an alias) expire",
+        "  0 are past their own expiry date and expire on the next run anyway",
+        "  0 cover no posting that still qualifies; they stay live until their own expiry date",
+        "  1 per-posting suggestion(s) a person accepted, dismissed or marked done stay untouched"]
+    assert one(env.conn, "SELECT status FROM suggestions WHERE fingerprint=?", (f"old-{a1}-new",))["status"] == "new"
+
+
+def test_untrusted_name_matches_never_move_trust(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"agency-eu": TWO_PROFILES["agency-eu"]})
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - DAY)
+    alone = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    hn = add_item(env.conn, "hn", "Evil Ltd (acme.example)", at=NOW - 3600)
+    mixed = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    assert hn in mixed.item_ids and mixed.confidence == alone.confidence and mixed.title.startswith("Acme Inc")
+    assert mixed.status == alone.status
+    marked = [e for e in mixed.evidence if e["values"].get("match")]
+    assert [e["values"]["match"] for e in marked] == ["name only, unverified"]
+
+
+def test_an_untrusted_only_group_counts_as_one_source_and_is_held(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"wide": {"titles": ["Account Executive"]}})
+    add_item(env.conn, "hn", "Zorbit Systems", title="Account Executive")
+    add_item(env.conn, "hn", "Zorbit Systems", title="Account Executive II")
+    s = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    assert len(s.item_ids) == 2 and s.confidence <= 0.5
+
+
+def test_a_name_only_post_after_a_dismissal_does_not_resurface_it(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"agency-eu": TWO_PROFILES["agency-eu"]})
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - DAY, first_seen=NOW - DAY)
+    s = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    Feedback(env.conn, [], now=env.clock.now).dismiss(s.id, "not now")
+    env.clock.advance(DAY)
+    add_item(env.conn, "hn", "Acme Inc (acme.example)", at=env.clock.now(), first_seen=env.clock.now())
+    sug.build_all()
+    assert live_hiring(env.conn) == [] and sug.get(s.id)["status"] == "dismissed"
+
+
+def test_a_status_set_without_feedback_counts_from_its_last_update(home):
+    from tests.test_companies import add_item
+    env, sug = company_env(home, {"agency-eu": TWO_PROFILES["agency-eu"]})
+    add_item(env.conn, "acme-jobs", "Acme Inc", board="acme", at=NOW - DAY, first_seen=NOW - DAY)
+    s = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    env.conn.execute("UPDATE suggestions SET status='done', updated_at=? WHERE id=?", (NOW, s.id))
+    env.clock.advance(3600)
+    sug.build_all()
+    assert live_hiring(env.conn) == [] and sug.get(s.id)["status"] == "done"
+
+
+def test_an_alias_added_later_expires_the_old_company_row(home):
+    from tests.test_companies import add_item
+    from ninshubur.companies import aliases_path
+    env, sug = company_env(home, {"wide": {"titles": ["Account Executive"]}})
+    add_item(env.conn, "hn", "Quokka Robotics", title="Account Executive")
+    old = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    aliases_path(home).write_text("Quokka Robotics: quokka.example\n", encoding="utf-8")
+    dry = sug.regroup(dry_run=True)
+    assert dry["moved"] == 1 and sug.get(old.id)["status"] in ("new", "held")
+    new = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")
+    assert new.entity_keys != old.entity_keys and sug.get(old.id)["status"] == "expired"
+    assert one(env.conn, "SELECT COUNT(*) AS n FROM suggestions WHERE id=?", (old.id,))["n"] == 1  # never deleted

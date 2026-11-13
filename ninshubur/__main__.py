@@ -139,7 +139,9 @@ def cmd_run(args, app: App) -> int:
     built = app.suggester.build_all()
     for s in app.sinks:
         s.write_all()
-    print(f"suggestions: {len(built)} built; `ninshubur suggest` to review")
+    rg = app.suggester.last_regroup
+    print(f"suggestions: {len(built)} built; `ninshubur suggest` to review"
+          + (f"; {rg['expire']} per-posting hiring suggestion(s) expired, now one per company" if rg.get("expire") else ""))
     return 0
 
 
@@ -190,6 +192,18 @@ def _minutes(s: str) -> int:
 
 
 def cmd_suggest(args, app: App) -> int:
+    if args.regroup_dry_run:
+        rg = app.suggester.regroup(dry_run=True)
+        total = sum(rg["new_rows"].values())
+        print(f"dry run, nothing written: {rg['live_per_posting']} live per-posting hiring suggestion(s)")
+        print(f"  {rg['expire']} of them belong to {rg['companies']} company key(s) and expire on the next `ninshubur run`")
+        print(f"  {total} per-company suggestion row(s) will be created"
+              + (": " + ", ".join(f"{p} {n}" for p, n in rg["new_rows"].items()) if rg["new_rows"] else ""))
+        print(f"  {rg['moved']} live per-company suggestion(s) whose postings moved to another key (an alias) expire")
+        print(f"  {rg['past_expiry']} are past their own expiry date and expire on the next run anyway")
+        print(f"  {rg['stay_live']} cover no posting that still qualifies; they stay live until their own expiry date")
+        print(f"  {rg['decided_untouched']} per-posting suggestion(s) a person accepted, dismissed or marked done stay untouched")
+        return 0
     status = ("held",) if args.held else ("new",)
     kw = {"status": status, "profile": args.profile, "kind": args.kind}
     items = app.suggester.plan(_minutes(args.plan), **kw) if args.plan else app.suggester.list(top=args.top, **kw)
@@ -631,6 +645,9 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--plan", metavar="MINUTES", help="e.g. 45m or 2h: best set within that time")
     sg.add_argument("--held", action="store_true", help="show held suggestions instead")
     sg.add_argument("--json", action="store_true")
+    sg.add_argument("--regroup-dry-run", action="store_true",
+                    help="count the old one-per-posting hiring suggestions the next run expires in favour of one per "
+                         "company; writes nothing")
     sg.set_defaults(fn=cmd_suggest)
     co = sub.add_parser("companies", help="hiring companies, one row per canonical company key")
     co.add_argument("--dupes", action="store_true",

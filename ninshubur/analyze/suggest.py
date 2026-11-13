@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from ..companies import AliasesError, Resolver, aliases_path, load_aliases, rollup
+from ..companies import AliasesError, Resolver, aliases_path, display_name, load_aliases, rollup
 from ..config import Config
 from ..db import j, one, rows, uj
 from ..home import data_home
@@ -28,6 +28,8 @@ from . import timing, value
 
 DAY = 86400.0
 LIVE = ("new", "held")
+DECIDED = ("accepted", "dismissed", "done")
+EVIDENCE_CAP = 5  # postings shown per company suggestion (the newest); the reasons give the total
 
 
 @dataclass
@@ -63,6 +65,12 @@ def fingerprint(kind: str, entity_keys: list[str], window_start: float | None) -
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
+def company_fingerprint(kind: str, profile: str | None, company_key: str, generation: int = 0) -> str:
+    """Per-company kinds: profile and company, no time bucket (see ``Suggester._company_fingerprint``)."""
+    raw = f"{kind}|profile:{profile or ''}|{company_key}|g{generation}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 def _evidence(item: dict, src: dict | None, values: dict) -> dict:
     return {"url": item.get("url"), "fetched_at": item.get("fetched_at"), "source": item["source"],
             "tier": int(uj(item.get("attrs")).get("tier", src["tier"] if src else 3)),
@@ -85,6 +93,8 @@ class Suggester:
         self._aliases_good: dict = {}
         self.aliases_error: str | None = None
         self.resolver: Resolver = self._load_resolver()
+        self.last_regroup: dict = {}
+        self._new_company_rows: dict[str, int] = {}
 
     def _load_resolver(self) -> Resolver:
         """Config, profiles and the aliases file; the file is read again when it changes (a running daemon).
@@ -161,19 +171,19 @@ class Suggester:
             out[k] = (float(at), float(end) if end else None)
         return out
 
-    def _hold_reason(self, items: list[dict], tier: int, est_value: float) -> str | None:
+    def _hold_reason(self, items: list[dict], tier: int, est_value: float, n_sources: int | None = None) -> str | None:
         if any(i["tainted"] for i in items):
             return "evidence_tainted"
         if any(i["held"] for i in items):
             return "source_suspect"
-        sources = {i["source"] for i in items}
-        if tier >= 2 and len(sources) <= 1 and est_value > self.corroboration_usd:
+        n = len({i["source"] for i in items}) if n_sources is None else n_sources
+        if tier >= 2 and n <= 1 and est_value > self.corroboration_usd:
             return "needs_corroboration"
         return None
 
-    def _finish(self, s: Suggestion, items: list[dict], tier: int) -> Suggestion:
+    def _finish(self, s: Suggestion, items: list[dict], tier: int, n_sources: int | None = None) -> Suggestion:
         s.fingerprint = fingerprint(s.kind, s.entity_keys, s.best_window[0] if s.best_window else None)
-        reason = self._hold_reason(items, tier, s.est_value)
+        reason = self._hold_reason(items, tier, s.est_value, n_sources)
         if reason:
             s.status, s.held_reason = "held", reason
         return s
@@ -340,43 +350,118 @@ class Suggester:
         return out
 
     def build_hiring_signal_outreach(self, profile: Profile) -> list[Suggestion]:
+        """One suggestion per company and profile, over every qualifying posting of the last 30 days."""
         now = self.now()
-        out = []
+        resolver = self.resolver
+        targets: dict[str, dict] = {}
+        for t in profile.target_companies:
+            k = resolver.key_for_target(t)
+            if k:
+                targets.setdefault(k, t)
+        groups: dict[str, list[dict]] = {}
         for it in self._items("hiring", now - 30 * DAY):
+            res = resolver.resolve(it)
+            if res is None:
+                continue
             attrs = uj(it["attrs"])
-            company = (profile.company_by_board(str(attrs.get("board", ""))) or profile.company_by_key(f"company:{attrs.get('company', '')}")
-                       or profile.company_by_name(attrs.get("company")))
+            company = targets.get(res.key)
             lex, matched, negatives = rel.lexical(it["title"], profile)
             title_hit = any(t.lower() in it["title"].lower() for t in profile.titles)
             roles = [r for r in (attrs.get("roles") or []) if isinstance(r, str)]
             if not (company or lex > 0 or title_hit or roles) or negatives:
                 continue
-            posted = it.get("published_at") or now
+            groups.setdefault(res.key, []).append({
+                "it": it, "res": res, "attrs": attrs, "company": company, "matched": matched, "lex": lex, "title_hit": title_hit,
+                "roles": roles, "posted": it.get("published_at") or now,
+                "relevance": max(0.75 if company else 0.0, lex, 0.6 if title_hit else 0.0, 0.5 if roles else 0.0)})
+        known = self._company_rows(profile.name)
+        out = []
+        for key in sorted(groups):
+            g = sorted(groups[key], key=lambda x: (-x["posted"], x["it"]["id"]))  # newest first
+            newest, n = g[0], len(g)
+            best = max(g, key=lambda x: x["relevance"])  # ties: the newest
+            items = [x["it"] for x in g]
+            tiers = {x["it"]["id"]: self._tier(x["it"]) for x in g}
+            # Untrusted items (a domain or name read from a post) join for grouping and evidence but never move
+            # trust: with trusted items, tier, reputation and corroboration come from those only; without, from
+            # the least trusted posting, and claims never corroborate each other (one source).
+            trusted = [x for x in g if x["res"].trusted]
+            basis = [x["it"] for x in trusted] or items
+            tier = max(tiers[i["id"]] for i in basis)
+            sources = sorted({i["source"] for i in items})
+            n_sources = len({i["source"] for i in basis}) if trusted else 1
+            conf = value.confidence(min(self._reputation(i) for i in basis), 1.0, n_sources, tier, self.policy)
+            relevance = best["relevance"]
+            posted = newest["posted"]
             w = timing.hiring_post(posted)
-            tier = self._tier(it)
-            conf = value.confidence(self._reputation(it), 1.0, 1, tier, self.policy)
-            relevance = max(0.75 if company else 0.0, lex, 0.6 if title_hit else 0.0, 0.5 if roles else 0.0)
             est = value.estimate("hiring_signal_outreach", cfg=self.cfg, policy=self.policy, tier=tier,
                                  profile_weight=profile.weight("hiring_signal_outreach"), relevance=relevance, conf=conf,
                                  timing_factor=w.factor(now), minutes=value.minutes_for("hiring_signal_outreach", self.cfg, 15),
                                  calibration=self._calibration("hiring_signal_outreach"))
-            name = (company or {}).get("name") or attrs.get("company") or attrs.get("board")
-            s = Suggestion(kind="hiring_signal_outreach", profile=profile.name, title=f"{name} is hiring: {it['title']}",
-                           steps=[f"Reference the posting ({it['url']}) and what the hire implies about their pipeline",
+            company = next((x["company"] for x in g if x["company"]), None)
+            name = (company or {}).get("name") or display_name([(x["res"], float(x["it"]["first_seen_at"]), int(x["it"]["id"])) for x in g])
+            matched = sorted({m for x in g for m in x["matched"]})
+            roles = sorted({r for x in g for r in x["roles"]})
+            where = newest["attrs"].get("location") or "unknown location"
+            shown = g[:EVIDENCE_CAP]
+            weakest = max(g, key=lambda x: (tiers[x["it"]["id"]], x["posted"]))
+            if tiers[weakest["it"]["id"]] > max(tiers[x["it"]["id"]] for x in shown):
+                shown = shown + [weakest]  # the badge must show the least trusted evidence
+
+            def values(x: dict) -> dict:
+                v = {"title": x["it"]["title"], "location": x["attrs"].get("location"), "posted": _d(x["posted"]), "company": name}
+                if trusted and not x["res"].trusted:
+                    v["match"] = "name only, unverified"
+                return v
+            s = Suggestion(kind="hiring_signal_outreach", profile=profile.name,
+                           title=f"{name} is hiring: {newest['it']['title']}" if n == 1 else f"{name} is hiring: {n} roles ({best['it']['title']})",
+                           steps=[f"Reference the posting ({newest['it']['url']}) and what the hire implies about their pipeline",
                                   "Offer the service the hire implies (e.g. outsourced outbound while they staff up)",
                                   f"Send between {_d(w.start)} and {_d(w.end)}, Tue-Thu morning local time"],
                            reasons=[("target company " + name) if company
-                                    else (f"title matches profile ({', '.join(matched) or 'title'})" if (lex > 0 or title_hit)
+                                    else (f"title matches profile ({', '.join(matched) or 'title'})" if any(x["lex"] > 0 or x["title_hit"] for x in g)
                                           else f"hiring for {', '.join(roles)}: roles that imply an outbound need"),
-                                    f"posted {_d(posted)} in {attrs.get('location') or 'unknown location'}", est.formula],
-                           evidence=[_evidence(it, self.source(it["source"]), {"title": it["title"], "location": attrs.get("location"),
-                                                                                "posted": _d(posted), "company": name})],
+                                    f"posted {_d(posted)} in {where}" if n == 1 else
+                                    (f"{n} open postings in 30 days from {', '.join(sources)}; newest posted {_d(posted)} in {where}"
+                                     + (f"; evidence lists the {len(shown)} most recent" if n > len(shown) else "")),
+                                    est.formula],
+                           evidence=[_evidence(x["it"], self.source(x["it"]["source"]), values(x)) for x in shown],
                            confidence=conf, est_value=est.value, est_cost=est.cost, cost_parts=est.cost_parts, deadline=w.deadline,
                            best_window=(w.start, w.end), expires_at=w.deadline or now + 30 * DAY,
-                           entity_keys=[f"company:{(company or {}).get('domain') or attrs.get('board')}", f"job:{attrs.get('job_id')}"],
-                           item_ids=[it["id"]])
-            out.append(self._finish(s, [it], tier))
+                           entity_keys=[key], item_ids=sorted(i["id"] for i in items))
+            self._finish(s, items, tier, n_sources)  # any tainted or held posting in the group still holds it
+            s.fingerprint = self._company_fingerprint(s, known.get(j(s.entity_keys)), basis)
+            out.append(s)
         return out
+
+    def _company_rows(self, profile: str) -> dict[str, list[dict]]:
+        """Per-company hiring rows of one profile, newest first, with the time of the last human decision."""
+        out: dict[str, list[dict]] = {}
+        for r in rows(self.conn, """SELECT s.id, s.fingerprint, s.status, s.entity_keys, s.updated_at, (SELECT MAX(f.at) FROM feedback f
+                                    WHERE f.suggestion_id=s.id) AS decided_at FROM suggestions s
+                                    WHERE s.kind='hiring_signal_outreach' AND s.profile=? ORDER BY s.id DESC""", (profile,)):
+            if not any(k.startswith("job:") for k in uj(r["entity_keys"], [])):
+                out.setdefault(r["entity_keys"], []).append(r)
+        return out
+
+    @staticmethod
+    def _company_fingerprint(s: Suggestion, known: list[dict] | None, items: list[dict]) -> str:
+        """One live suggestion per company and profile. The fingerprint has no week bucket, so a new posting
+        updates the live row instead of adding one. After a person decided (accepted, dismissed, done) the
+        decision sticks until a posting first seen after it arrives (``items``: the trusted postings when the
+        group has any, so a name-only post cannot resurface a dismissed company); after an expiry, any
+        qualifying posting is new. Then a new generation starts, as a new posting started a new suggestion
+        before. A decision without a feedback row counts from the row's last update."""
+        gen = len(known or [])
+        if known:
+            latest = known[0]
+            if latest["status"] in LIVE:
+                return latest["fingerprint"]
+            if latest["status"] != "expired":
+                decided = float(latest["decided_at"] or latest["updated_at"] or 0.0)
+                if not any(float(i["first_seen_at"]) > decided for i in items):
+                    return latest["fingerprint"]
+        return company_fingerprint(s.kind, s.profile, s.entity_keys[0], gen)
 
     def build_tool_outage(self, profile: Profile) -> list[Suggestion]:
         now = self.now()
@@ -416,15 +501,75 @@ class Suggester:
         for profile in self.profiles.values():
             for name in self.BUILDERS:
                 built.extend(getattr(self, name)(profile))
+        self._new_company_rows = {}
         self._upsert(built)
+        self.last_regroup = self.regroup(built)
         self.expire()
         return built
+
+    def regroup(self, built: list[Suggestion] | None = None, *, dry_run: bool = False) -> dict:
+        """Retire hiring rows the per-company suggestions replace.
+
+        Per-posting rows of earlier versions (``entity_keys`` with a ``job:`` key) still ``new``/``held`` whose
+        posting a company suggestion of the same profile now covers are expired. So are live company rows
+        whose postings all moved to a different key (an alias added later). Never deleted, never a row a
+        person decided. ``dry_run`` builds in memory and only counts, including the company rows the
+        rebuild will create (per profile) and the old rows already past their own expiry date."""
+        if built is None:
+            self.refresh_resolver()
+            built = [s for p in self.profiles.values() for s in self.build_hiring_signal_outreach(p)]
+        built = [s for s in built if s.kind == "hiring_signal_outreach"]
+        now = self.now()
+        cover: dict[tuple[str | None, int], str] = {}
+        for s in built:
+            for iid in s.item_ids:
+                cover[(s.profile, iid)] = s.entity_keys[0]
+        built_keys = {(s.profile, s.entity_keys[0]) for s in built}
+        allrows = rows(self.conn, "SELECT id, fingerprint, profile, status, entity_keys, item_ids, expires_at FROM suggestions "
+                                  "WHERE kind='hiring_signal_outreach' ORDER BY id")
+        old, moved = [], []
+        for r in allrows:
+            keys = [str(k) for k in uj(r["entity_keys"], [])]
+            if any(k.startswith("job:") for k in keys):
+                old.append(r)
+            elif r["status"] in LIVE and keys and (r["profile"], keys[0]) not in built_keys:
+                ids = [int(i) for i in uj(r["item_ids"], [])]
+                if ids and all(cover.get((r["profile"], i)) not in (None, keys[0]) for i in ids):
+                    moved.append(r)
+        live = [r for r in old if r["status"] in LIVE]
+        expire: list[int] = []
+        companies: set[str] = set()
+        for r in live:
+            keys = {cover.get((r["profile"], int(i))) for i in uj(r["item_ids"], [])} - {None}
+            if keys:
+                expire.append(int(r["id"]))
+                companies |= keys  # type: ignore[arg-type]
+        rest = [r for r in live if int(r["id"]) not in expire]
+        by_date = sum(1 for r in rest if r["expires_at"] < now)
+        if dry_run:
+            existing = {r["fingerprint"] for r in allrows}
+            new_rows: dict[str, int] = {}
+            for s in built:
+                if s.fingerprint not in existing:
+                    new_rows[str(s.profile)] = new_rows.get(str(s.profile), 0) + 1
+        else:
+            new_rows = dict(self._new_company_rows)
+        ids = expire + [int(r["id"]) for r in moved]
+        if ids and not dry_run:
+            self.conn.execute(f"UPDATE suggestions SET status='expired', updated_at=? WHERE status IN ('new','held') "
+                              f"AND id IN ({','.join('?' * len(ids))})", [now, *ids])
+        return {"live_per_posting": len(live), "expire": len(expire), "companies": len(companies),
+                "new_rows": dict(sorted(new_rows.items())), "moved": len(moved),
+                "stay_live": len(rest) - by_date, "past_expiry": by_date,
+                "decided_untouched": sum(1 for r in old if r["status"] in DECIDED)}
 
     def _upsert(self, built: list[Suggestion]) -> None:
         now = self.now()
         for s in built:
             existing = one(self.conn, "SELECT id, status FROM suggestions WHERE fingerprint=?", (s.fingerprint,))
             if existing is None:
+                if s.kind == "hiring_signal_outreach":
+                    self._new_company_rows[str(s.profile)] = self._new_company_rows.get(str(s.profile), 0) + 1
                 cur = self.conn.execute(
                     """INSERT INTO suggestions(fingerprint, kind, profile, title, steps, reasons, evidence, confidence, est_value, est_cost,
                        cost_parts, deadline, best_window_start, best_window_end, expires_at, status, held_reason, created_at, updated_at,
