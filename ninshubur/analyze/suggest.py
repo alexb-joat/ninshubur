@@ -10,12 +10,17 @@ from __future__ import annotations
 import hashlib
 import math
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
+from ..companies import AliasesError, Resolver, aliases_path, load_aliases, rollup
 from ..config import Config
 from ..db import j, one, rows, uj
+from ..home import data_home
+from ..logs import JsonlLog
 from ..policy import Policy
 from ..profiles import Profile
 from . import relevance as rel
@@ -66,7 +71,7 @@ def _evidence(item: dict, src: dict | None, values: dict) -> dict:
 
 class Suggester:
     def __init__(self, conn: sqlite3.Connection, policy: Policy, cfg: Config, profiles: dict[str, Profile],
-                 now: Callable[[], float] = time.time):
+                 now: Callable[[], float] = time.time, home: Path | None = None):
         self.conn = conn
         self.policy = policy
         self.cfg = cfg
@@ -75,6 +80,46 @@ class Suggester:
         self.corroboration_usd = float(min(cfg.get("corroboration_value_usd", default=300),
                                            policy.get("corroboration", "value_usd", default=300)))
         self._sources: dict[str, dict] = {}
+        self.home = home
+        self._aliases_mtime: float | None = None
+        self._aliases_good: dict = {}
+        self.aliases_error: str | None = None
+        self.resolver: Resolver = self._load_resolver()
+
+    def _load_resolver(self) -> Resolver:
+        """Config, profiles and the aliases file; the file is read again when it changes (a running daemon).
+        A malformed file never stops crawling or suggestions: the last good aliases (or none) stay in use,
+        the error is printed once on stderr, logged once to logs/policy.jsonl, and kept in ``aliases_error``
+        for `check` and `companies`."""
+        path = aliases_path(self.home)
+        try:
+            mtime: float | None = path.stat().st_mtime
+        except OSError:
+            mtime = None
+        self._aliases_mtime = mtime
+        try:
+            aliases = load_aliases(path)
+        except AliasesError as e:
+            msg = str(e)
+            if msg != self.aliases_error:
+                print(f"warning: {msg} (using the last good aliases until it is fixed)", file=sys.stderr)
+                JsonlLog((self.home or data_home()) / "logs" / "policy.jsonl").write(
+                    {"event": "aliases_error", "path": str(path), "detail": msg[:300]})
+            self.aliases_error = msg
+            aliases = self._aliases_good
+        else:
+            self.aliases_error = None
+            self._aliases_good = aliases
+        return Resolver(self.cfg, self.profiles, aliases, aliases_file=path)
+
+    def refresh_resolver(self) -> Resolver:
+        try:
+            mtime: float | None = aliases_path(self.home).stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime != self._aliases_mtime:
+            self.resolver = self._load_resolver()
+        return self.resolver
 
     # -- helpers --------------------------------------------------------------------------------
     def source(self, name: str) -> dict | None:
@@ -366,6 +411,7 @@ class Suggester:
 
     # -- orchestration ----------------------------------------------------------------------------
     def build_all(self) -> list[Suggestion]:
+        rollup(self.conn, self.refresh_resolver(), self.policy, self.now())  # company signals first, cheap and idempotent
         built: list[Suggestion] = []
         for profile in self.profiles.values():
             for name in self.BUILDERS:

@@ -16,6 +16,7 @@ import yaml
 from . import __version__
 from .adapters.base import all_adapters, get_adapter, run_projection
 from .analyze.suggest import Suggester
+from .companies import ALIASES_FILE, companies as company_list, dupes as company_dupes
 from .config import ConfigError, SourceConfig, load_config
 from .db import connect, j, ledger_sum, one, rows, uj
 from .envvars import load_dotenv
@@ -50,7 +51,7 @@ class App:
         self.ingestor = Ingestor(self.conn, self.policy, self.cfg, self.home, now=self.now)
         self.scheduler = Scheduler(self.conn, self.policy, self.cfg, self.home, self.fetcher, self.ingestor, now=self.now,
                                    rng=random.Random())
-        self.suggester = Suggester(self.conn, self.policy, self.cfg, self.profiles, now=self.now)
+        self.suggester = Suggester(self.conn, self.policy, self.cfg, self.profiles, now=self.now, home=self.home)
         self.sinks = [IcsSink(self.conn, self.home, str(self.cfg.get("sinks", "ics", "path", default="feeds/timings.ics")),
                               now=self.now)]
         self.feedback = Feedback(self.conn, self.sinks, now=self.now)
@@ -97,6 +98,9 @@ def cmd_check(args, app: App) -> int:
             print(f"  source {src.name}: schema {src.schema_id} is not one of {spec.schemas}")
             bad += 1
         print(f"  source {src.name:<20} {src.adapter:<12} tier {src.tier}  {flag}")
+    if app.suggester.aliases_error:
+        print(f"  aliases: {app.suggester.aliases_error}")
+        bad += 1
     print("llm       local endpoint configured; Tier B/C off in this phase")
     print("ok" if bad == 0 else f"{bad} problem(s)")
     return 0 if bad == 0 else 1
@@ -505,6 +509,44 @@ def cmd_profiles(args, app: App) -> int:
     return 0
 
 
+def cmd_companies(args, app: App) -> int:
+    resolver = app.suggester.refresh_resolver()
+    found = company_list(app.conn, resolver)
+    if app.suggester.aliases_error:
+        print(f"warning: {app.suggester.aliases_error} (the last good aliases are in use)")
+    for w in resolver.warnings:
+        print(f"note: {w}", file=sys.stderr)
+    if args.dupes:
+        pairs = company_dupes(found)
+        if args.json:
+            print(json.dumps([{"a": {"key": d.a.key, "name": d.a.name}, "b": {"key": d.b.key, "name": d.b.name},
+                               "distance": d.distance, "why": d.why, "alias_line": d.alias_line, "hint": d.hint}
+                              for d in pairs], indent=2, ensure_ascii=False))
+            return 0
+        if not pairs:
+            print(f"no near-miss names among {len(found)} companies")
+            return 0
+        print(f"{len(pairs)} near-miss pair(s) among {len(found)} companies; nothing is merged until you say so")
+        for d in pairs:
+            print(f"  {d.a.name} ({d.a.key}, {d.a.postings})  ~  {d.b.name} ({d.b.key}, {d.b.postings})  [{d.why}]")
+            print(f"    {d.hint}:" + (f"  {d.alias_line}" if d.alias_line else ""))
+        print(f"aliases file: {app.home / ALIASES_FILE}")
+        return 0
+    if args.json:
+        print(json.dumps([c.as_dict() for c in found], indent=2, ensure_ascii=False))
+        return 0
+    if not found:
+        print("no companies yet: they come from hiring items (run `ninshubur run` with a greenhouse or hn source)")
+        return 0
+    width = min(40, max(len(c.key) for c in found))
+    print(f"{'KEY':<{width}}  {'NAME':<28} {'POSTINGS':>8} {'HELD':>4}  {'FIRST':<10} {'LAST':<10}  SOURCES")
+    for c in found:
+        print(f"{c.key[:width]:<{width}}  {c.name[:28]:<28} {c.postings:>8} {c.held:>4}  {app.day(c.first_at):<10} "
+              f"{app.day(c.last_at):<10}  {', '.join(c.sources)}")
+    print(f"{len(found)} companies, {sum(c.postings for c in found)} postings; `ninshubur companies --dupes` lists near-miss names")
+    return 0
+
+
 def cmd_export(args, app: App) -> int:
     if args.what == "euboulia-facts":
         path = export_provider_facts(app.conn, app.home, app.now(), out=Path(args.output) if args.output else None)
@@ -590,6 +632,12 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--held", action="store_true", help="show held suggestions instead")
     sg.add_argument("--json", action="store_true")
     sg.set_defaults(fn=cmd_suggest)
+    co = sub.add_parser("companies", help="hiring companies, one row per canonical company key")
+    co.add_argument("--dupes", action="store_true",
+                    help=f"list near-miss names of different companies and the {ALIASES_FILE} line that merges each pair; "
+                         "writes nothing")
+    co.add_argument("--json", action="store_true")
+    co.set_defaults(fn=cmd_companies)
     sh = sub.add_parser("show")
     sh.add_argument("id", type=int)
     sh.set_defaults(fn=cmd_show)

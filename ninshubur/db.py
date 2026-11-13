@@ -69,6 +69,11 @@ SCHEMA: list[str] = [
         id INTEGER PRIMARY KEY, kind TEXT NOT NULL, entity_key TEXT NOT NULL, at REAL NOT NULL,
         window_start REAL, window_end REAL, item_id INTEGER, source TEXT NOT NULL, confidence REAL NOT NULL,
         UNIQUE(kind, entity_key, at, source))""",
+    # Derived by companies.rollup(): alias ("name:<slug>", "board:<adapter>:<token>") -> canonical company key.
+    # origin is the merge step that decided it: domain, config, profile, manual or name.
+    """CREATE TABLE IF NOT EXISTS company_aliases (
+        alias TEXT PRIMARY KEY, company_key TEXT NOT NULL, origin TEXT NOT NULL, created_at REAL NOT NULL)""",
+    """CREATE INDEX IF NOT EXISTS company_aliases_key ON company_aliases(company_key)""",
     """CREATE TABLE IF NOT EXISTS suggestions (
         id INTEGER PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, profile TEXT, title TEXT NOT NULL,
         steps TEXT NOT NULL, reasons TEXT NOT NULL, evidence TEXT NOT NULL, confidence REAL NOT NULL,
@@ -116,7 +121,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     ("entities", "ALTER TABLE entities ADD COLUMN role TEXT"),
 ]
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3  # 3: company_aliases
 
 
 def db_path(home: Path | None = None) -> Path:

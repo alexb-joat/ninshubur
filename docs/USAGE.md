@@ -143,6 +143,62 @@ config if any fails. That is deliberate: a source nobody vouched for is never fe
 A distributed team: profiles are per client *and* per person who works them. If two people in
 different countries cover the same client, make two profiles with different home bases.
 
+## 6a. Companies
+
+Every hiring item (a Greenhouse posting, a "Who is hiring?" comment) gets one company key. The
+first rule that applies decides it:
+
+1. a domain the item itself carries: a company written as a domain (`Nordash.io`) or followed by
+   one in brackets (`Chronoleaf (chronoleaf.pe)`);
+2. a domain from `config.yaml` (`params.companies.<board>.domain` of a greenhouse source) or from a
+   profile's `target_companies`, matched by board slug or by the exact name;
+3. your aliases file, `~/.ninshubur/company_aliases.yaml`;
+4. the name itself, compared after lowercasing, dropping punctuation, a trailing bracket such as
+   `(YC S11)` and a trailing unambiguous legal form (`Inc`, `Ltd`, `GmbH`, `S.A.`, ...; a bare `AG`
+   or `Co` stays, and `--dupes` lists the pair).
+
+Domains on hosts that give every customer a subdomain (`acme.github.io`) keep the full host; job
+boards and social sites (`jobs.lever.co`, `linkedin.com`) never count as a company domain. A domain
+or name read from a post only groups it with a company: trust, confidence and the display name come
+from your config, profiles and aliases file.
+
+The key is `company:<domain>` when a domain is known, else `company:<name>`. Similar names are never
+merged by guesswork: `companies --dupes` lists them with the exact line that would merge each pair.
+
+```
+$ ninshubur companies
+KEY                    NAME                         POSTINGS HELD  FIRST      LAST        SOURCES
+company:acme.example   Acme Inc                            3    0  2026-09-20 2026-10-01  acme-jobs
+company:acme-robotics  Acme Robotics                       1    0  2026-10-11 2026-10-11  hn
+company:chronoleaf.pe  Chronoleaf                          1    0  2026-10-11 2026-10-11  hn
+company:nordash        Nordash                             1    0  2026-10-11 2026-10-11  hn
+company:nordash.io     Nordash.io                          1    0  2026-10-11 2026-10-11  hn
+5 companies, 7 postings; `ninshubur companies --dupes` lists near-miss names
+
+$ ninshubur companies --dupes
+2 near-miss pair(s) among 5 companies; nothing is merged until you say so
+  Nordash (company:nordash, 1)  ~  Nordash.io (company:nordash.io, 1)  [same name]
+    add to company_aliases.yaml if they are one company:  Nordash: nordash.io
+  Acme Robotics (company:acme-robotics, 1)  ~  Acme Inc (company:acme.example, 3)  ['robotics' added]
+    add to company_aliases.yaml if they are one company:  Acme Robotics: acme.example
+aliases file: /home/you/.ninshubur/company_aliases.yaml
+```
+
+The aliases file maps a name to a company name or a domain, one line each; a value with a dot
+and no spaces is a domain. Paste only the lines you agree with:
+
+```yaml
+Nordash: nordash.io
+Northwnd Labs: Northwind Labs
+```
+
+A malformed file never stops crawling: the last good aliases stay in use, the error (file, line,
+fix) is printed and logged once, `check` fails and `companies` shows it above the table. Tainted items never
+name a company; held items are counted in `HELD`. Both commands take `--json` and write nothing.
+Each `run` also refreshes the `signals` table (one row per clean hiring posting, by company key;
+postings published in the same second share a row)
+and `company_aliases` (the decisions above) for anyone reading the database directly.
+
 ## 6b. Conference prospecting
 
 Conferences are prospect lists, not trips. The companies that paid for a stand, a sponsorship or a
