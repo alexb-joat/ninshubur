@@ -2,7 +2,9 @@
 
 F1 item: medium taint -> stored ``tainted``; high taint -> dropped + quarantine row (hashes only).
 F2 source: high taint or schema drift -> ``suspect`` (new items ``held``); integrity, 3 taint
-events in 24 h or reputation < quarantine_below -> ``quarantined`` (no fetching).
+events in 24 h or reputation < quarantine_below -> ``quarantined`` (no fetching). A medium item
+already stored as tainted adds no event on later fetches unless its text changes or it gains a
+detector code.
 F6 recovery: clean documents become the source's last-good snapshot.
 """
 from __future__ import annotations
@@ -213,13 +215,19 @@ class Ingestor:
             rep.dropped += 1
         if high_items or parsed.dropped_rows:
             self.adjust_reputation(name, self.rep.get("taint_high", -0.25))
-        if medium_items:
-            self._taint_event(name, "medium", detectors.codes(detectors.Finding("medium", c) for i in medium_items for c in i.taint_codes))
+        # A re-fetched document (a growing thread) shows the same stored items again: a medium item counts
+        # once, when it is new, edited, or carries a code it did not have. Read before the upserts below.
+        new_medium = [i for i in medium_items if self._new_taint(i)]
+        if new_medium:
+            self._taint_event(name, "medium", detectors.codes(detectors.Finding("medium", c) for i in new_medium for c in i.taint_codes))
             self.adjust_reputation(name, self.rep.get("taint_medium", -0.10))
-            self.policy_log.write({"event": "tainted_items", "source": name, "count": len(medium_items), "action": "stored_tainted_held"})
+        if medium_items:
+            self.policy_log.write({"event": "tainted_items", "source": name, "count": len(medium_items), "new": len(new_medium),
+                                   "action": "stored_tainted_held"})
         clean_doc = not doc_high and not drift and not high_items
         if clean_doc:
-            self.adjust_reputation(name, self.rep.get("parse_ok", 0.01))
+            if not medium_items:  # a document that carries tainted content earns no credit, on any sighting
+                self.adjust_reputation(name, self.rep.get("parse_ok", 0.01))
             self.conn.execute("UPDATE source_stats SET parse_ok=parse_ok+1 WHERE source=?", (name,))
         else:
             self.conn.execute("UPDATE source_stats SET parse_fail=parse_fail+1 WHERE source=?", (name,))
@@ -247,6 +255,14 @@ class Ingestor:
         return rep
 
     # -- storage ----------------------------------------------------------------------------------
+    def _new_taint(self, it: Item) -> bool:
+        """True unless this item is already stored as tainted, with the same title and text and every code it
+        carries now. An edited post is new content, so it counts again."""
+        row = one(self.conn, "SELECT tainted, taint_codes, title, text FROM items WHERE uid=?", (it.uid,))
+        if row is None or not row["tainted"] or row["title"] != it.title or row["text"] != it.text:
+            return True
+        return not set(it.taint_codes) <= set(filter(None, (row["taint_codes"] or "").split(",")))
+
     def _store_item(self, it: Item, src: SourceConfig, fetched_at: float, *, held: bool) -> bool:
         attrs = dict(it.attrs)
         if it.tier is not None:

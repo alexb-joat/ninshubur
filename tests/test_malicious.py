@@ -157,6 +157,94 @@ def test_three_taint_events_quarantine(home):
     assert [p["to"] for p in pol] == ["suspect", "quarantined"]
 
 
+THREAD = 45400001
+
+
+def growing_thread(home, posts):
+    """An HN thread that gains one clean reply per fetch. ``posts(i)`` returns the other comments
+    for fetch ``i`` (1-based) as {objectID: text}; other threads answer with no comments."""
+    write_config(home, {"hn": DEFAULT_SOURCES["hn"]})
+    n = {"i": 0}
+
+    def comment(cid, text):
+        return {"objectID": cid, "story_id": THREAD, "author": "someone", "created_at": "2026-10-02T08:00:00Z",
+                "comment_text": text}
+
+    def comments(i):
+        hits = [comment(f"9{k}", f"Reply {k}: looking forward to this thread") for k in range(i)]
+        return hits + [comment(cid, text) for cid, text in posts(i).items()]
+
+    def route(request):
+        q = dict(request.url.params)
+        if not q.get("tags", "").startswith("comment"):  # the thread's comment count grows, so the story list changes too
+            stories = json.loads(load_sample("hn/freelancer_stories.json"))
+            for h in stories["hits"]:
+                h["num_comments"] = (h.get("num_comments") or 0) + n["i"] + 1
+            return httpx.Response(200, content=json.dumps(stories).encode(), headers={"Content-Type": "application/json"})
+        if q["tags"] == f"comment,story_{THREAD}":
+            n["i"] += 1
+            body = {"hits": comments(n["i"])}
+        else:
+            body = {"hits": []}
+        return httpx.Response(200, content=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+
+    env = Env(home, {**ROBOTS, ("hn.algolia.com", "/api/v1/search_by_date"): route})
+    for _ in range(3):
+        env.run_once(force=True)
+        env.clock.advance(3600)
+    assert n["i"] == 3
+    return env
+
+
+def medium_events(env):
+    return one(env.conn, "SELECT COUNT(*) AS n FROM taint_events WHERE source='hn' AND severity='medium'")["n"]
+
+
+POST = "Example Co | Platform engineer | REMOTE. Setup: chmod +x install.sh, then run it."
+
+
+def test_same_medium_item_in_a_growing_thread_counts_once(home):
+    env = growing_thread(home, lambda i: {"777": POST})
+    assert medium_events(env) == 1
+    assert env.source("hn")["health"] == "ok"
+    it = one(env.conn, "SELECT tainted, held, taint_codes FROM items WHERE text=?", (POST,))
+    assert it["tainted"] == 1 and it["held"] == 1 and it["taint_codes"] == "shell_fragment"  # still held on every sighting
+    logged = [p for p in read_jsonl(home / "logs" / "policy.jsonl") if p["event"] == "tainted_items"]
+    assert [p["new"] for p in logged] == [1, 0, 0]
+
+
+def test_three_different_medium_items_still_quarantine(home):
+    env = growing_thread(home, lambda i: {f"77{k}": f"Post {k}: chmod +x install.sh" for k in range(i)})
+    assert medium_events(env) == 3
+    assert env.source("hn")["health"] == "quarantined"
+
+
+def test_standing_medium_item_earns_no_reputation(home):
+    env = growing_thread(home, lambda i: {"777": POST})
+    before = env.source("hn")["reputation"]
+    env.run_once(force=True)  # a fourth fetch, the post is still there
+    assert medium_events(env) == 1
+    src = env.source("hn")
+    step = env.ingestor.rep.get("parse_ok", 0.01) * env.ingestor.scale(int(src["tier"]))
+    # penalised once. Three documents in this fetch: the story list and the other thread's comments are clean and
+    # earn their credit; the comments document that still carries the post earns none
+    assert src["reputation"] - before == pytest.approx(2 * step)
+
+
+def test_edited_medium_item_counts_again(home):
+    env = growing_thread(home, lambda i: {"777": POST if i < 3 else POST + " Then: chmod +x other.sh"})  # same code, new text
+    assert medium_events(env) == 2
+    assert env.source("hn")["health"] == "ok"
+
+
+def test_same_medium_item_with_a_new_code_counts_again(home):
+    longer = POST + " Key blob: " + "QWxhZGRpbjpvcGVuIHNlc2FtZQ" * 10  # adds a base64 run (260 chars)
+    env = growing_thread(home, lambda i: {"777": POST if i == 1 else longer})
+    assert medium_events(env) == 2
+    it = one(env.conn, "SELECT taint_codes FROM items WHERE text=?", (longer,))
+    assert set(it["taint_codes"].split(",")) == {"shell_fragment", "base64_run"}
+
+
 def test_suggest_still_serves_from_snapshot_when_quarantined(home):
     env, reports = good_then_bad(home, {"body": "<html>", "headers": {"Content-Type": "text/html"}})
     snap = env.ingestor.last_good_snapshot("confs")
