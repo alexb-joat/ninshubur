@@ -163,3 +163,26 @@ sources:
   #     reviewed_by: alex
   #     reviewed_at: 2026-10-12
   #     review_every_days: 180
+
+  # Example Ashby job board (the board name is the last part of jobs.ashbyhq.com/<board>):
+  # acme-ashby:
+  #   adapter: ashby
+  #   params: {boards: [acme], companies: {acme: {name: Acme Inc, domain: acme.example}}}
+  #   trust:
+  #     tier: 0
+  #     owner: "Ashby public job posting API (documented, unauthenticated)"
+  #     owner_url: https://developers.ashbyhq.com/docs/public-job-posting-api
+  #     terms_url: https://www.ashbyhq.com/resources/terms
+  #     licence: "public API; Ashby publishes no separate terms for it"
+  #     legal_basis: public_business_info
+  #     rate_limit: "none published; ETag; <= 4 req/day per board"
+  #     expected_content_type: application/json
+  #     schema: ashby_jobs.v1
+  #     # api.ashbyhq.com answers 401 to every path except its documented public endpoints, robots.txt
+  #     # included. Ninshubur reads a 401 or 403 on robots.txt as "the whole host is off limits" unless the
+  #     # source records that exact status here after a person has read the host's documentation and terms.
+  #     # Only 401 or 403 can be recorded; a real robots.txt, a 5xx or a network error are judged as usual.
+  #     robots_reviewed_status: 401
+  #     reviewed_by: alex
+  #     reviewed_at: 2026-11-13
+  #     review_every_days: 180

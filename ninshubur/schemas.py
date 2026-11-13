@@ -102,6 +102,26 @@ SCHEMAS: dict[str, dict] = {
             "absolute_url": {"type": "url"},
         },
     },
+    # Ashby's public job posting API. `id` is in every live answer but not in Ashby's field list; the
+    # descriptions (descriptionHtml, descriptionPlain) and the address are not declared, so never stored.
+    # Workplace and employment types are short words, not enums, so a new value from Ashby is kept, not invalid.
+    "ashby_jobs.v1": {
+        "root": "jobs",
+        "max_items": 2000,
+        "required": ["id", "title", "jobUrl"],
+        "fields": {
+            "id": {"type": "str", "max": 36, "pattern": r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
+            "title": {"type": "str", "max": 200, "text": True},
+            "publishedAt": {"type": "datetime"},
+            "location": {"type": "str", "max": 120},
+            "department": {"type": "str", "max": 120, "text": True},
+            "workplaceType": {"type": "str", "max": 20, "pattern": r"^[A-Za-z]{1,20}$"},
+            "employmentType": {"type": "str", "max": 20, "pattern": r"^[A-Za-z]{1,20}$"},
+            "isRemote": {"type": "bool"},
+            "isListed": {"type": "bool"},
+            "jobUrl": {"type": "url"},
+        },
+    },
     "statuspage_summary.v1": {
         "root": "incidents",
         "max_items": 100,

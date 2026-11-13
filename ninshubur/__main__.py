@@ -414,6 +414,8 @@ def cmd_sources_add(args, app: App) -> int:
              "expected_content_type": args.content_type or spec.expected_content_type,
              "schema": args.schema or spec.schema, "reviewed_by": args.reviewed_by, "reviewed_at": time.strftime("%Y-%m-%d"),
              "review_every_days": args.review_every_days or int(app.policy.tier(tier)["review_every_days"])}
+    if args.robots_reviewed_status is not None:
+        trust["robots_reviewed_status"] = args.robots_reviewed_status
     try:
         from .config import _source
         src = _source(args.name, {"adapter": args.adapter, "params": params, "trust": trust}, app.policy, [])
@@ -622,6 +624,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--schema")
     a.add_argument("--reviewed-by", required=True)
     a.add_argument("--review-every-days", type=int)
+    a.add_argument("--robots-reviewed-status", type=int, choices=[401, 403],
+                   help="the status this host's robots.txt answers, recorded after you have read the host's terms; "
+                        "without it a 401 or 403 on robots.txt puts the whole host off limits")
     a.set_defaults(fn=cmd_sources_add)
     rv = ss.add_parser("review", help="show quarantine reasons; --clear restores a quarantined source")
     rv.add_argument("name")

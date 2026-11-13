@@ -35,7 +35,7 @@ from .db import rows, uj
 from .detectors import edit_distance
 from .home import data_home
 from .policy import Policy
-from .profiles import Profile
+from .profiles import BOARD_ADAPTERS, Profile
 
 ALIASES_FILE = "company_aliases.yaml"
 ORIGINS = ("domain", "config", "profile", "manual", "name")  # merge order; also the precedence in company_aliases
@@ -298,11 +298,11 @@ class Resolver:
         for p in (profiles or {}).values():
             for t in p.target_companies:
                 name = str(t.get("name") or "").strip()
-                for adapter in ("greenhouse", "lever"):
+                for adapter in BOARD_ADAPTERS:
                     if t.get(adapter):
                         self._learn(adapter, str(t[adapter]), name or str(t[adapter]), t.get("domain"), "profile",
                                     f"profile {p.name}")
-                if not (t.get("greenhouse") or t.get("lever")) and name:
+                if not any(t.get(a) for a in BOARD_ADAPTERS) and name:
                     self._learn(None, None, name, t.get("domain"), "profile", f"profile {p.name}")
         self._name = {n: ks for n, ks in self._name.items() if self._unambiguous(n, ks)}
 
@@ -395,7 +395,7 @@ class Resolver:
         if d:
             return domain_key(d)
         name = str(target.get("name") or "").strip()
-        for adapter in ("greenhouse", "lever"):
+        for adapter in BOARD_ADAPTERS:
             if target.get(adapter):
                 r = self.resolve({"attrs": {"board": str(target[adapter]), "company": name or str(target[adapter])}}, adapter)
                 return r.key if r else None

@@ -120,7 +120,7 @@ One profile per client, in `~/.ninshubur/profiles.yaml`. Copy the `client-templa
 | `titles` | hiring matches | the roles the client sells to |
 | `keywords`, `pains` | relevance of public posts | whole-word matches; keep them specific |
 | `topics` | conference categories | confs.tech topics: general, javascript, devops, data, python ... |
-| `target_companies` | hiring signals | `name` matches "Who is hiring?" posts; a `greenhouse` slug lets you admit their job board |
+| `target_companies` | hiring signals | `name` matches "Who is hiring?" posts; a `greenhouse` or `ashby` slug lets you admit their job board |
 | `tools_in_use` | outage alerts | providers the client depends on |
 | `home_base`, `home_country` | reserved for local-meeting suggestions (later phase) | where the person working this client sits |
 | `weights.<kind>` | value multiplier | 1.2 if this client values hiring signals more, and so on |
@@ -136,6 +136,20 @@ ninshubur sources add acme-jobs --adapter greenhouse --param 'boards=[acme]' --t
 ninshubur run --force
 ninshubur suggest --profile acme
 ```
+
+An Ashby board (`jobs.ashbyhq.com/<board>`) is added the same way with `--adapter ashby`, plus one more flag.
+Ashby's API host answers 401 on `robots.txt`, which Ninshubur reads as "the whole host is off limits" unless you
+record that status after reading Ashby's documentation and terms:
+
+```bash
+ninshubur sources add acme-ashby --adapter ashby --param 'boards=[acme]' --tier 0 \
+    --owner "Ashby public job posting API" --owner-url https://developers.ashbyhq.com/docs/public-job-posting-api \
+    --terms-url https://www.ashbyhq.com/resources/terms --licence "public API" \
+    --rate-limit "ETag; <= 4/day" --reviewed-by <your name> --robots-reviewed-status 401
+```
+
+Only 401 or 403 can be recorded, only that exact answer is let through, and only for that source. The exception
+is written to `logs/policy.jsonl` (`robots_reviewed_exception`) and named in H2 of `sources test`.
 
 `sources add` runs the eight admission checks against the live source and refuses to write the
 config if any fails. That is deliberate: a source nobody vouched for is never fetched.
@@ -327,6 +341,7 @@ exports are.
 | a source shows `suspect` or `quarantined` | `ninshubur sources review <name>`; `--clear` after reading the reasons |
 | a source shows `paused` | someone ran `sources disable`; `sources enable <name>` resumes it |
 | a source shows `review_overdue` | update `reviewed_at` in its trust block after re-checking its terms |
+| refused with `robots.txt on <host> answers 401` | the host hides robots.txt behind a login; after reading its terms, set `robots_reviewed_status` in the source's trust block (section 6) |
 | a source shows `broken` | it answered 403/404/410 five times; the URL or the service changed |
 | nothing fetched | `ninshubur run --force`; check `~/.ninshubur/logs/fetch.jsonl`, where a network error carries its reason in `detail` |
 | something was refused | `~/.ninshubur/logs/policy.jsonl` has the reason and the rule |

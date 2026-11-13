@@ -16,6 +16,10 @@ class ProfileError(Exception):
     pass
 
 
+# Job-board adapters whose board token a `target_companies` entry may carry: {name: X, ashby: x}.
+BOARD_ADAPTERS = ("greenhouse", "lever", "ashby")
+
+
 @dataclass
 class Profile:
     name: str
@@ -47,13 +51,13 @@ class Profile:
 
     def company_by_board(self, board: str) -> dict | None:
         for c in self.target_companies:
-            if str(c.get("greenhouse") or c.get("lever") or "").lower() == board.lower():
+            if board.lower() in {str(c[a]).lower() for a in BOARD_ADAPTERS if c.get(a)}:
                 return c
         return None
 
     def company_by_key(self, key: str) -> dict | None:
         for c in self.target_companies:
-            if key in (f"company:{c.get('domain')}", f"company:{c.get('greenhouse')}", f"company:{c.get('lever')}"):
+            if key in {f"company:{c.get('domain')}", *(f"company:{c.get(a)}" for a in BOARD_ADAPTERS)}:
                 return c
         return None
 

@@ -256,6 +256,11 @@ class Fetcher:
             if not allowed and RobotsCache.unreachable(robots_status):
                 return self.refuse(plan, src.name, Refusal("robots_unreachable", f"robots.txt on {host} could not be read "
                                                            f"({robots_status or 'network error'}); asked again in 10 min"))
+            if not allowed and robots_status in (401, 403):
+                return self.refuse(plan, src.name, Refusal(
+                    "robots_disallow", f"robots.txt on {host} answers {robots_status}, read as the whole host off limits; "
+                    f"if you have read the host's terms, record `robots_reviewed_status: {robots_status}` in the trust "
+                    f"block of source {src.name}"))
             if not allowed:
                 return self.refuse(plan, src.name, Refusal("robots_disallow", f"robots.txt disallows {urlsplit(plan.url).path}"))
 

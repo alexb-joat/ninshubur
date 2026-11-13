@@ -33,7 +33,7 @@ These are tested invariants: 272 tests, including a malicious-input corpus, run 
 
 ## Status
 
-Phase 1 (policy core, rules-only analysis): `confs_tech`, `greenhouse`, `hn`, `statuspage`
+Phase 1 (policy core, rules-only analysis): `confs_tech`, `greenhouse`, `ashby`, `hn`, `statuspage`
 adapters, plus `provider_docs` (LLM providers' model documentation, exported with `ninshubur export euboulia-facts` for the Euboulia extension); builders `cfp_submit`, `conference_trip`, `service_request_lead`,
 `hiring_signal_outreach`, `tool_outage`; ICS calendar sink; Markdown/HTML/CSV exports; CLI. No LLM calls yet.
 
@@ -81,7 +81,7 @@ The full operator guide is [docs/USAGE.md](docs/USAGE.md). In short:
 
 Suggestion kinds today: `conference_prospecting` (the companies and speakers listed on an upcoming or recently held event's site; see docs/USAGE.md),
 `cfp_submit` (call for papers closing in 3-90 days), `hiring_signal_outreach` (a target company or
-a matching role is hiring: Greenhouse boards and HN "Who is hiring?" posts), `service_request_lead`
+a matching role is hiring: Greenhouse and Ashby boards and HN "Who is hiring?" posts), `service_request_lead`
 (a public "seeking freelancer" style request matching the profile), `tool_outage` (a major incident
 at a provider in `tools_in_use`). Nothing leaves the machine: no push, no telemetry, no model calls
 in this phase.

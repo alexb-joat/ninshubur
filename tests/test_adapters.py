@@ -59,6 +59,42 @@ def test_greenhouse_plan_and_parse():
     assert res.items[2].published_at is not None  # falls back to updated_at
 
 
+def test_ashby_plan_and_parse():
+    a = get_adapter("ashby")
+    src = SourceConfig(name="ab", adapter="ashby",
+                       params={"boards": ["acme", "Bad Board!", "../x"], "companies": {"acme": {"name": "Acme Inc", "domain": "acme.example"}}},
+                       trust={"legal_basis": "public_business_info"})
+    plans = a.plan(src, {}, NOW)
+    assert [p.url for p in plans] == ["https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=false"]
+    assert plans[0].key == "ashby:acme" and plans[0].max_bytes == 8_000_000
+    res = a.parse(src, fetched(plans[0], load_sample("ashby/jobs.json")), NOW)
+    # the unlisted posting is skipped and said so
+    assert [i.title for i in res.items] == ["Sales Development Representative", "Head of Growth", "Senior Backend Engineer"]
+    assert res.notes == ["acme: 1 unlisted posting(s) skipped"]
+    assert res.projection.field_validity == 1.0
+    sdr, growth, backend = res.items
+    assert sdr.kind == "hiring" and sdr.entities[0].key == "company:acme.example" and sdr.entities[0].name == "Acme Inc"
+    assert sdr.attrs == {"board": "acme", "company": "Acme Inc", "location": "Lisbon, Portugal",
+                         "job_id": "00000001-aaaa-4bbb-8ccc-000000000001", "department": "Sales", "workplace": "OnSite",
+                         "employment": "FullTime", "remote": False}
+    assert sdr.url == "https://jobs.ashbyhq.com/acme/00000001-aaaa-4bbb-8ccc-000000000001"
+    assert sdr.dates[0].kind == "posted" and sdr.published_at == sdr.dates[0].at
+    assert growth.attrs["workplace"] == "RemoteFirst" and growth.attrs["remote"] is True  # a new type is kept, not invalid
+    # a job link off Ashby's job host is replaced by the one built from board and id
+    assert backend.url == "https://jobs.ashbyhq.com/acme/00000004-aaaa-4bbb-8ccc-000000000004"
+    # the description is never declared, so never stored anywhere on the item
+    assert all("DESCRIPTION-MARKER" not in repr(i) for i in res.items)
+
+
+def test_ashby_drops_a_posting_without_a_valid_id():
+    a = get_adapter("ashby")
+    src = SourceConfig(name="ab", adapter="ashby", params={"boards": ["acme"]}, trust={"legal_basis": "public_business_info"})
+    plan = a.plan(src, {}, NOW)[0]
+    body = b'{"jobs": [{"id": "../../etc", "title": "X", "jobUrl": "https://jobs.ashbyhq.com/acme/x"}]}'
+    res = a.parse(src, fetched(plan, body), NOW)
+    assert res.items == [] and res.projection.dropped_rows == 1
+
+
 def test_hn_stories_followups_from_ids_only():
     a = get_adapter("hn")
     src = SourceConfig(name="hn", adapter="hn", params={"show_hn_queries": ["lead gen", "<bad>"]}, trust={"legal_basis": "public_business_info"})
@@ -113,7 +149,7 @@ def test_not_json_is_a_structure_finding():
     assert res.items == [] and [f.code for f in res.findings] == ["not_json"]
 
 
-@pytest.mark.parametrize("name", ["confs_tech", "greenhouse", "hn", "statuspage"])
+@pytest.mark.parametrize("name", ["confs_tech", "greenhouse", "ashby", "hn", "statuspage"])
 def test_adapter_never_fetches_urls_from_content(name):
     """Every follow-up URL must be built on the adapter's own hosts."""
     a = get_adapter(name)
