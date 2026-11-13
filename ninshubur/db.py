@@ -111,6 +111,26 @@ SCHEMA: list[str] = [
     """CREATE TABLE IF NOT EXISTS taint_events (id INTEGER PRIMARY KEY, ts REAL NOT NULL, source TEXT NOT NULL,
         severity TEXT NOT NULL, codes TEXT NOT NULL)""",
     """CREATE INDEX IF NOT EXISTS taint_events_source_ts ON taint_events(source, ts)""",
+    # One row per model run (task 'qualify'). No prompt or reply text: what was asked of which model, how many
+    # subjects, what it cost, how it ended ('done', or 'stopped:<cause>').
+    """CREATE TABLE IF NOT EXISTS llm_runs (
+        id INTEGER PRIMARY KEY, task TEXT NOT NULL, profile TEXT NOT NULL, slot TEXT NOT NULL, model TEXT NOT NULL,
+        prompt_hash TEXT NOT NULL, started_at REAL NOT NULL, finished_at REAL, status TEXT NOT NULL DEFAULT 'running',
+        subjects INTEGER NOT NULL DEFAULT 0, answered INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+        unchanged INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0, usd REAL NOT NULL DEFAULT 0, max_usd REAL)""",
+    # One row per subject and run. status 'ok' carries a label that passed the grounding check; 'failed' carries
+    # the cause in error. cited: the evidence line numbers the model named; item_ids: the item behind each line
+    # shown, in line order. evidence_hash and prompt_hash say what exactly was asked.
+    """CREATE TABLE IF NOT EXISTS qualifications (
+        id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES llm_runs(id), profile TEXT NOT NULL,
+        subject_key TEXT NOT NULL, subject_name TEXT NOT NULL, model TEXT NOT NULL, prompt_hash TEXT NOT NULL,
+        evidence_hash TEXT NOT NULL, status TEXT NOT NULL, label TEXT, cited TEXT NOT NULL DEFAULT '[]',
+        item_ids TEXT NOT NULL DEFAULT '[]', reason TEXT, error TEXT, attempts INTEGER NOT NULL DEFAULT 1,
+        input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, usd REAL NOT NULL DEFAULT 0,
+        latency_ms INTEGER, created_at REAL NOT NULL, UNIQUE(run_id, subject_key))""",
+    """CREATE INDEX IF NOT EXISTS qualifications_asked
+        ON qualifications(profile, model, prompt_hash, subject_key, evidence_hash)""",
 ]
 
 # (table, statement) pairs applied once each, in order, after SCHEMA. Add to the end only.
@@ -121,7 +141,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     ("entities", "ALTER TABLE entities ADD COLUMN role TEXT"),
 ]
 
-SCHEMA_VERSION = 3  # 3: company_aliases
+SCHEMA_VERSION = 4  # 3: company_aliases; 4: llm_runs, qualifications
 
 
 def db_path(home: Path | None = None) -> Path:

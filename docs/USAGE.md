@@ -279,6 +279,62 @@ outreach, meetings during the event week) and **held** (up to six months after: 
 deliver?" outreach to the companies that paid for presence). Value scales with how many companies
 bought presence and how many match the client profile; cost is research minutes only.
 
+## 6c. Qualifying companies with a model
+
+`ninshubur qualify` asks a model one question about each company, from the evidence the crawler
+already stored, and keeps only answers that stand on that evidence. The question is yours: it
+lives in the profile's `qualify:` block, and the code and the prompt know nothing about what a
+"good" company is.
+
+```yaml
+qualify:
+  subject: company                 # the noun for one row (default: company)
+  question: Would this company plausibly buy outsourced B2B outbound in the next three months?
+  must:                            # all of these must hold
+    - it sells to other businesses
+  must_not:                        # none of these may hold
+    - it is itself a lead-generation or outbound agency
+  labels: [yes, no, unsure]        # the only answers allowed; the first is the positive one
+```
+
+```bash
+ninshubur qualify --profile acme --dry-run     # what would be asked and what it would cost; sends nothing
+ninshubur qualify --profile acme               # ask the local model (llm.local in config.yaml)
+ninshubur qualify --profile acme --show        # the stored answers
+ninshubur qualify --profile acme --slot router --model haiku --max-usd 0.50   # a remote model, under a cap
+```
+
+What happens for each company:
+
+1. **Evidence.** Up to 12 lines, one per stored item: the title, the declared fields (for a job
+   posting: location, department, workplace, employment, remote, roles) and the start of the text.
+   Lines naming most of the profile's own terms come first (unwanted terms count too), newest
+   first among equals. Tainted and held items and anything marked as person data are left out.
+   E-mail addresses, links, @handles and phone numbers are replaced by placeholders before the
+   line leaves the database; names of people in running text are not detected.
+2. **Prompt.** The lines go in a marked block that the instructions call data, not instructions.
+3. **Check.** The reply must be one JSON object with an allowed label and at least one cited line
+   number, and every cited number must be a line that was shown. A reply that fails gets one
+   retry; after that the company is recorded as failed with the cause (`not_json`, `bad_shape`,
+   `bad_label`, `no_citation`, `bad_citation`). A reason that trips a taint detector is dropped.
+4. **Record.** Table `llm_runs` has one row per run (model, counts, tokens, cost, how it ended),
+   table `qualifications` one row per company and run (label, cited lines, the items behind the
+   lines, reason). `logs/llm.jsonl` records each call without prompt or reply text.
+
+A company whose evidence, question and model are unchanged since its last good answer is not asked
+again; `--again` asks anyway. `--limit N` asks only the first N.
+
+**Cost.** The local model is the default and costs nothing. A remote slot (`--slot router` or
+`cloud`) runs only with `--max-usd`, and the run stops before a batch whose worst case could pass
+the cap; what was answered is kept and the next run asks the rest. The estimate counts four
+characters per token, so read it as a guide. The daily caps under `llm.caps` apply as well. The only
+network call is to the slot's `base_url`.
+
+**Limits.** The answer is the model's reading of at most 12 lines; a company with hundreds of
+postings is judged on the 12 that match your terms best. The check proves the cited lines exist,
+not that the reason follows from them. How often a model agrees with a person is measured
+separately, against a label sheet (below).
+
 ## 7. Tuning before real work starts
 
 All numbers live in `~/.ninshubur/config.yaml`. After an edit: `ninshubur check`, then
@@ -336,6 +392,9 @@ exports are.
 - **Your time:** the real cost. A first pass over a day's queue is 15 to 20 minutes;
   `suggest --plan` fits it to the time you have. Each source needs a few minutes of re-review every
   90 to 180 days, and fetching stops automatically when a review lapses.
+
+- **Models:** nothing is sent to a model unless you run `ninshubur qualify` (section 6c). The local
+  model is free; a remote one needs `--max-usd`, and `--dry-run` prints the estimate first.
 
 ## 11. When something looks wrong
 

@@ -24,6 +24,11 @@ lawful reading is the only reading the code can take.
   refused before any request is built. Social posts keep handle, display name, URL, a short
   excerpt and the date; accounts marked `noindex`, not `discoverable`, or labelled
   `!no-unauthenticated` are skipped.
+- **Qualifying.** `ninshubur qualify` runs only when you start it. It sends a model up to 12 evidence
+  lines per company, built from items without person data; e-mail addresses, links, @handles and
+  phone numbers are replaced first (names of people in running text are not detected). The default
+  is the local model; a remote model needs `--slot` and a `--max-usd` cap. Prompts and replies are
+  not logged; the label, the cited line numbers and a one-sentence reason are stored.
 
 ## Event websites (speakers, sponsors, exhibitors)
 

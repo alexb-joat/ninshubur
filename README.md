@@ -35,7 +35,8 @@ These are tested invariants: 272 tests, including a malicious-input corpus, run 
 
 Phase 1 (policy core, rules-only analysis): `confs_tech`, `greenhouse`, `ashby`, `hn`, `statuspage`
 adapters, plus `provider_docs` (LLM providers' model documentation, exported with `ninshubur export euboulia-facts` for the Euboulia extension); builders `cfp_submit`, `conference_trip`, `service_request_lead`,
-`hiring_signal_outreach`, `tool_outage`; ICS calendar sink; Markdown/HTML/CSV exports; CLI. No LLM calls yet.
+`hiring_signal_outreach`, `tool_outage`; ICS calendar sink; Markdown/HTML/CSV exports; CLI. One LLM call, run by hand: `ninshubur qualify` asks a model the
+profile's own question about each company and keeps only answers that cite evidence lines it was shown (local model by default; see docs/USAGE.md, 6c).
 
 ## Quick start
 

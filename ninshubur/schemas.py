@@ -122,6 +122,17 @@ SCHEMAS: dict[str, dict] = {
             "jobUrl": {"type": "url"},
         },
     },
+    # A model's reply to `ninshubur qualify`. Not a crawled payload, but untrusted text all the same, so it
+    # goes through the same projection: only these three fields are read and the reason is taint-scanned.
+    "llm_qualify.v1": {
+        "max_items": 1,
+        "required": ["label", "evidence"],
+        "fields": {
+            "label": {"type": "str", "max": 24, "pattern": r"^[a-z][a-z0-9_-]{0,23}$"},
+            "evidence": {"type": "list_str", "max_items": 12, "max": 6},
+            "reason": {"type": "str", "max": 300, "text": True},
+        },
+    },
     "statuspage_summary.v1": {
         "root": "incidents",
         "max_items": 100,

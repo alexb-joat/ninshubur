@@ -15,8 +15,9 @@ import yaml
 
 from . import __version__
 from .adapters.base import all_adapters, get_adapter, run_projection
+from .analyze import qualify as qualifier
 from .analyze.suggest import Suggester
-from .companies import ALIASES_FILE, companies as company_list, dupes as company_dupes
+from .companies import ALIASES_FILE, companies as company_list, dupes as company_dupes, evidence_items
 from .config import ConfigError, SourceConfig, load_config
 from .db import connect, j, ledger_sum, one, rows, uj
 from .envvars import load_dotenv
@@ -26,6 +27,7 @@ from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
 from .home import data_home, ensure_home
 from .ingest import Ingestor
+from .llm import LLMClient, LLMError
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
 from .profiles import PROFILE_KEYS, ProfileError, load_profiles
@@ -573,6 +575,107 @@ def cmd_companies(args, app: App) -> int:
     return 0
 
 
+def qualify_subjects(app: App, profile) -> list:
+    """The subjects a profile's question is asked about: every company with usable evidence."""
+    resolver = app.suggester.refresh_resolver()
+    names = {c.key: c.name for c in company_list(app.conn, resolver)}
+    return qualifier.build_subjects(evidence_items(app.conn, resolver), names, profile)
+
+
+def _money(usd: float) -> str:
+    return f"${usd:.2f}" if usd >= 0.995 or usd == 0 else f"${usd:.4f}"
+
+
+def _print_qualification(r: dict) -> None:
+    cited = ",".join(str(n) for n in r["cited"]) or "-"
+    head = r["label"] if r["status"] == "ok" else f"failed ({r['error']})"
+    note = f"  [{r['error']}]" if r["status"] == "ok" and r["error"] else ""
+    print(f"  {head:<22} {r['name'][:32]:<32} lines {cited:<10} {r['reason'] or ''}{note}")
+
+
+def cmd_qualify(args, app: App) -> int:
+    profile = app.profiles.get(args.profile)
+    if profile is None:
+        print(f"unknown profile {args.profile!r}; known: {', '.join(app.profiles) or 'none'}", file=sys.stderr)
+        return 2
+    if profile.qualify is None:
+        print(f"profile {profile.name} has no qualify: block; add one with a question (see profiles.example.yaml)", file=sys.stderr)
+        return 2
+    if args.show:
+        found = qualifier.latest(app.conn, profile.name, args.model)
+        if args.json:
+            print(json.dumps(found, indent=2, ensure_ascii=False))
+            return 0
+        if not found:
+            print(f"no stored answers for profile {profile.name} yet; `ninshubur qualify --profile {profile.name} --dry-run` shows what a run would ask")
+            return 0
+        for r in found:
+            _print_qualification({**r, "name": f"{r['subject_name']} ({r['model']})"})
+        counts: dict[str, int] = {}
+        for r in found:
+            k = r["label"] if r["status"] == "ok" else "failed"
+            counts[k] = counts.get(k, 0) + 1
+        print(f"{len(found)} stored answer(s): " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+        return 0
+
+    subjects = qualify_subjects(app, profile)
+    try:
+        plan = qualifier.plan(app.conn, app.cfg, profile, subjects, slot_name=args.slot, model=args.model,
+                              again=args.again, limit=args.limit)
+    except LLMError as e:
+        print(f"cannot qualify: {e.message} (slot {args.slot}; models and prices are set under llm: in config.yaml)", file=sys.stderr)
+        return 2
+    q = profile.qualify
+    shown = sum(len(s.lines) for s in subjects)
+    print(f"profile {profile.name}: {len(subjects)} subject(s) ({q.subject}) with evidence, {shown} line(s) shown of "
+          f"{sum(s.total for s in subjects)}, {sum(s.redactions for s in subjects)} contact detail(s) redacted")
+    where = "this machine" if plan.slot.local else f"remote, {plan.slot.base_url}"
+    print(f"model {plan.slot.model} on slot {plan.slot.name} ({where}); answers: {'/'.join(q.labels)}")
+    print(f"to ask: {len(plan.todo)}; unchanged since their last good answer: {plan.unchanged}"
+          + (f"; --limit {args.limit}" if args.limit is not None else ""))
+    cost = "no charge (local model)" if plan.slot.local else (
+        f"about {_money(plan.usd)}, at most about {_money(plan.worst_usd)} if every answer needs its one retry")
+    print(f"estimate: about {plan.input_tokens} input tokens, up to {plan.output_tokens} output tokens; {cost}")
+    if args.dry_run:
+        print("dry run: nothing was sent, nothing was stored")
+        return 0
+    if not plan.todo:
+        print("nothing to ask (use --again to ask anyway)")
+        return 0
+    if not plan.slot.local and args.max_usd is None:
+        print("a remote model runs only under a cap: add --max-usd AMOUNT (the estimate is above)", file=sys.stderr)
+        return 2
+
+    def show(r: dict) -> None:
+        _print_qualification({**r, "name": r["subject"].name})
+
+    async def go():
+        async with LLMClient(app.conn, app.policy, app.cfg, app.home, now=app.now) as client:
+            return await qualifier.run(app.conn, client, profile, plan, max_usd=args.max_usd, now=app.now,
+                                       on_result=None if args.json else show)
+
+    try:
+        rep = asyncio.run(go())
+    except LLMError as e:
+        print(f"stopped: {e.message}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"run_id": rep.run_id, "status": rep.status, "asked": rep.asked, "answered": rep.answered,
+                          "failed": rep.failed, "unchanged": rep.unchanged, "usd": rep.usd, "input_tokens": rep.input_tokens,
+                          "output_tokens": rep.output_tokens, "labels": dict(rep.labels), "errors": dict(rep.errors)}, indent=2))
+    else:
+        labels = ", ".join(f"{k} {v}" for k, v in sorted(rep.labels.items())) or "none"
+        failed = f"; failed {rep.failed} ({', '.join(f'{k} {v}' for k, v in sorted(rep.errors.items()))})" if rep.failed else ""
+        print(f"run {rep.run_id} {rep.status}: asked {rep.asked} of {len(plan.todo)}, answered {rep.answered} ({labels}){failed}; "
+              f"{rep.input_tokens} + {rep.output_tokens} tokens, {_money(rep.usd)}")
+        print(f"stored in table qualifications; `ninshubur qualify --profile {profile.name} --show` lists the answers")
+    if rep.status != "done":
+        print(f"the run stopped early ({rep.status.split(':', 1)[1]}); what was answered is kept, and the next run asks the rest",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_export(args, app: App) -> int:
     if args.what == "euboulia-facts":
         path = export_provider_facts(app.conn, app.home, app.now(), out=Path(args.output) if args.output else None)
@@ -670,6 +773,18 @@ def build_parser() -> argparse.ArgumentParser:
                          "writes nothing")
     co.add_argument("--json", action="store_true")
     co.set_defaults(fn=cmd_companies)
+    ql = sub.add_parser("qualify", help="ask a model the profile's qualify question about each company, from stored evidence")
+    ql.add_argument("--profile", required=True)
+    ql.add_argument("--slot", choices=["local", "router", "cloud"], default="local",
+                    help="which llm: slot answers (default: local, the model on this machine)")
+    ql.add_argument("--model", help="model name; on the router slot one of llm.router.models (default: the slot's model)")
+    ql.add_argument("--dry-run", action="store_true", help="show what would be asked and the cost estimate; send nothing")
+    ql.add_argument("--max-usd", type=float, metavar="AMOUNT", help="stop before this much is spent; required for a remote slot")
+    ql.add_argument("--limit", type=int, metavar="N", help="ask at most N subjects (in key order)")
+    ql.add_argument("--again", action="store_true", help="also ask subjects whose last good answer is still current")
+    ql.add_argument("--show", action="store_true", help="list the stored answers and send nothing")
+    ql.add_argument("--json", action="store_true")
+    ql.set_defaults(fn=cmd_qualify)
     sh = sub.add_parser("show")
     sh.add_argument("id", type=int)
     sh.set_defaults(fn=cmd_show)

@@ -442,6 +442,19 @@ def _hiring_rows(conn: sqlite3.Connection, *, include_held: bool) -> list[dict]:
                           ORDER BY first_seen_at, id""")
 
 
+def evidence_items(conn: sqlite3.Connection, resolver: Resolver) -> dict[str, list[dict]]:
+    """Hiring items grouped by company key, as the qualifier and the label sheet read them: untainted,
+    not held, no person data. Reads only."""
+    out: dict[str, list[dict]] = {}
+    for it in rows(conn, """SELECT id, kind, source, title, text, attrs, published_at, first_seen_at, tainted, held,
+                            person_data FROM items WHERE kind='hiring' AND tainted=0 AND held=0 AND person_data=0
+                            ORDER BY first_seen_at, id"""):
+        r = resolver.resolve(it)
+        if r is not None:
+            out.setdefault(r.key, []).append(it)
+    return out
+
+
 def companies(conn: sqlite3.Connection, resolver: Resolver, *, include_held: bool = True) -> list[CompanySummary]:
     """Every company with an untainted hiring item, most postings first. Reads only."""
     groups: dict[str, list[tuple[Resolution, dict]]] = {}
