@@ -108,6 +108,12 @@ def test_admission_passes_good_source(policy: Policy, now: float):
     assert Policy.admitted(checks), [c for c in checks if not c.ok]
 
 
+def test_admission_names_a_reviewed_robots_exception(policy: Policy, now: float):
+    checks = policy.admission_check(GOOD_TRUST, SPEC, {**GOOD_TEST, "robots_exception": 401}, now=now)
+    h2 = next(c for c in checks if c.criterion == "H2")
+    assert h2.ok and "robots.txt answers 401, reviewed exception" in h2.detail
+
+
 @pytest.mark.parametrize("criterion,trust_patch,test_patch,spec", [
     ("H1", {"owner": None}, {}, SPEC),
     ("H1", {"owner_url": "http://example.com"}, {}, SPEC),

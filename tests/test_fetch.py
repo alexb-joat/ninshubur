@@ -206,6 +206,45 @@ def test_robots_403_means_no_robots_allowed():
     assert allowed is False
 
 
+def _src(**trust_over) -> SourceConfig:
+    return SourceConfig(name="t-src", adapter="t", trust={"expected_content_type": "application/json", **trust_over})
+
+
+def test_robots_401_passes_only_with_the_exact_reviewed_status(home, policy):
+    routes = {(HOST, "/robots.txt"): {"status": 401, "body": "Unauthorized"}, (HOST, "/x"): {"body": {"jobs": []}}}
+    f, conn, seen, clock = make(home, policy, routes)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), _src(), SPEC)).error == "refused:robots_disallow"
+    wrong = _src(robots_reviewed_status=403)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), wrong, SPEC)).error == "refused:robots_disallow"
+    reviewed = _src(robots_reviewed_status=401)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), reviewed, SPEC)).ok
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k2"), reviewed, SPEC)).ok
+    events = [e for e in read_jsonl(home / "logs" / "policy.jsonl") if e["event"] == "robots_reviewed_exception"]
+    assert len(events) == 1 and events[0]["host"] == HOST and events[0]["status"] == 401  # logged once, visible
+
+
+@pytest.mark.parametrize("robots", [{"status": 503, "body": ""},
+                                    {"body": "User-agent: *\nDisallow: /\n", "headers": {"Content-Type": "text/plain"}}])
+def test_robots_exception_never_covers_an_unreachable_or_a_real_robots_txt(home, policy, robots):
+    routes = {(HOST, "/robots.txt"): robots, (HOST, "/x"): {"body": {}}}
+    f, conn, seen, clock = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), _src(robots_reviewed_status=401), SPEC))
+    assert r.error in ("refused:robots_unreachable", "refused:robots_disallow") and "/x" not in [c[1] for c in seen.calls]
+
+
+@pytest.mark.parametrize("value, ok", [(401, True), (403, True), ("401", True), (404, False), (503, False), ("yes", False)])
+def test_config_accepts_only_401_or_403_as_a_reviewed_robots_status(home, policy, value, ok):
+    from ninshubur.config import ConfigError
+    from tests.conftest import trust, write_config
+    write_config(home, {"x": {"adapter": "greenhouse", "params": {"boards": ["acme"]},
+                              "trust": trust(0, "greenhouse_jobs.v1", robots_reviewed_status=value)}})
+    if ok:
+        assert load_config(home, policy=policy).sources["x"].robots_reviewed_status == int(value)
+    else:
+        with pytest.raises(ConfigError, match="robots_reviewed_status"):
+            load_config(home, policy=policy)
+
+
 def test_per_host_pacing(home, policy):
     routes = {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): {"body": {}}}
     f, conn, seen, clock = make(home, policy, routes)

@@ -195,6 +195,7 @@ class Fetcher:
         self.refuse_private = bool(policy.get("fetch", "refuse_private_addresses", default=True))
         self.resolve = resolve or resolve_host
         self._addr_cache: dict[str, tuple[float, str | None]] = {}
+        self._robots_exceptions: set[tuple[str, str, int]] = set()
         self._client = httpx.AsyncClient(
             transport=transport, follow_redirects=False, trust_env=False, verify=True,
             timeout=httpx.Timeout(30.0, connect=10.0), headers={"User-Agent": cfg.user_agent, "Accept-Encoding": "gzip"},
@@ -211,6 +212,15 @@ class Fetcher:
         self.policy_log.write({"event": "refused_fetch", "source": src_name, "url": plan.log_url or plan.url,
                                "code": r.code, "reason": r.reason})
         return Fetched(plan=plan, status=None, error=f"refused:{r.code}", fetched_at=self.now())
+
+    def _log_robots_exception(self, src_name: str, host: str, status: int) -> None:
+        """Once per source and host per process: the reviewed exception is visible in policy.jsonl."""
+        key = (src_name, host, status)
+        if key in self._robots_exceptions:
+            return
+        self._robots_exceptions.add(key)
+        self.policy_log.write({"event": "robots_reviewed_exception", "source": src_name, "host": host, "status": status,
+                               "reason": f"robots.txt answers {status}; the source's trust block records this status as reviewed"})
 
     async def fetch(self, plan: FetchPlan, src: SourceConfig, spec: AdapterSpec, *, health: str = "ok",
                     boosted: bool = False, review_due_at: float | None = None,
@@ -238,6 +248,11 @@ class Fetcher:
         crawl_delay: float | None = None
         if self.policy.get("fetch", "robots", "honour", default=True):
             allowed, crawl_delay, robots_status = await self._robots_allow(host, plan.url, spec)
+            if not allowed and robots_status in (401, 403) and robots_status == src.robots_reviewed_status:
+                # A person read this host's terms and recorded the exact answer its robots.txt gives (an API
+                # host behind a login wall answers every unknown path, robots.txt included, with 401).
+                allowed = True
+                self._log_robots_exception(src.name, host, robots_status)
             if not allowed and RobotsCache.unreachable(robots_status):
                 return self.refuse(plan, src.name, Refusal("robots_unreachable", f"robots.txt on {host} could not be read "
                                                            f"({robots_status or 'network error'}); asked again in 10 min"))

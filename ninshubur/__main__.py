@@ -27,7 +27,7 @@ from .fetch import Fetcher
 from .home import data_home, ensure_home
 from .ingest import Ingestor
 from .logs import write_private
-from .policy import Policy, PolicyError
+from .policy import Policy, PolicyError, host_of
 from .profiles import ProfileError, load_profiles
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
@@ -356,6 +356,9 @@ def _test_source(app: App, src: SourceConfig) -> tuple[list, dict]:
                 content_type=f.headers.get("content-type"),
                 robots_allowed=f.error not in ("refused:robots_disallow", "refused:robots_unreachable"),
                 unauthenticated=spec.needs_key_env is None, max_bytes=plan.max_bytes, error=f.error, codes=codes)
+    robots = app.fetcher.robots.cached(host_of(plan.url))
+    if robots and robots["status"] in (401, 403) and robots["status"] == src.robots_reviewed_status:
+        test["robots_exception"] = robots["status"]
     if f.status == 200 and not f.findings:
         # Parse exactly as a run would (the adapter's own parser, then its schema), so H4 measures the real
         # extraction rather than a generic JSON projection that non-JSON sources cannot pass.

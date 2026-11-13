@@ -373,8 +373,10 @@ class Policy:
         basis = trust.get("legal_basis")
         ok = bool(trust.get("terms_url")) and bool(trust.get("licence")) and basis in self.legal_bases
         robots_ok = t.get("robots_allowed", True)
+        robots_note = (f"robots.txt answers {t['robots_exception']}, reviewed exception in the trust block"
+                       if t.get("robots_exception") else "robots allows")
         checks.append(Check("H2", ok and bool(robots_ok),
-                            "terms, licence, legal basis recorded; robots allows" if ok and robots_ok
+                            f"terms, licence, legal basis recorded; {robots_note}" if ok and robots_ok
                             else ("robots.txt disallows the planned path" if ok else "terms_url / licence / legal_basis missing or not allowed")))
 
         url_codes = [check_url(u) for u in t.get("urls", [])]

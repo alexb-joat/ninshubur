@@ -87,6 +87,13 @@ class SourceConfig:
     def expected_content_type(self) -> str:
         return str(self.trust.get("expected_content_type", ""))
 
+    @property
+    def robots_reviewed_status(self) -> int | None:
+        """The robots.txt status (401 or 403) a person reviewed and accepted for this source's hosts, or None.
+        Only that exact answer is let through; a real robots.txt, a 5xx or a network error are judged as usual."""
+        v = self.trust.get("robots_reviewed_status")
+        return int(v) if v is not None else None
+
     def reviewed_at_ts(self) -> float | None:
         return _parse_day(self.trust.get("reviewed_at"))
 
@@ -216,6 +223,10 @@ def _source(name: str, s: Any, policy: Policy | None, warnings: list[str]) -> So
             raise ConfigError(f"source {name!r}: trust.{u} must be a valid https URL")
     if _parse_day(trust.get("reviewed_at")) is None:
         raise ConfigError(f"source {name!r}: trust.reviewed_at must be an ISO date")
+    if trust.get("robots_reviewed_status") is not None and str(trust["robots_reviewed_status"]) not in ("401", "403"):
+        raise ConfigError(f"source {name!r}: trust.robots_reviewed_status is {trust['robots_reviewed_status']!r}; "
+                          "only 401 or 403 can be reviewed (other 4xx already mean no robots rules, and a 5xx or "
+                          "network error always disallows). Remove the key or set it to the status robots.txt answers")
     if policy is not None:
         if trust["legal_basis"] not in policy.legal_bases:
             raise ConfigError(f"source {name!r}: legal_basis {trust['legal_basis']!r} not allowed by policy")
