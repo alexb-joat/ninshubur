@@ -357,7 +357,8 @@ def _test_source(app: App, src: SourceConfig) -> tuple[list, dict]:
                 robots_allowed=f.error not in ("refused:robots_disallow", "refused:robots_unreachable"),
                 unauthenticated=spec.needs_key_env is None, max_bytes=plan.max_bytes, error=f.error, codes=codes)
     robots = app.fetcher.robots.cached(host_of(plan.url))
-    if robots and robots["status"] in (401, 403) and robots["status"] == src.robots_reviewed_status:
+    if (robots and robots["status"] in (401, 403) and robots["status"] == src.robots_reviewed_status
+            and host_of(plan.url) in spec.hosts):
         test["robots_exception"] = robots["status"]
     if f.status == 200 and not f.findings:
         # Parse exactly as a run would (the adapter's own parser, then its schema), so H4 measures the real

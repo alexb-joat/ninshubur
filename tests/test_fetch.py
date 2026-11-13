@@ -223,6 +223,17 @@ def test_robots_401_passes_only_with_the_exact_reviewed_status(home, policy):
     assert len(events) == 1 and events[0]["host"] == HOST and events[0]["status"] == 401  # logged once, visible
 
 
+def test_robots_exception_never_covers_a_host_outside_the_adapters_fixed_hosts(home, policy):
+    """An adapter whose hosts arrive at run time (event sites) gets no exception: nobody reviewed those hosts."""
+    other = "events.example"
+    routes = {(other, "/robots.txt"): {"status": 401, "body": ""}, (other, "/x"): {"body": {}}}
+    f, conn, seen, clock = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{other}/x", key="k"), _src(robots_reviewed_status=401), SPEC, extra_hosts=[other]))
+    assert r.error == "refused:robots_disallow" and "/x" not in [c[1] for c in seen.calls]
+    reason = [e for e in read_jsonl(home / "logs" / "policy.jsonl") if e["event"] == "refused_fetch"][-1]["reason"]
+    assert "robots_reviewed_status" not in reason  # the fix is not offered where it cannot apply
+
+
 @pytest.mark.parametrize("robots", [{"status": 503, "body": ""},
                                     {"body": "User-agent: *\nDisallow: /\n", "headers": {"Content-Type": "text/plain"}}])
 def test_robots_exception_never_covers_an_unreachable_or_a_real_robots_txt(home, policy, robots):

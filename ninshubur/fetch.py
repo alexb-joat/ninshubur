@@ -248,7 +248,8 @@ class Fetcher:
         crawl_delay: float | None = None
         if self.policy.get("fetch", "robots", "honour", default=True):
             allowed, crawl_delay, robots_status = await self._robots_allow(host, plan.url, spec)
-            if not allowed and robots_status in (401, 403) and robots_status == src.robots_reviewed_status:
+            if (not allowed and robots_status in (401, 403) and robots_status == src.robots_reviewed_status
+                    and host in spec.hosts):  # fixed adapter hosts only: never a host handed over at run time
                 # A person read this host's terms and recorded the exact answer its robots.txt gives (an API
                 # host behind a login wall answers every unknown path, robots.txt included, with 401).
                 allowed = True
@@ -256,7 +257,7 @@ class Fetcher:
             if not allowed and RobotsCache.unreachable(robots_status):
                 return self.refuse(plan, src.name, Refusal("robots_unreachable", f"robots.txt on {host} could not be read "
                                                            f"({robots_status or 'network error'}); asked again in 10 min"))
-            if not allowed and robots_status in (401, 403):
+            if not allowed and robots_status in (401, 403) and host in spec.hosts:
                 return self.refuse(plan, src.name, Refusal(
                     "robots_disallow", f"robots.txt on {host} answers {robots_status}, read as the whole host off limits; "
                     f"if you have read the host's terms, record `robots_reviewed_status: {robots_status}` in the trust "

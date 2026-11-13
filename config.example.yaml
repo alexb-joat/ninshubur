@@ -182,6 +182,7 @@ sources:
   #     # included. Ninshubur reads a 401 or 403 on robots.txt as "the whole host is off limits" unless the
   #     # source records that exact status here after a person has read the host's documentation and terms.
   #     # Only 401 or 403 can be recorded; a real robots.txt, a 5xx or a network error are judged as usual.
+  #     # It covers the adapter's own fixed hosts only, never a host handed over at run time (event sites).
   #     robots_reviewed_status: 401
   #     reviewed_by: alex
   #     reviewed_at: 2026-11-13
