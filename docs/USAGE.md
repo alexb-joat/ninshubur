@@ -124,6 +124,10 @@ One profile per client, in `~/.ninshubur/profiles.yaml`. Copy the `client-templa
 | `tools_in_use` | outage alerts | providers the client depends on |
 | `home_base`, `home_country` | reserved for local-meeting suggestions (later phase) | where the person working this client sits |
 | `weights.<kind>` | value multiplier | 1.2 if this client values hiring signals more, and so on |
+| `qualify` | `ninshubur qualify`, the label sheet | `question`, `must`, `must_not`, `labels` (the first is the positive answer; default `yes`, `no`, `unsure`), `subject` (default `company`); see section 6c |
+
+A key the code does not know (a misspelling, a retired block) is ignored by the crawler; `ninshubur profiles check`
+names it. Inside `qualify:` an unknown key is refused, because a rule that silently dropped out would change every answer.
 
 Then:
 

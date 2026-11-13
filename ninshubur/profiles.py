@@ -19,6 +19,32 @@ class ProfileError(Exception):
 # Job-board adapters whose board token a `target_companies` entry may carry: {name: X, ashby: x}.
 BOARD_ADAPTERS = ("greenhouse", "lever", "ashby")
 
+# Every key a profile may carry. Anything else is kept in ``Profile.unknown_keys`` and named by
+# `ninshubur profiles check`, so a misspelt or retired block is seen instead of silently doing nothing.
+PROFILE_KEYS = ("industries", "titles", "geos", "pains", "keywords", "negative_keywords", "example_texts", "thresholds",
+                "tiers", "home_base", "home_country", "target_companies", "tools_in_use", "weights", "topics", "qualify")
+QUALIFY_KEYS = ("question", "subject", "must", "must_not", "labels")
+DEFAULT_LABELS = ("yes", "no", "unsure")
+MAX_RULES = 12
+
+
+@dataclass(frozen=True)
+class Qualify:
+    """What `ninshubur qualify` asks about one subject, in the operator's own words.
+
+    ``question`` is the one thing to decide; ``must`` and ``must_not`` are the rules it is decided by;
+    ``labels`` are the only answers allowed, and the first one is the positive answer (the one precision
+    and recall are counted for); ``subject`` is the noun for what one row is."""
+    question: str
+    labels: tuple[str, ...] = DEFAULT_LABELS
+    subject: str = "company"
+    must: tuple[str, ...] = ()
+    must_not: tuple[str, ...] = ()
+
+    @property
+    def positive(self) -> str:
+        return self.labels[0]
+
 
 @dataclass
 class Profile:
@@ -39,6 +65,8 @@ class Profile:
     tools_in_use: list[dict] = field(default_factory=list)
     weights: dict[str, float] = field(default_factory=dict)
     topics: list[str] = field(default_factory=list)
+    qualify: Qualify | None = None
+    unknown_keys: tuple[str, ...] = ()
 
     def all_terms(self) -> list[str]:
         return [t for t in (self.keywords + self.pains + self.industries + self.topics) if t]
@@ -132,6 +160,61 @@ def _terms(v: Any, what: str, name: str) -> list[str]:
     return out
 
 
+_LABEL_RE = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
+_SUBJECT_RE = re.compile(r"^[A-Za-z][A-Za-z -]{0,39}$")
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _sentence(v: Any, what: str, name: str, *, lo: int, hi: int) -> str:
+    if not isinstance(v, str):
+        raise ProfileError(f"profile {name}: qualify.{what} must be text")
+    if _CONTROL_RE.search(v):
+        raise ProfileError(f"profile {name}: qualify.{what} holds a control character")
+    text = " ".join(v.split())
+    if not lo <= len(text) <= hi:
+        raise ProfileError(f"profile {name}: qualify.{what} must be {lo} to {hi} characters, got {len(text)}")
+    return text
+
+
+def _rules(v: Any, what: str, name: str) -> tuple[str, ...]:
+    if v is None:
+        return ()
+    if not isinstance(v, list):
+        raise ProfileError(f"profile {name}: qualify.{what} must be a list of sentences")
+    if len(v) > MAX_RULES:
+        raise ProfileError(f"profile {name}: qualify.{what} has {len(v)} entries, at most {MAX_RULES}")
+    return tuple(_sentence(r, f"{what}[{i}]", name, lo=3, hi=300) for i, r in enumerate(v))
+
+
+def _qualify(name: str, q: Any) -> Qualify | None:
+    """Validate a profile's ``qualify:`` block. Unknown keys are refused, not ignored: a misspelt rule
+    that quietly drops out would change every answer."""
+    if q is None:
+        return None
+    if not isinstance(q, dict):
+        raise ProfileError(f"profile {name}: qualify must be a mapping with {', '.join(QUALIFY_KEYS)}")
+    extra = sorted(str(k) for k in q if k not in QUALIFY_KEYS)
+    if extra:
+        raise ProfileError(f"profile {name}: qualify has unknown key(s) {', '.join(extra)}; allowed: {', '.join(QUALIFY_KEYS)}")
+    if "question" not in q:
+        raise ProfileError(f"profile {name}: qualify needs a question (one sentence: what is to be decided)")
+    labels_raw = q.get("labels", list(DEFAULT_LABELS))
+    if not isinstance(labels_raw, list) or not 2 <= len(labels_raw) <= 5:
+        raise ProfileError(f"profile {name}: qualify.labels must list 2 to 5 answers, the positive one first")
+    # YAML reads a bare yes/no as a boolean; they are the obvious labels, so they are read back as words.
+    labels = tuple({True: "yes", False: "no"}.get(v, v) if isinstance(v, bool) else str(v).strip() for v in labels_raw)
+    for lab in labels:
+        if not _LABEL_RE.match(lab):
+            raise ProfileError(f"profile {name}: qualify label {lab!r} must be lower-case letters, digits, - or _ (24 at most)")
+    if len(set(labels)) != len(labels):
+        raise ProfileError(f"profile {name}: qualify.labels repeats an answer")
+    subject = str(q.get("subject", "company")).strip()
+    if not _SUBJECT_RE.match(subject):
+        raise ProfileError(f"profile {name}: qualify.subject must be a short noun (letters, spaces, hyphens), got {subject!r}")
+    return Qualify(question=_sentence(q["question"], "question", name, lo=10, hi=400), labels=labels, subject=subject,
+                   must=_rules(q.get("must"), "must", name), must_not=_rules(q.get("must_not"), "must_not", name))
+
+
 def _profile(name: str, p: dict) -> Profile:
     if not isinstance(p, dict):
         raise ProfileError(f"profile {name}: must be a mapping")
@@ -150,4 +233,5 @@ def _profile(name: str, p: dict) -> Profile:
         home_base=p.get("home_base"), home_country=p.get("home_country"), target_companies=[dict(c) for c in (p.get("target_companies") or [])],
         tools_in_use=[dict(t) for t in (p.get("tools_in_use") or [])],
         weights={str(k): float(v) for k, v in (p.get("weights") or {}).items()}, topics=_terms(p.get("topics"), "topics", name),
+        qualify=_qualify(name, p.get("qualify")), unknown_keys=tuple(sorted(str(k) for k in p if k not in PROFILE_KEYS)),
     )

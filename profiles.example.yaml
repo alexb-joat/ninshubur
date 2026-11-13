@@ -21,6 +21,17 @@ profiles:
     target_companies: [{name: Stripe, domain: stripe.com, greenhouse: stripe}]
     tools_in_use: [{kind: llm_provider, id: anthropic/claude}, {kind: github, repo: ollama/ollama}]
     weights: {service_request_lead: 1.2}
+    # What `ninshubur qualify` asks a model about each company, and what you answer on the label sheet.
+    # The first label is the positive answer. Unknown keys in this block are refused.
+    qualify:
+      subject: company
+      question: Would this company plausibly buy outsourced B2B outbound in the next three months?
+      must:
+        - it sells to other businesses
+        - it is growing a sales or growth team
+      must_not:
+        - it is itself a lead-generation or outbound agency
+      labels: [yes, no, unsure]
 
   # Template for a client. Copy, rename to the client's slug, fill in, delete what you do not know.
   client-template:

@@ -28,7 +28,7 @@ from .home import data_home, ensure_home
 from .ingest import Ingestor
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
-from .profiles import ProfileError, load_profiles
+from .profiles import PROFILE_KEYS, ProfileError, load_profiles
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
@@ -522,6 +522,12 @@ def cmd_profiles(args, app: App) -> int:
         if args.pcmd == "check":
             for kind, why in p.builders_available().items():
                 print(f"    {kind:<24} {why}")
+            q = p.qualify
+            print(f"    {'qualify':<24} " + (f"ok: one {q.subject} at a time, answers {'/'.join(q.labels)} (positive: {q.positive}), "
+                                             f"{len(q.must)} must, {len(q.must_not)} must_not" if q
+                                             else "not set (add a qualify: block with a question to use `ninshubur qualify`)"))
+            if p.unknown_keys:
+                print(f"    warning: unknown key(s) ignored: {', '.join(p.unknown_keys)} (known: {', '.join(PROFILE_KEYS)})")
             if not p.home_country and p.countries:
                 print("    warning: home_country unset; every trip outside the home city is costed as abroad")
             kinds = {get_adapter(src.adapter).spec.kind for src in app.cfg.sources.values() if src.enabled}
