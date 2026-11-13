@@ -74,8 +74,16 @@ _HTML_ACTIVE = re.compile(
     r"|\bon(load|error|click|mouseover|focus|submit|input|change)\s*=)",
     re.IGNORECASE,
 )
+# PowerShell only in command shape: the .exe, a launcher before it (cmd /c, Start-Process), or after it a flag
+# (hyphen, en dash or em dash, which PowerShell also accepts), a /c-style switch, iex or iwr, a script block or
+# a .ps1 file. The bare word is ordinary prose in job posts ("Scripting (Bash, Python, PowerShell)").
+_PWSH = (r"\bpowershell\.exe\b"
+         r"|\b(cmd(\.exe)?\s+/c|start-process)\s+[\"']?(powershell|pwsh)\b"
+         r"|\b(powershell|pwsh)(\.exe)?\s+([-\u2013\u2014]{1,2}[a-z]+\b(?!-)"
+         r"|/(c|command|e|ec|enc|encodedcommand|nop|noprofile|noni|w|windowstyle|ep|executionpolicy|f|file)\b(?![#+])"
+         r"|[\"'(;]*\s*(iex|iwr)\b|[\"'(]*&\s*\{|\S+\.ps1\b)")
 _SHELL = re.compile(
-    r"(\bcurl\s+-|\bcurl\s+https?://|\bwget\s+https?://|\brm\s+-rf\b|\bpowershell(\.exe)?\b|\b(ba)?sh\s+-c\b"
+    r"(\bcurl\s+-|\bcurl\s+https?://|\bwget\s+https?://|\brm\s+-rf\b|" + _PWSH + r"|\b(ba)?sh\s+-c\b"
     r"|\|\s*(ba)?sh\b|\bchmod\s+\+x\b|\bInvoke-(WebRequest|Expression)\b|\bbase64\s+(-d|--decode)\b)",
     re.IGNORECASE,
 )
