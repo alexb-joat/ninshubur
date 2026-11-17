@@ -75,6 +75,22 @@ def root_cause(e: BaseException) -> str:
     return (str(e) or type(e).__name__)[:160]
 
 
+# Denied whatever this Python's ipaddress tables say (they changed in 3.11.10/3.12.4/3.13): ranges that tunnel to,
+# translate to, or stand for addresses that are not on the public internet.
+DENIED_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "100.64.0.0/10",    # carrier-grade NAT
+    "192.0.0.0/24",     # IETF protocol assignments
+    "198.18.0.0/15",    # benchmarking
+    "10.47.83.0/24",    # this machine's WireGuard tunnel (inside 10/8 already; named so a change here is deliberate)
+    "64:ff9b::/96",     # NAT64: a public-looking v6 address that a gateway turns into any v4 one, 127.0.0.1 included
+    "64:ff9b:1::/48",   # local-use NAT64
+    "2002::/16",        # 6to4: embeds a v4 address
+    "2001::/32",        # Teredo: embeds a v4 address
+    "fec0::/10",        # site-local (deprecated, still routed on some networks)
+    "::/96",            # v4-compatible (deprecated)
+))
+
+
 def is_public_address(addr: str) -> bool:
     try:
         ip = ipaddress.ip_address(addr.split("%", 1)[0])
@@ -82,7 +98,7 @@ def is_public_address(addr: str) -> bool:
         return False
     if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
         return False
-    if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network("100.64.0.0/10"):  # CGNAT
+    if any(ip.version == n.version and ip in n for n in DENIED_NETWORKS):
         return False
     if isinstance(ip, ipaddress.IPv6Address) and (ip.ipv4_mapped is not None and not is_public_address(str(ip.ipv4_mapped))):
         return False

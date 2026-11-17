@@ -301,7 +301,10 @@ def test_unknown_host_in_transport_is_599(home, policy):
     assert r.status == 599 and not r.ok
 
 
-@pytest.mark.parametrize("addr", ["127.0.0.1", "10.0.0.5", "192.168.1.9", "172.16.0.1", "169.254.169.254", "100.64.0.1", "::1", "fd00::1", "::ffff:10.0.0.5", "0.0.0.0"])
+@pytest.mark.parametrize("addr", ["127.0.0.1", "10.0.0.5", "192.168.1.9", "172.16.0.1", "169.254.169.254", "100.64.0.1", "::1", "fd00::1",
+                                  "::ffff:10.0.0.5", "0.0.0.0", "10.47.83.1", "::ffff:127.0.0.1", "64:ff9b::7f00:1",
+                                  "64:ff9b::a9fe:a9fe", "64:ff9b:1::1", "2002:7f00:1::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+                                  "fec0::1", "::7f00:1", "192.0.0.8", "198.18.0.1", "fe80::1%eth0"])
 def test_private_addresses_are_never_contacted(home, policy, addr):
     f, conn, seen, _ = make(home, policy, {(HOST, "*"): {"body": {}}}, resolve=lambda h: [addr])
     r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
@@ -316,6 +319,25 @@ def test_public_address_and_resolver_failure(home, policy):
     f2, conn2, seen2, _ = make(home, policy, {(HOST, "/x"): {"body": {}}}, resolve=lambda h: (_ for _ in ()).throw(OSError("dns down")))
     r = run(f2.fetch(FetchPlan(url=f"https://{HOST}/x", key="k2"), SRC, SPEC))
     assert r.error != "refused:private_address"  # unresolvable is left to the transport, not treated as private
+
+
+# Services on this machine (and the planned `ninshubur serve`): every way of naming them stays refused, so a later
+# "allow localhost" change fails here, loudly, before it can let a crawled link reach one of them.
+LOCAL_SERVICES = {"ollama": 11434, "trioditis": 8787, "hlidskjalv": 8788, "default-https": 443}
+
+
+@pytest.mark.parametrize("name,port", sorted(LOCAL_SERVICES.items()))
+def test_local_services_are_never_contacted(home, policy, name, port):
+    hosts = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "loopback.example"})
+    spec = AdapterSpec(name="t", kind="events", hosts=hosts, schema="confs_tech.v1", schemas=("confs_tech.v1",),
+                       expected_content_type="application/json", base_interval_s=60, max_interval_s=600, default_tier=1,
+                       legal_basis="public_business_info", questions=("q?",))
+    f, conn, seen, _ = make(home, policy, {}, resolve=lambda h: ["127.0.0.1"])
+    for url in (f"https://localhost:{port}/", f"http://localhost:{port}/", f"https://127.0.0.1:{port}/",
+                f"http://127.0.0.1:{port}/", f"https://[::1]:{port}/", f"https://loopback.example:{port}/"):
+        r = run(f.fetch(FetchPlan(url=url, key="k"), SRC, spec))
+        assert (r.error or "").startswith("refused:"), (name, url, r.error)
+    assert seen.calls == []
 
 
 def test_is_public_address():
