@@ -21,6 +21,9 @@ def _ics_date(ts: float) -> str:
 
 
 def _esc(s: str) -> str:
+    """RFC 5545 TEXT escaping. A bare CR ends a content line for many readers, so a crawled title holding one could
+    start a property of its own (an ATTACH, a second VEVENT): CR and CRLF become an escaped newline like LF."""
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
     return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
 
 

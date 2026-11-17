@@ -191,3 +191,12 @@ def test_csv_items_guards_formulas(home):
     titles = {r[2] for r in recs[1:]}
     assert {"'" + h for h in HOSTILE} <= titles and not titles & set(HOSTILE)
     assert [r[3:] for r in recs[1:]] == [r[3:] for r in clean[1:]]  # the other columns are untouched
+
+
+def test_ics_text_escaping_leaves_no_raw_line_break():
+    from ninshubur.sinks.ics import _esc
+    hostile = "Talk\rATTACH:https://evil.example/x\r\nBEGIN:VEVENT\nEND"
+    out = _esc(hostile)
+    assert "\r" not in out and "\n" not in out
+    assert out == "Talk\\nATTACH:https://evil.example/x\\nBEGIN:VEVENT\\nEND"
+    assert _esc("a;b,c\\d") == "a\\;b\\,c\\\\d"
