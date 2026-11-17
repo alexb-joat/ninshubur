@@ -485,3 +485,26 @@ def test_request_deadline_comes_from_policy_and_only_tightens(home, policy):
     assert merge_tightening(shipped, {"fetch": {"request_deadline_s": 10}})[0]["fetch"]["request_deadline_s"] == 10
     merged, notes = merge_tightening(shipped, {"fetch": {"request_deadline_s": 600}})
     assert merged["fetch"]["request_deadline_s"] == 20 and "would loosen" in notes[0]
+
+
+def test_sources_sharing_a_fetcher_take_turns_on_a_host(home, policy):
+    """Four sources fetching one host at once: one request in flight at a time, each start a full gap after the last."""
+    flight = {"now": 0, "max": 0}
+    clock = Clock()
+    starts: list[float] = []
+
+    async def page(request):
+        starts.append(clock.t)
+        flight["now"] += 1
+        flight["max"] = max(flight["max"], flight["now"])
+        await asyncio.sleep(0.01)
+        flight["now"] -= 1
+        return httpx.Response(200, json={})
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "*"): page}, clock=clock)
+    run(f.fetch(FetchPlan(url=f"https://{HOST}/warm", key="w"), SRC, SPEC))  # robots.txt cached first
+
+    async def four():
+        return await asyncio.gather(*(f.fetch(FetchPlan(url=f"https://{HOST}/p{i}", key=f"k{i}"), SRC, SPEC) for i in range(4)))
+    assert all(r.ok for r in run(four()))
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    assert flight["max"] == 1 and min(gaps) >= f.gate.min_gap - 1e-9

@@ -14,9 +14,10 @@ import socket
 import sqlite3
 import time
 import urllib.robotparser
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable, Iterable
+from typing import AsyncIterator, Awaitable, Callable, Iterable
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -177,6 +178,13 @@ class HostGate:
             await self.sleep(delay)
         st.last_request_at = self.now()
         return delay
+
+    @asynccontextmanager
+    async def slot(self, host: str, min_delay: float, crawl_delay: float | None) -> AsyncIterator[float]:
+        """One request at a time per host, across every source sharing this fetcher: hold the host's lock, wait out
+        its delays, and keep the lock until the request is done. Yields the delay waited."""
+        async with self.state(host).lock:
+            yield await self.wait(host, min_delay, crawl_delay)
 
     def note_error(self, host: str) -> bool:
         st = self.state(host)
@@ -346,9 +354,9 @@ class Fetcher:
         t0 = self.now()
         result = Fetched(plan=plan, status=None, fetched_at=now, final_url=url)
         while True:
-            await self.gate.wait(host, spec.min_delay_s, crawl_delay)
             try:
-                resp, body, raw_bytes, err = await self._request(plan.method, url, headers, plan.body, max_bytes)
+                async with self.gate.slot(host, spec.min_delay_s, crawl_delay):
+                    resp, body, raw_bytes, err = await self._request(plan.method, url, headers, plan.body, max_bytes)
             except (httpx.HTTPError, OSError) as e:  # network/TLS errors
                 result.error = type(e).__name__
                 result.error_detail = root_cause(e)
@@ -484,8 +492,8 @@ class Fetcher:
             robots_url = f"https://{host}/robots.txt"
             body, status = "", None
             try:
-                await self.gate.wait(host, spec.min_delay_s, None)
-                resp, raw, _, finding = await self._request("GET", robots_url, {}, None, ROBOTS_CAP)
+                async with self.gate.slot(host, spec.min_delay_s, None):
+                    resp, raw, _, finding = await self._request("GET", robots_url, {}, None, ROBOTS_CAP)
                 status = resp.status_code
                 if status == 200 and finding is None:
                     body = raw.decode("utf-8", errors="replace")
