@@ -8,7 +8,6 @@ when a cap trips, parsing stops and ``Doc.limited`` is set so the caller can fla
 """
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -222,16 +221,13 @@ def parse_html(body: bytes | str, *, max_nodes: int = 200_000, max_depth: int = 
 
 def json_ld(doc: Doc, *, max_depth: int = 32) -> list:
     """Parsed JSON-LD objects, depth-checked; invalid blocks are skipped."""
-    from ..detectors import depth_of
+    from ..detectors import load_json
     out = []
     for raw in doc.ld_blocks:
         try:
-            data = json.loads(raw)
+            out.append(load_json(raw, max_depth=max_depth))
         except ValueError:
             continue
-        if depth_of(data, limit=max_depth) > max_depth:
-            continue
-        out.append(data)
     return out
 
 

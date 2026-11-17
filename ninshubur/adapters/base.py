@@ -3,13 +3,12 @@ and parse Fetched bodies through a schema. Only ``fetch.Fetcher`` touches the ne
 from __future__ import annotations
 
 import importlib
-import json
 import pkgutil
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ..config import SourceConfig
-from ..detectors import Finding
+from ..detectors import Finding, load_json
 from ..items import Item
 from ..schemas import Projection, get_schema, project
 
@@ -77,7 +76,8 @@ class Fetched:
         return self.status == 304 or (self.status == 200 and not self.changed)
 
     def json(self) -> Any:
-        return json.loads(self.body.decode("utf-8"))
+        """The body as JSON; anything malformed, oversized or nested too deeply raises ValueError."""
+        return load_json(self.body)
 
     def text(self) -> str:
         return self.body.decode("utf-8")

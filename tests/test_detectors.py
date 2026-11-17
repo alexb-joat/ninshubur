@@ -158,3 +158,26 @@ def test_item_explosion():
     assert item_explosion(40, 10.0) is None
     assert item_explosion(100, 2.0) is None  # tiny medians do not trigger
     assert item_explosion(100, None) is None
+
+
+def test_load_json_turns_every_hostile_shape_into_a_value_error():
+    from ninshubur.detectors import load_json
+    assert load_json(b'{"a": [1, {"b": "c"}]}') == {"a": [1, {"b": "c"}]}
+    for bad, why in [(b"[" * 100_000 + b"]" * 100_000, "too deeply"), (b"[" * 70 + b"]" * 70, "deeper than 64"),
+                     (b"1" * 20, None), (b"\xff", None), (b'{"a": ' + b"9" * 5000 + b"}", None)]:
+        if why is None and bad == b"1" * 20:
+            assert load_json(bad) == int(bad)  # a number is valid JSON
+            continue
+        with pytest.raises(ValueError) as e:
+            load_json(bad)
+        assert why is None or why in str(e.value)
+    with pytest.raises(ValueError, match="over the 10-byte limit"):
+        load_json(b'["aaaaaaaaaaaa"]', max_bytes=10)
+
+
+def test_json_ld_blocks_nested_too_deeply_are_skipped():
+    from ninshubur.parse.htmltree import json_ld, parse_html
+    deep = "[" * 50_000 + "]" * 50_000
+    doc = parse_html(f'<script type="application/ld+json">{deep}</script>'
+                     '<script type="application/ld+json">{"@type": "Event", "name": "ok"}</script>')
+    assert json_ld(doc) == [{"@type": "Event", "name": "ok"}]

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import re
 import sqlite3
 import time
@@ -36,6 +35,7 @@ from typing import Any, Callable
 
 from ..config import Config
 from ..db import j, rows, uj
+from ..detectors import load_json
 from ..llm import CHARS_PER_TOKEN, LLMClient, LLMError, Slot, estimate_usd, slot_from_config
 from ..profiles import Profile, Qualify
 from ..redact import redact
@@ -232,7 +232,7 @@ def parse_reply(text: str, now: float | None = None) -> Answer | str:
     if start < 0 or end <= start:
         return "not_json"
     try:
-        data = json.loads(body[start:end + 1])
+        data = load_json(body[start:end + 1], max_depth=16)  # a reply echoes crawled text: parse it as hostile too
     except ValueError:
         return "not_json"
     if not isinstance(data, dict):

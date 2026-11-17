@@ -92,6 +92,13 @@ def test_nine_megabyte_body(home):
     assert one(env.conn, "SELECT MAX(bytes) AS b FROM fetches")["b"] < 2_000_000
 
 
+def test_json_nested_past_the_recursion_limit_is_a_finding_not_a_crash(home):
+    """json.loads raises RecursionError (not ValueError) here: the source is marked, the run carries on."""
+    env, reports = good_then_bad(home, lambda req: httpx.Response(200, content=b"[" * 200_000 + b"]" * 200_000,
+                                                                   headers={"Content-Type": "text/plain"}))
+    assert reports[0].ingests[0].codes == ["not_json"] and env.source("confs")["health"] in ("suspect", "quarantined")
+
+
 def test_gzip_bomb(home):
     payload = gzip.compress(b"[" + b"0" * 30_000_000 + b"]")
     env, reports = good_then_bad(home, lambda req: httpx.Response(200, content=payload, headers={
