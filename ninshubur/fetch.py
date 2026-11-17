@@ -139,7 +139,7 @@ class PinnedTransport(httpx.AsyncBaseTransport):
         if url.scheme != "https" or url.port not in (None, 443):
             raise AddressRefused(f"{url.scheme}://{name}:{url.port}: only https on port 443 is fetched", request=request)
         last: httpx.ConnectError | None = None
-        for addr in self.pin(name)[:2]:  # v4 first, then one v6 try: no second lookup, no address the gate didn't check
+        for addr in self.pin(name)[:2]:  # at most two tries, IPv4 first; no second lookup, no address the gate didn't check
             ext = dict(request.extensions)
             ext["sni_hostname"] = name
             pinned = httpx.Request(request.method, url.copy_with(host=addr), headers=request.headers,
