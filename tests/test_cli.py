@@ -153,3 +153,26 @@ def test_export_euboulia_facts(cli, home):
     assert code == 0 and "provider-facts.json" in out
     data = json.loads((home / "feeds" / "provider-facts.json").read_text())
     assert data["$schema"] == "provider-facts.v1" and data["providers"] == {}
+
+
+def test_crawled_text_reaches_the_terminal_without_control_sequences(cli, home):
+    """Even text that skipped ingest cleaning (written straight into the database here) prints with its escape
+    sequences defused: no clipboard write (OSC 52), no planted link (OSC 8), no screen clear, no bidi override."""
+    from ninshubur.db import connect
+    assert cli("run", "--replay", str(SAMPLES))[0] == 0
+    hostile = "\x1b]52;c;ZXZpbA==\x07\x1b]8;;https://evil.example\x1b\\click\x1b]8;;\x1b\\\x1b[2J\x9b31m\u202eevil"
+    conn = connect(home)
+    sid = conn.execute("SELECT id FROM suggestions ORDER BY id LIMIT 1").fetchone()[0]
+    conn.execute("UPDATE suggestions SET title = title || ? WHERE id = ?", (hostile, sid))
+    conn.commit()
+    conn.close()
+    for args in (("suggest",), ("show", str(sid))):
+        code, out = cli(*args)
+        assert code == 0 and "click" in out
+        assert not any(c in out for c in ("\x1b", "\x07", "\x9b", "\u202e")), args
+
+
+def test_term_safe_keeps_ordinary_text():
+    from ninshubur.termsafe import term_safe
+    assert term_safe("Konferenz 2026\tBerlin\n\u2764 caf\u00e9") == "Konferenz 2026\tBerlin\n\u2764 caf\u00e9"
+    assert term_safe("a\rb\x1b[Kc") == "a?b?[Kc"

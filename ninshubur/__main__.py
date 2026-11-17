@@ -35,6 +35,7 @@ from .profiles import PROFILE_KEYS, ProfileError, load_profiles
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
+from .termsafe import guarded_output
 
 
 class App:
@@ -848,6 +849,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    with guarded_output():
+        return _main(argv)
+
+
+def _main(argv: list[str] | None) -> int:
     args = build_parser().parse_args(argv)
     try:
         app = App(verbose=args.verbose)
