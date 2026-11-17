@@ -17,11 +17,19 @@ def _first(d: Path, pattern: str) -> bytes | None:
     return None
 
 
+REPLAY_ADDRESS = "93.184.216.34"  # public, so the address check passes; never contacted, the mock answers instead
+
+
+def replay_resolver(host: str) -> list[str]:
+    """A replay makes no DNS lookups: every host "resolves" to one public address the mock transport stands in for."""
+    return [REPLAY_ADDRESS]
+
+
 def replay_transport(root: Path) -> httpx.MockTransport:
     root = Path(root)
 
     def handler(req: httpx.Request) -> httpx.Response:
-        host, path = req.url.host, req.url.path
+        host, path = req.extensions.get("sni_hostname") or req.url.host, req.url.path  # the URL holds the pinned IP
         if path == "/robots.txt":
             return httpx.Response(404, text="")
         body: bytes | None = None

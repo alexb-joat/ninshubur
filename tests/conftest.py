@@ -37,6 +37,7 @@ class Seen:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str, bool]] = []
+        self.addresses: list[str] = []  # the address each request was sent to (the fetcher pins it)
 
     def hosts(self) -> set[str]:
         return {c[0] for c in self.calls}
@@ -58,7 +59,8 @@ def make_transport(routes: dict, seen: Seen | None = None) -> httpx.MockTranspor
     seen = seen or Seen()
 
     def handler(request: httpx.Request) -> httpx.Response:
-        host = request.url.host
+        host = request.extensions.get("sni_hostname") or request.url.host  # the fetcher sends to the checked IP
+        seen.addresses.append(request.url.host)
         path = request.url.path
         seen.calls.append((host, path, request.method, "authorization" in request.headers or "x-api-key" in request.headers))
         spec = routes.get((host, path)) or routes.get((host, "*"))

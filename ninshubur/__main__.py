@@ -111,8 +111,9 @@ def cmd_check(args, app: App) -> int:
 
 def cmd_run(args, app: App) -> int:
     if args.replay:
-        from .replay import replay_transport
-        app.fetcher = Fetcher(app.conn, app.policy, app.cfg, app.home, transport=replay_transport(Path(args.replay)))
+        from .replay import replay_resolver, replay_transport
+        app.fetcher = Fetcher(app.conn, app.policy, app.cfg, app.home, transport=replay_transport(Path(args.replay)),
+                              resolve=replay_resolver)
         app.scheduler.fetcher = app.fetcher
     if args.daemon:
         def after_tick() -> None:
@@ -276,8 +277,9 @@ def cmd_lookup(args, app: App) -> int:
         print(f"no event matching {args.event!r} with a URL", file=sys.stderr)
         return 2
     if args.replay:
-        from .replay import replay_transport
-        app.fetcher = Fetcher(app.conn, app.policy, app.cfg, app.home, transport=replay_transport(Path(args.replay)))
+        from .replay import replay_resolver, replay_transport
+        app.fetcher = Fetcher(app.conn, app.policy, app.cfg, app.home, transport=replay_transport(Path(args.replay)),
+                              resolve=replay_resolver)
         app.scheduler.fetcher = app.fetcher
     print(f"{'dry run: ' if args.dry_run else ''}{ev['title']} ({ev['url']})")
     report, collected = asyncio.run(app.scheduler.crawl_event(srcs[0].name, dict(ev), dry_run=args.dry_run))

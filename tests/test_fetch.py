@@ -318,7 +318,52 @@ def test_public_address_and_resolver_failure(home, policy):
     assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).status == 200
     f2, conn2, seen2, _ = make(home, policy, {(HOST, "/x"): {"body": {}}}, resolve=lambda h: (_ for _ in ()).throw(OSError("dns down")))
     r = run(f2.fetch(FetchPlan(url=f"https://{HOST}/x", key="k2"), SRC, SPEC))
-    assert r.error != "refused:private_address"  # unresolvable is left to the transport, not treated as private
+    assert r.error == "AddressRefused" and seen2.calls == []  # unresolvable fails closed: nothing is sent anywhere
+
+
+def test_connection_goes_to_the_checked_address_with_the_name_kept_for_tls(home, policy):
+    got = {}
+
+    def page(request):
+        got.update(addr=request.url.host, sni=request.extensions.get("sni_hostname"), host=request.headers.get("host"))
+        return httpx.Response(200, json={})
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): page},
+                            resolve=lambda h: ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"])
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).status == 200
+    assert got == {"addr": "93.184.216.34", "sni": HOST, "host": HOST}  # v4 first; certificate checked against HOST
+    f6, _, seen6, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): page},
+                           resolve=lambda h: ["2606:2800:220:1:248:1893:25c8:1946"])
+    assert run(f6.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).status == 200
+    assert got["addr"] == "2606:2800:220:1:248:1893:25c8:1946" and got["sni"] == HOST
+
+
+def test_dns_rebinding_cannot_swap_the_address_after_the_check(home, policy):
+    """The name answers public, then private. The check and the connection share one answer, so every request goes
+    to the public address, and once the answer expires the private one is refused before anything is sent."""
+    answers = iter([["93.184.216.34"], ["127.0.0.1"], ["127.0.0.1"]])
+    clock = Clock()
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "*"): {"body": {}}},
+                            clock=clock, resolve=lambda h: next(answers))
+    for i in range(3):
+        assert run(f.fetch(FetchPlan(url=f"https://{HOST}/p{i}", key=f"k{i}"), SRC, SPEC)).ok
+    assert set(seen.addresses) == {"93.184.216.34"}
+    clock.t += 601
+    before = len(seen.calls)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/late", key="late"), SRC, SPEC)).error == "refused:private_address"
+    assert len(seen.calls) == before
+
+
+def test_pinned_transport_refuses_what_the_check_would_refuse(home, policy):
+    from ninshubur.fetch import AddressRefused, PinnedTransport
+    sent = []
+    inner = httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200))
+    f, *_ = make(home, policy, {}, resolve=lambda h: ["10.0.0.5"])
+    t = PinnedTransport(inner, f._pinned)
+    for url in (f"https://{HOST}/", f"http://{HOST}/", f"https://{HOST}:22/"):
+        with pytest.raises(AddressRefused):
+            run(t.handle_async_request(httpx.Request("GET", url)))
+    assert sent == []
+    assert read_jsonl(home / "logs" / "policy.jsonl")[-1]["event"] == "address_refused"
 
 
 # Services on this machine (and the planned `ninshubur serve`): every way of naming them stays refused, so a later

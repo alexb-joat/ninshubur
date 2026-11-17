@@ -105,6 +105,44 @@ def is_public_address(addr: str) -> bool:
     return True
 
 
+class AddressRefused(httpx.ConnectError):
+    """The pinned-address check refused a connection: no answer, or an address that is not public."""
+
+
+class PinnedTransport(httpx.AsyncBaseTransport):
+    """Connects to the address the gate checked, never to a second DNS answer.
+
+    The URL's host becomes the checked IP; TLS still verifies the certificate against the name (httpcore's
+    ``sni_hostname`` extension) and the Host header still names it. Without this, the address check and the
+    connection made two DNS lookups, and a name could answer public for the first and private for the second
+    (DNS rebinding). The inner transport keeps no idle connections: a connection opened for one name is never
+    reused for another name that shares its address."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport, pin: Callable[[str], list[str]]):
+        self.inner = inner
+        self.pin = pin
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        url = request.url
+        name = url.host
+        if url.scheme != "https" or url.port not in (None, 443):
+            raise AddressRefused(f"{url.scheme}://{name}:{url.port}: only https on port 443 is fetched", request=request)
+        last: httpx.ConnectError | None = None
+        for addr in self.pin(name)[:2]:  # v4 first, then one v6 try: no second lookup, no address the gate didn't check
+            ext = dict(request.extensions)
+            ext["sni_hostname"] = name
+            pinned = httpx.Request(request.method, url.copy_with(host=addr), headers=request.headers,
+                                   stream=request.stream, extensions=ext)
+            try:
+                return await self.inner.handle_async_request(pinned)
+            except httpx.ConnectError as e:
+                last = e
+        raise last or AddressRefused(f"{name}: no address to connect to", request=request)
+
+    async def aclose(self) -> None:
+        await self.inner.aclose()
+
+
 class HostGate:
     """Serialises requests per host and enforces the slowest of every delay rule."""
 
@@ -210,10 +248,12 @@ class Fetcher:
         self.daily_bytes = int(cfg.get("budgets", "daily_bytes", default=200_000_000))
         self.refuse_private = bool(policy.get("fetch", "refuse_private_addresses", default=True))
         self.resolve = resolve or resolve_host
-        self._addr_cache: dict[str, tuple[float, str | None]] = {}
+        self._addr_cache: dict[str, tuple[float, list[str], str | None]] = {}
         self._robots_exceptions: set[tuple[str, str, int]] = set()
+        inner = transport or httpx.AsyncHTTPTransport(verify=True, trust_env=False, retries=0,
+                                                      limits=httpx.Limits(max_keepalive_connections=0))
         self._client = httpx.AsyncClient(
-            transport=transport, follow_redirects=False, trust_env=False, verify=True,
+            transport=PinnedTransport(inner, self._pinned), follow_redirects=False, trust_env=False, verify=True,
             timeout=httpx.Timeout(30.0, connect=10.0), headers={"User-Agent": cfg.user_agent, "Accept-Encoding": "gzip"},
         )
 
@@ -361,24 +401,36 @@ class Fetcher:
         self._record(result, src, state, conditional, boosted)
         return result
 
-    def _private_address(self, host: str) -> str | None:
-        """Return the first non-public address ``host`` resolves to, or None. Cached for 10 minutes."""
+    def _lookup(self, host: str) -> tuple[list[str], str | None]:
+        """One DNS answer per host per 10 minutes, shared by the gate's check and the connection: (addresses, first
+        non-public address or None). A failed lookup is not remembered, so the check runs again once DNS is back."""
         now = self.now()
         hit = self._addr_cache.get(host)
         if hit and hit[0] > now - 600:
-            return hit[1]
-        bad: str | None = None
+            return hit[1], hit[2]
         try:
-            addrs = self.resolve(host)
+            addrs = list(self.resolve(host))
         except OSError:
             addrs = []
-        for a in addrs:
-            if not is_public_address(a):
-                bad = a
-                break
-        if addrs:  # a failed lookup is no answer: remembering it would skip this check once DNS is back
-            self._addr_cache[host] = (now, bad)
-        return bad
+        bad = next((a for a in addrs if not is_public_address(a)), None)
+        if addrs:
+            self._addr_cache[host] = (now, addrs, bad)
+        return addrs, bad
+
+    def _private_address(self, host: str) -> str | None:
+        """Return the first non-public address ``host`` resolves to, or None."""
+        return self._lookup(host)[1]
+
+    def _pinned(self, host: str) -> list[str]:
+        """The addresses a connection to ``host`` may use: exactly those the check saw, IPv4 first."""
+        addrs, bad = self._lookup(host)
+        if not addrs:
+            raise AddressRefused(f"{host} did not resolve")
+        if bad and self.refuse_private:
+            self.policy_log.write({"event": "address_refused", "host": host, "address": bad,
+                                   "reason": "resolved to a non-public address at connect time"})
+            raise AddressRefused(f"{host} resolves to {bad}")
+        return sorted(addrs, key=lambda a: ":" in a)
 
     # -- internals ------------------------------------------------------------------------------
     async def _request(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int):
