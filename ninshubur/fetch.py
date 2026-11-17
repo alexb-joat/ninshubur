@@ -70,8 +70,11 @@ def reachable(host: str) -> bool:
 def root_cause(e: BaseException) -> str:
     """The innermost reason behind a network error ("[Errno -3] Temporary failure in name resolution"), not
     httpx's wrapper ("All connection attempts failed")."""
-    while (e.__cause__ or e.__context__) is not None:
-        e = e.__cause__ or e.__context__  # type: ignore[assignment]
+    while True:
+        inner = e.__cause__ if e.__cause__ is not None else (None if e.__suppress_context__ else e.__context__)
+        if inner is None:
+            break
+        e = inner
     return (str(e) or type(e).__name__)[:160]
 
 
@@ -107,6 +110,10 @@ def is_public_address(addr: str) -> bool:
 
 class AddressRefused(httpx.ConnectError):
     """The pinned-address check refused a connection: no answer, or an address that is not public."""
+
+
+class DeadlineExceeded(httpx.TimeoutException):
+    """A request ran past ``fetch.request_deadline_s`` (connect, headers and body together)."""
 
 
 class PinnedTransport(httpx.AsyncBaseTransport):
@@ -245,6 +252,7 @@ class Fetcher:
         self.hard_cap = min(HARD_CAP, int(policy.get("fetch", "max_body_bytes_hard", default=HARD_CAP)))
         self.ratio_max = float(policy.get("fetch", "decompression_ratio_max", default=100))
         self.max_hops = int(policy.get("fetch", "max_hops", default=2))
+        self.deadline_s = float(policy.get("fetch", "request_deadline_s", default=20))
         self.daily_bytes = int(cfg.get("budgets", "daily_bytes", default=200_000_000))
         self.refuse_private = bool(policy.get("fetch", "refuse_private_addresses", default=True))
         self.resolve = resolve or resolve_host
@@ -434,7 +442,16 @@ class Fetcher:
 
     # -- internals ------------------------------------------------------------------------------
     async def _request(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int):
-        """Stream the response under the cap. Returns (response, body, raw_bytes, finding|None)."""
+        """Stream the response under the cap and the deadline. Returns (response, body, raw_bytes, finding|None)."""
+        try:
+            async with asyncio.timeout(self.deadline_s) as cm:
+                return await self._stream(method, url, headers, body, max_bytes)
+        except TimeoutError:
+            if not cm.expired():
+                raise
+            raise DeadlineExceeded(f"no complete answer within {self.deadline_s:g} s") from None
+
+    async def _stream(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int):
         req = self._client.build_request(method, url, headers=headers, content=body)
         resp = await self._client.send(req, stream=True)
         chunks: list[bytes] = []

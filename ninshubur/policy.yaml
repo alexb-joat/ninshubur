@@ -24,6 +24,9 @@ fetch:
   max_body_bytes_default: 2000000
   max_body_bytes_hard: 8000000
   decompression_ratio_max: 100
+  # Total seconds for one request, from connect to the last byte. The per-read timeout alone lets a server
+  # that sends one byte every 29 s hold a fetch for hours.
+  request_deadline_s: 20
   per_host_rps_max: 1.0
   # Hostnames that resolve to loopback, private, link-local, CGNAT or ULA addresses are never contacted.
   refuse_private_addresses: true

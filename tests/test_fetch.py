@@ -452,3 +452,36 @@ def test_failed_lookup_is_not_remembered_as_a_public_address(home, policy):
     run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
     r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
     assert r.error == "refused:private_address"
+
+
+def test_slow_drip_and_silent_servers_hit_the_total_deadline(home, policy):
+    """One byte every 50 ms never trips a per-read timeout; the total deadline stops it, and the host's breaker counts it."""
+    async def drip():
+        while True:
+            yield b"x"
+            await asyncio.sleep(0.05)
+
+    async def silent(request):
+        await asyncio.sleep(30)
+        return httpx.Response(200, json={})
+    routes = {(HOST, "/robots.txt"): {"status": 404, "body": ""},
+              (HOST, "/drip"): lambda r: httpx.Response(200, content=drip(), headers={"Content-Type": "application/json"}),
+              (HOST, "/silent"): silent}
+    f, conn, seen, _ = make(home, policy, routes)
+    f.deadline_s = 0.3
+    import time as _t
+    t0 = _t.monotonic()
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/drip", key="d"), SRC, SPEC))
+    r2 = run(f.fetch(FetchPlan(url=f"https://{HOST}/silent", key="s"), SRC, SPEC))
+    assert r.error == "DeadlineExceeded" and r2.error == "DeadlineExceeded" and _t.monotonic() - t0 < 3
+    assert "0.3 s" in r.error_detail and len(f.gate.state(HOST).errors) == 2
+
+
+def test_request_deadline_comes_from_policy_and_only_tightens(home, policy):
+    from ninshubur.policy import merge_tightening
+    f, *_ = make(home, policy, {})
+    assert f.deadline_s == 20.0
+    shipped = {"fetch": {"request_deadline_s": 20}}
+    assert merge_tightening(shipped, {"fetch": {"request_deadline_s": 10}})[0]["fetch"]["request_deadline_s"] == 10
+    merged, notes = merge_tightening(shipped, {"fetch": {"request_deadline_s": 600}})
+    assert merged["fetch"]["request_deadline_s"] == 20 and "would loosen" in notes[0]

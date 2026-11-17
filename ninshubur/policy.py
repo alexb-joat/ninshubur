@@ -51,6 +51,7 @@ class Check:
 MERGE_RULES: dict[tuple[str, ...], str] = {
     ("fetch", "denied_hosts"): "union",
     ("fetch", "max_hops"): "min",
+    ("fetch", "request_deadline_s"): "min",
     ("fetch", "max_body_bytes_default"): "min",
     ("fetch", "max_body_bytes_hard"): "min",
     ("fetch", "decompression_ratio_max"): "min",
