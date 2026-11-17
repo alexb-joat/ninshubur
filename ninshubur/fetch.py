@@ -381,12 +381,14 @@ class Fetcher:
 
         url = plan.url
         hops = 0
+        expected = plan.expected_content_type or src.expected_content_type or spec.expected_content_type
         t0 = self.now()
         result = Fetched(plan=plan, status=None, fetched_at=now, final_url=url)
         while True:
             try:
                 async with self.gate.slot(host, spec.min_delay_s, crawl_delay):
-                    resp, body, raw_bytes, err = await self._request(plan.method, url, headers, plan.body, max_bytes)
+                    resp, body, raw_bytes, err = await self._request(plan.method, url, headers, plan.body, max_bytes,
+                                                                     expected=expected)
             except (httpx.HTTPError, OSError) as e:  # network/TLS errors
                 result.error = type(e).__name__
                 result.error_detail = root_cause(e)
@@ -429,7 +431,6 @@ class Fetcher:
             result.body = body
             ratio = (len(body) / raw_bytes) if raw_bytes else None
             ct = resp.headers.get("content-type")
-            expected = plan.expected_content_type or src.expected_content_type or spec.expected_content_type
             utf8_ok = True
             if resp.status_code == 200:
                 try:
@@ -479,17 +480,20 @@ class Fetcher:
         return sorted(addrs, key=lambda a: ":" in a)
 
     # -- internals ------------------------------------------------------------------------------
-    async def _request(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int):
-        """Stream the response under the cap and the deadline. Returns (response, body, raw_bytes, finding|None)."""
+    async def _request(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int, *,
+                       expected: str | None = None):
+        """Stream the response under the cap and the deadline. Returns (response, body, raw_bytes, finding|None).
+        With ``expected`` (``a/b|c/d``), a 200 whose Content-Type doesn't match is refused before its body is read."""
         try:
             async with asyncio.timeout(self.deadline_s) as cm:
-                return await self._stream(method, url, headers, body, max_bytes)
+                return await self._stream(method, url, headers, body, max_bytes, expected)
         except TimeoutError:
             if not cm.expired():
                 raise
             raise DeadlineExceeded(f"no complete answer within {self.deadline_s:g} s") from None
 
-    async def _stream(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int):
+    async def _stream(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int,
+                      expected: str | None = None):
         req = self._client.build_request(method, url, headers=headers, content=body)
         resp = await self._client.send(req, stream=True)
         chunks: list[bytes] = []
@@ -498,6 +502,9 @@ class Fetcher:
         try:
             if resp.status_code in REDIRECT_CODES or resp.status_code == 304:
                 return resp, b"", 0, None
+            ct = resp.headers.get("content-type")
+            if resp.status_code == 200 and expected and not detectors.content_type_matches(ct, expected):
+                return resp, b"", 0, detectors.Finding("integrity", "content_type_mismatch", str(ct)[:60])
             declared = resp.headers.get("content-length")
             if declared and declared.isdigit() and int(declared) > max_bytes:
                 return resp, b"", 0, detectors.Finding("integrity", "body_too_large", declared)

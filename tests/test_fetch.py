@@ -553,3 +553,19 @@ def test_gzip_body_round_trips_and_corrupt_gzip_is_a_finding(home, policy):
                                            (HOST, "/bad"): lambda r: wire(b"\x1f\x8b\x08garbage" * 4, "gzip")})
     assert run(f.fetch(FetchPlan(url=f"https://{HOST}/g", key="g"), SRC, SPEC)).body == b'{"a": 1}'
     assert "bad_encoding" in {x.code for x in run(f.fetch(FetchPlan(url=f"https://{HOST}/bad", key="b"), SRC, SPEC)).findings}
+
+
+def test_wrong_content_type_is_refused_before_the_body_is_read(home, policy):
+    """An executable (or a 2 GB video) announced in the headers is never downloaded: the type is checked first."""
+    pulled = {"bytes": 0}
+
+    async def endless():
+        while True:
+            pulled["bytes"] += 65536
+            yield b"MZ" + b"\0" * 65534
+
+    routes = {(HOST, "/robots.txt"): {"status": 404, "body": ""},
+              (HOST, "/x"): lambda r: httpx.Response(200, headers={"Content-Type": "application/octet-stream"}, content=endless())}
+    f, conn, seen, _ = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert [x.code for x in r.findings] == ["content_type_mismatch"] and r.body == b"" and pulled["bytes"] == 0
