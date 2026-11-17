@@ -186,6 +186,9 @@ def test_json_ld_blocks_nested_too_deeply_are_skipped():
 @pytest.mark.parametrize("text,flag", [
     ("Konferenz\u00ad2026", False),            # soft hyphen: honest German text
     ("I \u2764\ufe0f Python", False),          # one emoji presentation selector
+    ("\U0001f469\u200d\U0001f4bb meetup", False),  # joiner inside an emoji (woman technologist)
+    ("\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", False),  # non-joiner in Persian spelling
+    ("x\u200d\u200c\u200dy", True),              # a run of joiners carries bits
     ("plain", False),
     ("x\u061cy", True), ("x\u180ey", True), ("x\ufff9note\ufffbx", True),
     ("x\U000e0100y", True),                     # variation selector 17
@@ -197,7 +200,7 @@ def test_hidden_unicode_flags_smuggling_but_not_honest_invisibles(text, flag):
     assert has_hidden_unicode(text) is flag
     assert ("hidden_unicode" in {f.code for f in scan_text(text)}) is flag
     cleaned = strip_invisible(text)
-    assert not has_hidden_unicode(cleaned) and "\u00ad" not in cleaned and "\ufe0f" not in cleaned
+    assert not has_hidden_unicode(cleaned) and not {"\u00ad", "\ufe0f", "\u200c", "\u200d"} & set(cleaned)
 
 
 def test_sanitised_fields_lose_every_invisible_character():

@@ -48,15 +48,16 @@ HIDDEN_RANGES = (
     (0x0000, 0x0008), (0x000B, 0x000C), (0x000E, 0x001F), (0x007F, 0x009F),
     (0x061C, 0x061C),  # Arabic letter mark (a bidi control)
     (0x180E, 0x180E),  # Mongolian vowel separator (zero width since Unicode 6.3)
-    (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 0x2069),
+    (0x200B, 0x200B), (0x200E, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 0x2069),
     (0xFEFF, 0xFEFF),
     (0xFFF9, 0xFFFB),  # interlinear annotation controls
     (0xE0000, 0xE007F),  # tag characters
     (0xE0100, 0xE01EF),  # variation selectors 17-256: carry one byte each, the core of "emoji smuggling"
 )
 # Invisible but common in honest text, so removed without a finding: the soft hyphen (German and Russian pages are
-# full of them) and variation selectors 1-16 (U+FE0F follows most emoji, as in the red heart).
-STRIP_ONLY_RANGES = ((0x00AD, 0x00AD), (0xFE00, 0xFE0F))
+# full of them), the zero-width non-joiner and joiner (Persian and Indic spelling; the joiner builds emoji such as
+# the woman technologist, U+1F469 U+200D U+1F4BB) and variation selectors 1-16 (U+FE0F follows most emoji).
+STRIP_ONLY_RANGES = ((0x00AD, 0x00AD), (0x200C, 0x200D), (0xFE00, 0xFE0F))
 
 
 def _char_class(ranges) -> str:
@@ -68,10 +69,12 @@ _HIDDEN = re.compile(f"[{_char_class(HIDDEN_RANGES)}]")
 _INVISIBLE = re.compile(f"[{_char_class(HIDDEN_RANGES + STRIP_ONLY_RANGES)}]")
 # One selector after a character is ordinary; two or more in a row select nothing and are how data is smuggled.
 _SELECTOR_RUN = re.compile(f"[{_char_class(((0xFE00, 0xFE0F), (0xE0100, 0xE01EF)))}]{{2,}}")
+# Likewise one joiner between two emoji is ordinary; a run of zero-width characters is a channel.
+_ZERO_WIDTH_RUN = re.compile(f"[{_char_class(((0x200B, 0x200D), (0x2060, 0x2060), (0xFEFF, 0xFEFF)))}]{{2,}}")
 
 
 def has_hidden_unicode(text: str) -> bool:
-    return bool(_HIDDEN.search(text) or _SELECTOR_RUN.search(text))
+    return bool(_HIDDEN.search(text) or _SELECTOR_RUN.search(text) or _ZERO_WIDTH_RUN.search(text))
 
 
 def strip_invisible(text: str) -> str:
