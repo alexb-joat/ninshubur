@@ -621,6 +621,17 @@ def test_oversized_robots_is_parsed_up_to_500_kib_not_ignored(home, policy):
     assert len(stored.encode()) <= 512_000 and stored.endswith("\n")
 
 
+@pytest.mark.parametrize("body,blocked", [
+    ("User-agent: *\rDisallow: /early\r" + "# padding line\r" * 40_000, "refused:robots_disallow"),  # CR-only lines
+    ("User-agent: * Disallow: /early " + "#" * 600_000, "refused:robots_unreachable"),  # no line break at all
+], ids=["cr-only-lines", "no-line-break"])
+def test_oversized_robots_without_a_newline_never_reads_as_no_rules(home, policy, body, blocked):
+    """Cutting at the last "\\n" left nothing here, and an empty robots.txt allows everything."""
+    routes = {(HOST, "/robots.txt"): {"body": body, "headers": {"Content-Type": "text/plain"}}, (HOST, "*"): {"body": {}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/early", key="a"), SRC, SPEC)).error == blocked
+
+
 def test_robots_bomb_closes_the_host(home, policy):
     payload = gzip.compress(b"#" * 60_000_000)
 

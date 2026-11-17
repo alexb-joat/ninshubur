@@ -592,7 +592,10 @@ class Fetcher:
                 return "", None
             text = raw.decode("utf-8", errors="replace")
             if len(raw) >= ROBOTS_CAP:
-                text = text[:text.rfind("\n") + 1]
+                cut = max(text.rfind("\n"), text.rfind("\r"))  # a file may end its lines with CR alone
+                if cut < 0:  # 500 KiB with no line break: no full rule to read, and "" would mean "no rules"
+                    return "", None
+                text = text[:cut + 1]
             return text, 200
         self.policy_log.write({"event": "robots_redirect_refused", "host": host, "target_host": host_of(url),
                                "reason": f"more than {ROBOTS_MAX_HOPS} redirects; read as unreachable"})
