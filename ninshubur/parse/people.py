@@ -18,7 +18,7 @@ from .htmltree import Doc, Node, card_groups, iter_nodes, json_ld, microdata, wa
 MAX_ROWS = 300
 SECTION_TERMS = {"sponsor": "sponsor", "exhibitor": "exhibitor", "partner": "partner", "organizer": "organizer", "organiser": "organizer"}
 _LINKEDIN = re.compile(r"^https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/([A-Za-z0-9\-_%]{3,100})/?(?:[?#].*)?$", re.I)
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]++\.[\w.-]+")  # capped and possessive: linear on hostile pages
 _PHONE = re.compile(r"(?<!\d)(?:\+\d{1,3}[ .-]?)?(?:\(?\d{2,4}\)?[ .-]?){2,4}\d{2,4}(?!\d)")
 _NAME = re.compile(r"^(?!.*(\d|@|https?:))[^\W\d_][\w'’.-]*(?: [^\W\d_][\w'’.-]*){1,4}$")
 _SPLIT = re.compile(r"\s+(?:at|@|bei|chez|en)\s+|\s*[|,·•–—-]\s*", re.I)

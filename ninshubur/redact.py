@@ -16,10 +16,12 @@ from dataclasses import dataclass, field
 
 PLACEHOLDERS = {"email": "[email]", "link": "[link]", "handle": "[handle]", "phone": "[phone]"}
 
-_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+# Local parts are capped at 64 (RFC 5321 4.5.3.1.1) and labels are possessive: without both, a long run
+# of address characters costs quadratic time. A longer local part still loses its last 64 characters.
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]++(?:\.[A-Za-z0-9-]++)+")
 _AT = r"(?:\s*[\[({]\s*at\s*[\])}]\s*|\s+at\s+)"
 _DOT = r"(?:\s*[\[({]\s*dot\s*[\])}]\s*|\s+dot\s+)"
-_EMAIL_SPELT = re.compile(rf"\b[A-Za-z0-9._%+-]+{_AT}[A-Za-z0-9-]+(?:{_DOT}[A-Za-z0-9-]+)+", re.IGNORECASE)
+_EMAIL_SPELT = re.compile(rf"\b[A-Za-z0-9._%+-]{{1,64}}{_AT}[A-Za-z0-9-]++(?:{_DOT}[A-Za-z0-9-]++)+", re.IGNORECASE)
 _LINK = re.compile(r"(?:\b[a-z][a-z0-9+.-]{1,15}://|\bwww\.)[^\s<>\"'\])]+", re.IGNORECASE)
 _HANDLE = re.compile(r"(?<![\w@/.\]])@[A-Za-z0-9_][A-Za-z0-9_.-]{1,38}")
 _PHONE = re.compile(r"(?<![\w.,$€£+-])(?:\+\s?)?\(?\d[\d\s().-]{6,22}\d(?![\w%])")

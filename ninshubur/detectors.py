@@ -84,7 +84,7 @@ _INJECTION = re.compile(
     r"|disregard\s+(the\s+|all\s+|any\s+)?(previous|prior|above)\s+(instructions|prompts)"
     r"|you\s+are\s+now\s+(a|an|the|in)\b"
     r"|\bsystem\s+prompt\b"
-    r"|^\s*(assistant|system|user|human)\s*:"
+    r"|^[^\S\n]*(assistant|system|user|human)\s*:"  # same lines as ^\s*, without rescanning blank runs
     r"|<\|im_(start|end)\|>"
     r"|\[/?INST\]"
     r"|\bBEGIN\s+INSTRUCTIONS\b"

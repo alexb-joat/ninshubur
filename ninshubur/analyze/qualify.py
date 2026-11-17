@@ -222,7 +222,7 @@ class Answer:
     note: str | None = None  # why a reason was dropped
 
 
-_FENCE = re.compile(r"^```[A-Za-z]*\s*|\s*```$")
+_FENCE = re.compile(r"^```[A-Za-z]*\s*|(?:(?<!\s)\s+)?```$")  # ^ ... \s*```$, linear on long blank runs
 
 
 def parse_reply(text: str, now: float | None = None) -> Answer | str:
