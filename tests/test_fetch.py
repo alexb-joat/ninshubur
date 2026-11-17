@@ -508,3 +508,48 @@ def test_sources_sharing_a_fetcher_take_turns_on_a_host(home, policy):
     assert all(r.ok for r in run(four()))
     gaps = [b - a for a, b in zip(starts, starts[1:])]
     assert flight["max"] == 1 and min(gaps) >= f.gate.min_gap - 1e-9
+
+
+def test_gzip_is_decoded_in_bounded_steps():
+    """A 1000x gzip chunk never decodes in one piece: no step is larger than DECODE_STEP."""
+    from ninshubur.fetch import DECODE_STEP, BoundedDecoder
+    payload = gzip.compress(b"0" * 20_000_000)
+    d = BoundedDecoder("gzip")
+    sizes = [len(x) for x in d.steps(payload)]
+    assert max(sizes) <= DECODE_STEP and sum(sizes) == 20_000_000
+    assert b"".join(BoundedDecoder("identity").steps(b"abc")) == b"abc" and list(BoundedDecoder(None).steps(b"")) == []
+
+
+def test_bomb_stops_within_one_step_of_the_cap(home, policy):
+    payload = gzip.compress(b"0" * 50_000_000)  # about 50 KB on the wire
+    held = {}
+
+    def bomb(request):
+        return httpx.Response(200, content=payload, headers={"Content-Type": "application/json", "Content-Encoding": "gzip"})
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/bomb"): bomb})
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/bomb", key="k", max_bytes=1_000_000), SRC, SPEC))
+    held["codes"] = {x.code for x in r.findings}
+    assert held["codes"] & {"decompression_bomb", "body_too_large"} and r.body == b""
+
+
+def wire(raw: bytes, encoding: str) -> httpx.Response:
+    """Bytes exactly as sent, with a Content-Encoding httpx must not decode on the test's side."""
+    return httpx.Response(200, headers={"Content-Type": "application/json", "Content-Encoding": encoding},
+                          stream=httpx.ByteStream(raw))
+
+
+@pytest.mark.parametrize("enc", ["br", "zstd", "deflate", "gzip, gzip", "compress"])
+def test_encodings_never_asked_for_are_refused_unread(home, policy, enc):
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""},
+                                           (HOST, "/x"): lambda r: wire(b'{"a": 1}', enc)})
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert [x.code for x in r.findings] == ["unsupported_encoding"] and not r.ok
+
+
+def test_gzip_body_round_trips_and_corrupt_gzip_is_a_finding(home, policy):
+    good = gzip.compress(b'{"a": 1}')
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""},
+                                           (HOST, "/g"): lambda r: wire(good, "gzip"),
+                                           (HOST, "/bad"): lambda r: wire(b"\x1f\x8b\x08garbage" * 4, "gzip")})
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/g", key="g"), SRC, SPEC)).body == b'{"a": 1}'
+    assert "bad_encoding" in {x.code for x in run(f.fetch(FetchPlan(url=f"https://{HOST}/bad", key="b"), SRC, SPEC)).findings}

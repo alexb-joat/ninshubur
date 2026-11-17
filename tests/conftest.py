@@ -50,6 +50,16 @@ def load_sample(rel: str) -> bytes:
     return p.read_bytes()
 
 
+def streamed(resp: httpx.Response) -> httpx.Response:
+    """The response as the network delivers it: an unread stream of the bytes on the wire. httpx reads (and decodes)
+    a body passed as ``content=`` at construction, which would skip the fetcher's own capped, stepped decoding."""
+    return httpx.Response(resp.status_code, headers=resp.headers, stream=resp.stream, extensions=resp.extensions)
+
+
+async def _streamed_async(pending) -> httpx.Response:
+    return streamed(await pending)
+
+
 def make_transport(routes: dict, seen: Seen | None = None) -> httpx.MockTransport:
     """``routes`` maps (host, path) -> response spec dict or callable(request)->httpx.Response.
 
@@ -58,7 +68,13 @@ def make_transport(routes: dict, seen: Seen | None = None) -> httpx.MockTranspor
     """
     seen = seen or Seen()
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request):
+        resp = route(request)
+        if not isinstance(resp, httpx.Response):
+            return _streamed_async(resp)
+        return streamed(resp)
+
+    def route(request: httpx.Request):
         host = request.extensions.get("sni_hostname") or request.url.host  # the fetcher sends to the checked IP
         seen.addresses.append(request.url.host)
         path = request.url.path

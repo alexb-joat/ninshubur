@@ -14,6 +14,7 @@ import socket
 import sqlite3
 import time
 import urllib.robotparser
+import zlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,7 @@ HARD_CAP = 8_000_000
 ROBOTS_CAP = 512_000
 ROBOTS_UNREACHABLE_TTL_S = 600
 REDIRECT_CODES = {301, 302, 303, 307, 308}
+DECODE_STEP = 65_536  # most bytes one gzip step may produce: a bomb is caught 64 KB past the cap, not 64 MB
 BREAKER_ERRORS = 5
 BREAKER_WINDOW_S = 600
 BREAKER_PAUSE_S = 3600
@@ -149,6 +151,34 @@ class PinnedTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self.inner.aclose()
+
+
+class BoundedDecoder:
+    """Content decoding in steps of at most ``DECODE_STEP`` output bytes.
+
+    httpx decodes each network chunk whole, and gzip expands up to about 1000x, so one 64 KB chunk could become 64 MB
+    before any cap was checked. Only what the fetcher asks for (``Accept-Encoding: gzip``) is decoded: br, zstd,
+    deflate or stacked encodings raise ValueError, and the response is refused unread."""
+
+    def __init__(self, content_encoding: str | None):
+        enc = (content_encoding or "").strip().lower()
+        if enc in ("", "identity"):
+            self._z = None
+        elif enc in ("gzip", "x-gzip"):
+            self._z = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        else:
+            raise ValueError(enc[:40])
+
+    def steps(self, data: bytes) -> Iterable[bytes]:
+        if self._z is None:
+            if data:
+                yield data
+            return
+        while data and not self._z.eof:
+            out = self._z.decompress(data, DECODE_STEP)
+            data = self._z.unconsumed_tail
+            if out:
+                yield out
 
 
 class HostGate:
@@ -471,16 +501,26 @@ class Fetcher:
             declared = resp.headers.get("content-length")
             if declared and declared.isdigit() and int(declared) > max_bytes:
                 return resp, b"", 0, detectors.Finding("integrity", "body_too_large", declared)
-            async for chunk in resp.aiter_bytes():
-                total += len(chunk)
-                if total > max_bytes:
-                    finding = detectors.Finding("integrity", "body_too_large", f">{max_bytes}")
-                    break
-                raw = resp.num_bytes_downloaded
-                if raw and total / max(raw, 1) > self.ratio_max and total > 65536:
-                    finding = detectors.Finding("integrity", "decompression_bomb", f"{total / raw:.0f}x")
-                    break
-                chunks.append(chunk)
+            try:
+                decoder = BoundedDecoder(resp.headers.get("content-encoding"))
+            except ValueError as e:
+                return resp, b"", 0, detectors.Finding("integrity", "unsupported_encoding", str(e))
+            try:
+                async for raw_chunk in resp.aiter_raw():
+                    for chunk in decoder.steps(raw_chunk):
+                        total += len(chunk)
+                        if total > max_bytes:
+                            finding = detectors.Finding("integrity", "body_too_large", f">{max_bytes}")
+                            break
+                        raw = resp.num_bytes_downloaded
+                        if raw and total / max(raw, 1) > self.ratio_max and total > 65536:
+                            finding = detectors.Finding("integrity", "decompression_bomb", f"{total / raw:.0f}x")
+                            break
+                        chunks.append(chunk)
+                    if finding:
+                        break
+            except zlib.error as e:
+                finding = detectors.Finding("integrity", "bad_encoding", str(e)[:60])
         finally:
             await resp.aclose()
         return resp, b"".join(chunks), resp.num_bytes_downloaded, finding

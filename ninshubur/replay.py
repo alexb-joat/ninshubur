@@ -25,13 +25,18 @@ def replay_resolver(host: str) -> list[str]:
     return [REPLAY_ADDRESS]
 
 
+def _wire(status: int, body: bytes, ct: str = "text/plain") -> httpx.Response:
+    """An unread stream, as the network delivers it (``content=`` would make httpx read it at construction)."""
+    return httpx.Response(status, stream=httpx.ByteStream(body), headers={"Content-Type": ct, "Content-Length": str(len(body))})
+
+
 def replay_transport(root: Path) -> httpx.MockTransport:
     root = Path(root)
 
     def handler(req: httpx.Request) -> httpx.Response:
         host, path = req.extensions.get("sni_hostname") or req.url.host, req.url.path  # the URL holds the pinned IP
         if path == "/robots.txt":
-            return httpx.Response(404, text="")
+            return _wire(404, b"")
         body: bytes | None = None
         ct = "application/json"
         if host == "raw.githubusercontent.com":
@@ -55,7 +60,7 @@ def replay_transport(root: Path) -> httpx.MockTransport:
                     else "wordpress_plugin.html" if "agenda" in low else "home.html")
             body = _first(root / "event_sites", name)
         if body is None:
-            return httpx.Response(599, text="no replay sample for this host")
-        return httpx.Response(200, content=body, headers={"Content-Type": ct})
+            return _wire(599, b"no replay sample for this host")
+        return _wire(200, body, ct)
 
     return httpx.MockTransport(handler)
