@@ -655,6 +655,18 @@ def test_redirect_to_the_www_twin_obeys_the_twins_robots(home, policy):
     assert r.error == "refused:robots_disallow" and (WWW, "/a", "GET", False) not in seen.calls
 
 
+def test_a_redirect_on_the_same_host_obeys_robots_for_its_target(home, policy):
+    """Only the first URL used to be checked, so an allowed path could redirect into a disallowed one."""
+    routes = {(HOST, "/robots.txt"): {"body": "User-agent: *\nDisallow: /private\n", "headers": {"Content-Type": "text/plain"}},
+              (HOST, "/open"): {"status": 302, "headers": {"Location": "/private/x"}, "body": ""},
+              (HOST, "/private/x"): {"body": {"secret": True}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/open", key="k"), SRC, SPEC))
+    assert r.error == "refused:robots_disallow" and "/private/x" not in [c[1] for c in seen.calls]
+    assert any(e["event"] == "refused_fetch" and e["url"].endswith("/private/x")
+               for e in read_jsonl(home / "logs" / "policy.jsonl"))
+
+
 def test_a_cached_redirect_from_an_older_version_is_asked_again_soon(home, policy):
     clock = Clock()
     f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "*"): {"body": {}}}, clock=clock)

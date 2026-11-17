@@ -350,24 +350,11 @@ class Fetcher:
                 return self.refuse(plan, src.name, Refusal("private_address", f"{host} resolves to {bad}"))
 
         crawl_delay: float | None = None
-        if self.policy.get("fetch", "robots", "honour", default=True):
-            allowed, crawl_delay, robots_status = await self._robots_allow(host, plan.url, spec)
-            if (not allowed and robots_status in (401, 403) and robots_status == src.robots_reviewed_status
-                    and host in spec.hosts):  # fixed adapter hosts only: never a host handed over at run time
-                # A person read this host's terms and recorded the exact answer its robots.txt gives (an API
-                # host behind a login wall answers every unknown path, robots.txt included, with 401).
-                allowed = True
-                self._log_robots_exception(src.name, host, robots_status)
-            if not allowed and RobotsCache.unreachable(robots_status):
-                return self.refuse(plan, src.name, Refusal("robots_unreachable", f"robots.txt on {host} could not be read "
-                                                           f"({robots_status or 'network error'}); asked again in 10 min"))
-            if not allowed and robots_status in (401, 403) and host in spec.hosts:
-                return self.refuse(plan, src.name, Refusal(
-                    "robots_disallow", f"robots.txt on {host} answers {robots_status}, read as the whole host off limits; "
-                    f"if you have read the host's terms, record `robots_reviewed_status: {robots_status}` in the trust "
-                    f"block of source {src.name}"))
-            if not allowed:
-                return self.refuse(plan, src.name, Refusal("robots_disallow", f"robots.txt disallows {urlsplit(plan.url).path}"))
+        honour_robots = bool(self.policy.get("fetch", "robots", "honour", default=True))
+        if honour_robots:
+            refusal, crawl_delay = await self._robots_refusal(host, plan.url, spec, src)
+            if refusal:
+                return self.refuse(plan, src.name, refusal)
 
         max_bytes = min(plan.max_bytes, self.hard_cap)
         state = self.conn.execute("SELECT etag, last_modified, content_hash FROM fetch_state WHERE key=?", (plan.key,)).fetchone()
@@ -418,15 +405,14 @@ class Fetcher:
                     if r2 or self.policy.host_denied(twin) or (self.refuse_private and self._private_address(twin)):
                         result.findings.append(detectors.Finding("integrity", "off_host_redirect", twin))
                         break
-                    if self.policy.get("fetch", "robots", "honour", default=True):
-                        twin_ok, crawl_delay, _ = await self._robots_allow(twin, target, spec)
-                        if not twin_ok:  # the twin's own robots.txt governs the twin
-                            self.policy_log.write({"event": "refused_fetch", "source": src.name, "url": target,
-                                                   "code": "robots_disallow", "reason": f"robots.txt on {twin} disallows "
-                                                   f"{urlsplit(target).path}"})
-                            result.error = "refused:robots_disallow"
-                            break
                     host = twin
+                if honour_robots:  # every target is asked, not only the first URL: a redirect can't lead past a Disallow
+                    rr, crawl_delay = await self._robots_refusal(host, target, spec, src)  # a twin's own robots.txt governs it
+                    if rr:
+                        self.policy_log.write({"event": "refused_fetch", "source": src.name, "url": target,
+                                               "code": rr.code, "reason": rr.reason})
+                        result.error = f"refused:{rr.code}"
+                        break
                 url = target
                 result.final_url = url
                 continue
@@ -549,6 +535,28 @@ class Fetcher:
         finally:
             await resp.aclose()
         return resp, b"".join(chunks), resp.num_bytes_downloaded, finding
+
+    async def _robots_refusal(self, host: str, url: str, spec: AdapterSpec,
+                              src: SourceConfig) -> tuple[Refusal | None, float | None]:
+        """robots.txt's verdict on one URL: (the refusal, or None to go ahead; the host's crawl delay)."""
+        allowed, crawl_delay, robots_status = await self._robots_allow(host, url, spec)
+        if (not allowed and robots_status in (401, 403) and robots_status == src.robots_reviewed_status
+                and host in spec.hosts):  # fixed adapter hosts only: never a host handed over at run time
+            # A person read this host's terms and recorded the exact answer its robots.txt gives (an API
+            # host behind a login wall answers every unknown path, robots.txt included, with 401).
+            self._log_robots_exception(src.name, host, robots_status)
+            return None, crawl_delay
+        if allowed:
+            return None, crawl_delay
+        if RobotsCache.unreachable(robots_status):
+            return Refusal("robots_unreachable", f"robots.txt on {host} could not be read "
+                                                 f"({robots_status or 'network error'}); asked again in 10 min"), crawl_delay
+        if robots_status in (401, 403) and host in spec.hosts:
+            return Refusal(
+                "robots_disallow", f"robots.txt on {host} answers {robots_status}, read as the whole host off limits; "
+                f"if you have read the host's terms, record `robots_reviewed_status: {robots_status}` in the trust "
+                f"block of source {src.name}"), crawl_delay
+        return Refusal("robots_disallow", f"robots.txt on {host} disallows {urlsplit(url).path}"), crawl_delay
 
     async def _robots_allow(self, host: str, url: str, spec: AdapterSpec) -> tuple[bool, float | None, int | None]:
         ua = self.cfg.user_agent
