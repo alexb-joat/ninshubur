@@ -172,6 +172,7 @@ def merge_tightening(shipped: dict, user: dict | None) -> tuple[dict, list[str]]
 # --- URL and host checks --------------------------------------------------------------------
 _HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+DEFAULT_PORTS = {"https": 443, "http": 80}
 
 
 def is_ip_literal(host: str) -> bool:
@@ -213,6 +214,18 @@ def check_url(url: str, *, allow_http_local: bool = False, allow_punycode: bool 
         return "url_punycode"
     if not _HOST_RE.match(host):
         return "url_bad_host"
+    local = allow_http_local and host in LOCAL_HOSTS
+    try:
+        port = parts.port
+    except ValueError:
+        return "url_bad_port"
+    if port not in (None, DEFAULT_PORTS[parts.scheme]) and not local:
+        return "url_port"  # 443 (or 80) only: no SSH, Redis or admin ports, wherever a link points
+    labels = host.split(".")
+    if len(labels) < 2 and not local:
+        return "url_single_label"  # "localhost", "intranet": names that only mean something inside a network
+    if not labels[-1][0].isalpha():
+        return "url_numeric_host"  # 127.1, 0177.0.0.1, 2130706433: IP addresses in disguise, no real TLD starts so
     return None
 
 

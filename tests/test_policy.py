@@ -78,6 +78,21 @@ def test_merge_rejects_non_mapping():
     ("https://exa mple.com/", "url_control_chars"),
     ("https://example.com/" + "a" * 2100, "url_too_long"),
     ("", "url_empty"),
+    ("https://example.com:443/a", None),
+    ("https://example.com:22/", "url_port"),
+    ("https://example.com:6379/", "url_port"),
+    ("https://example.com:8443/", "url_port"),
+    ("https://example.com:99999/", "url_bad_port"),
+    ("https://localhost/", "url_single_label"),
+    ("https://intranet/", "url_single_label"),
+    ("https://2130706433/", "url_single_label"),
+    ("https://0x7f000001/", "url_single_label"),
+    ("https://127.1/", "url_numeric_host"),
+    ("https://0177.0.0.1/", "url_numeric_host"),
+    ("https://0x7f.0.0.1/", "url_numeric_host"),
+    ("https://017700000001.0/", "url_numeric_host"),
+    ("https://example.0x7f/", "url_numeric_host"),
+    ("https://h1.example/", None),
 ])
 def test_check_url(url, code):
     assert check_url(url) == code
@@ -87,6 +102,9 @@ def test_check_url_allows_local_http_only_when_asked():
     assert check_url("http://127.0.0.1:11434/v1", allow_http_local=True) is None
     assert check_url("http://localhost:11434/v1", allow_http_local=True) is None
     assert check_url("http://10.0.0.5:11434/v1", allow_http_local=True) == "url_ip_literal"
+    assert check_url("http://localhost:8787/v1", allow_http_local=True) is None  # the local router keeps its port
+    assert check_url("http://localhost:8787/v1") == "url_not_https"
+    assert check_url("https://example.com:8787/v1", allow_http_local=True) == "url_port"
 
 
 def test_allow_fetch_gate(policy: Policy, now: float):
