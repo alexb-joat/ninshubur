@@ -569,3 +569,85 @@ def test_wrong_content_type_is_refused_before_the_body_is_read(home, policy):
     f, conn, seen, _ = make(home, policy, routes)
     r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
     assert [x.code for x in r.findings] == ["content_type_mismatch"] and r.body == b"" and pulled["bytes"] == 0
+
+
+WWW = "www." + HOST
+
+
+def test_robots_redirect_to_the_www_twin_is_followed_and_its_rules_apply(home, policy):
+    routes = {(HOST, "/robots.txt"): {"status": 301, "headers": {"Location": f"https://{WWW}/robots.txt"}, "body": ""},
+              (WWW, "/robots.txt"): {"body": "User-agent: *\nDisallow: /private\n", "headers": {"Content-Type": "text/plain"}},
+              (HOST, "*"): {"body": {}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/ok", key="a"), SRC, SPEC)).ok
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/private/x", key="b"), SRC, SPEC)).error == "refused:robots_disallow"
+
+
+@pytest.mark.parametrize("hops,target", [(1, "https://elsewhere.example/robots.txt"), (6, None)])
+def test_robots_redirect_off_site_or_past_five_hops_closes_the_host(home, policy, hops, target):
+    routes = {(HOST, "*"): {"body": {}}}
+    for i in range(hops):
+        nxt = target if (target and i == hops - 1) else f"https://{HOST}/robots{i + 1}.txt"
+        routes[(HOST, "/robots.txt" if i == 0 else f"/robots{i}.txt")] = {"status": 302, "headers": {"Location": nxt}, "body": ""}
+    if target is None:
+        routes[(HOST, f"/robots{hops}.txt")] = {"body": "", "headers": {"Content-Type": "text/plain"}}
+    f, conn, seen, _ = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.error == "refused:robots_unreachable" and "elsewhere.example" not in seen.hosts()
+    assert [c[1] for c in seen.calls if c[1] == "/x"] == []
+    assert any(e["event"] == "robots_redirect_refused" for e in read_jsonl(home / "logs" / "policy.jsonl"))
+
+
+def test_robots_five_hops_are_still_followed(home, policy):
+    routes = {(HOST, "*"): {"body": {}}}
+    for i in range(5):
+        routes[(HOST, "/robots.txt" if i == 0 else f"/robots{i}.txt")] = {
+            "status": 307, "headers": {"Location": f"https://{HOST}/robots{i + 1}.txt"}, "body": ""}
+    routes[(HOST, "/robots5.txt")] = {"body": "User-agent: *\nDisallow: /no\n", "headers": {"Content-Type": "text/plain"}}
+    f, conn, seen, _ = make(home, policy, routes)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/yes", key="a"), SRC, SPEC)).ok
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/no", key="b"), SRC, SPEC)).error == "refused:robots_disallow"
+
+
+def test_oversized_robots_is_parsed_up_to_500_kib_not_ignored(home, policy):
+    """Over the cap used to mean "no rules" (allow everything). Now the first 500 KiB are parsed, to the last full line."""
+    pad = "# padding line\n" * 40_000  # about 600 KB
+    body = "User-agent: *\nDisallow: /early\n" + pad + "Disallow: /late\n"
+    routes = {(HOST, "/robots.txt"): {"body": body, "headers": {"Content-Type": "text/plain"}}, (HOST, "*"): {"body": {}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/early", key="a"), SRC, SPEC)).error == "refused:robots_disallow"
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/late", key="b"), SRC, SPEC)).ok  # past the limit: not read
+    stored = conn.execute("SELECT body FROM robots WHERE host=?", (HOST,)).fetchone()["body"]
+    assert len(stored.encode()) <= 512_000 and stored.endswith("\n")
+
+
+def test_robots_bomb_closes_the_host(home, policy):
+    payload = gzip.compress(b"#" * 60_000_000)
+
+    async def on_the_wire():  # as a network delivers it: a few KB at a time
+        for i in range(0, len(payload), 4096):
+            yield payload[i:i + 4096]
+    routes = {(HOST, "/robots.txt"): lambda r: httpx.Response(200, headers={"Content-Type": "text/plain", "Content-Encoding": "gzip"},
+                                                              content=on_the_wire()),
+              (HOST, "*"): {"body": {}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).error == "refused:robots_unreachable"
+
+
+def test_redirect_to_the_www_twin_obeys_the_twins_robots(home, policy):
+    routes = {(HOST, "/robots.txt"): {"status": 404, "body": ""},
+              (WWW, "/robots.txt"): {"body": "User-agent: *\nDisallow: /a\n", "headers": {"Content-Type": "text/plain"}},
+              (HOST, "/a"): {"status": 308, "headers": {"Location": f"https://{WWW}/a"}, "body": ""},
+              (WWW, "/a"): {"body": {"twin": True}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/a", key="k"), SRC, SPEC))
+    assert r.error == "refused:robots_disallow" and (WWW, "/a", "GET", False) not in seen.calls
+
+
+def test_a_cached_redirect_from_an_older_version_is_asked_again_soon(home, policy):
+    clock = Clock()
+    f, conn, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "*"): {"body": {}}}, clock=clock)
+    f.robots.store(HOST, "", 301, None)  # what the old code stored for a redirecting robots.txt (read as "no rules")
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).error == "refused:robots_unreachable"
+    clock.t += 601
+    assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).ok

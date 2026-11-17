@@ -31,7 +31,8 @@ from .logs import JsonlLog
 from .policy import Policy, Refusal, check_url, host_of, same_site
 
 HARD_CAP = 8_000_000
-ROBOTS_CAP = 512_000
+ROBOTS_CAP = 512_000  # RFC 9309 2.5: the parsing limit MUST be at least 500 KiB; this is exactly that
+ROBOTS_MAX_HOPS = 5  # RFC 9309 2.3.1.2: follow at least five consecutive redirects
 ROBOTS_UNREACHABLE_TTL_S = 600
 REDIRECT_CODES = {301, 302, 303, 307, 308}
 DECODE_STEP = 65_536  # most bytes one gzip step may produce: a bomb is caught 64 KB past the cap, not 64 MB
@@ -246,8 +247,9 @@ class RobotsCache:
     @staticmethod
     def unreachable(status: int | None) -> bool:
         """A network error or a 5xx answer: robots.txt could not be read (RFC 9309 2.3.1.4). Everything on the
-        host is disallowed until it can be, and it is asked again after ten minutes, not a day."""
-        return status is None or status >= 500
+        host is disallowed until it can be, and it is asked again after ten minutes, not a day. A 3xx stored by an
+        older version (which read a redirect as "no rules") counts as unreadable too, so it is asked again soon."""
+        return status is None or status >= 500 or 300 <= status < 400
 
     def store(self, host: str, body: str, status: int | None, crawl_delay: float | None) -> None:
         self.conn.execute("INSERT OR REPLACE INTO robots(host, body, fetched_at, status, crawl_delay) VALUES (?,?,?,?,?)",
@@ -416,6 +418,14 @@ class Fetcher:
                     if r2 or self.policy.host_denied(twin) or (self.refuse_private and self._private_address(twin)):
                         result.findings.append(detectors.Finding("integrity", "off_host_redirect", twin))
                         break
+                    if self.policy.get("fetch", "robots", "honour", default=True):
+                        twin_ok, crawl_delay, _ = await self._robots_allow(twin, target, spec)
+                        if not twin_ok:  # the twin's own robots.txt governs the twin
+                            self.policy_log.write({"event": "refused_fetch", "source": src.name, "url": target,
+                                                   "code": "robots_disallow", "reason": f"robots.txt on {twin} disallows "
+                                                   f"{urlsplit(target).path}"})
+                            result.error = "refused:robots_disallow"
+                            break
                     host = twin
                 url = target
                 result.final_url = url
@@ -481,23 +491,25 @@ class Fetcher:
 
     # -- internals ------------------------------------------------------------------------------
     async def _request(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int, *,
-                       expected: str | None = None):
+                       expected: str | None = None, truncate: bool = False):
         """Stream the response under the cap and the deadline. Returns (response, body, raw_bytes, finding|None).
-        With ``expected`` (``a/b|c/d``), a 200 whose Content-Type doesn't match is refused before its body is read."""
+        With ``expected`` (``a/b|c/d``), a 200 whose Content-Type doesn't match is refused before its body is read.
+        With ``truncate``, a body over the cap is cut at the cap instead of refused (robots.txt: parse the first 500 KiB)."""
         try:
             async with asyncio.timeout(self.deadline_s) as cm:
-                return await self._stream(method, url, headers, body, max_bytes, expected)
+                return await self._stream(method, url, headers, body, max_bytes, expected, truncate)
         except TimeoutError:
             if not cm.expired():
                 raise
             raise DeadlineExceeded(f"no complete answer within {self.deadline_s:g} s") from None
 
     async def _stream(self, method: str, url: str, headers: dict, body: bytes | None, max_bytes: int,
-                      expected: str | None = None):
+                      expected: str | None = None, truncate: bool = False):
         req = self._client.build_request(method, url, headers=headers, content=body)
         resp = await self._client.send(req, stream=True)
         chunks: list[bytes] = []
         total = 0
+        stop = False
         finding: detectors.Finding | None = None
         try:
             if resp.status_code in REDIRECT_CODES or resp.status_code == 304:
@@ -506,7 +518,7 @@ class Fetcher:
             if resp.status_code == 200 and expected and not detectors.content_type_matches(ct, expected):
                 return resp, b"", 0, detectors.Finding("integrity", "content_type_mismatch", str(ct)[:60])
             declared = resp.headers.get("content-length")
-            if declared and declared.isdigit() and int(declared) > max_bytes:
+            if declared and declared.isdigit() and int(declared) > max_bytes and not truncate:
                 return resp, b"", 0, detectors.Finding("integrity", "body_too_large", declared)
             try:
                 decoder = BoundedDecoder(resp.headers.get("content-encoding"))
@@ -515,16 +527,22 @@ class Fetcher:
             try:
                 async for raw_chunk in resp.aiter_raw():
                     for chunk in decoder.steps(raw_chunk):
-                        total += len(chunk)
+                        raw = resp.num_bytes_downloaded
+                        seen_total = total + len(chunk)
+                        if raw and seen_total / max(raw, 1) > self.ratio_max and seen_total > 65536:
+                            finding = detectors.Finding("integrity", "decompression_bomb", f"{seen_total / raw:.0f}x")
+                            break
+                        if seen_total > max_bytes and truncate:
+                            chunks.append(chunk[:max_bytes - total])
+                            total = max_bytes
+                            stop = True
+                            break
+                        total = seen_total
                         if total > max_bytes:
                             finding = detectors.Finding("integrity", "body_too_large", f">{max_bytes}")
                             break
-                        raw = resp.num_bytes_downloaded
-                        if raw and total / max(raw, 1) > self.ratio_max and total > 65536:
-                            finding = detectors.Finding("integrity", "decompression_bomb", f"{total / raw:.0f}x")
-                            break
                         chunks.append(chunk)
-                    if finding:
+                    if finding or stop:
                         break
             except zlib.error as e:
                 finding = detectors.Finding("integrity", "bad_encoding", str(e)[:60])
@@ -536,21 +554,49 @@ class Fetcher:
         ua = self.cfg.user_agent
         rec = self.robots.cached(host)
         if rec is None:
-            robots_url = f"https://{host}/robots.txt"
-            body, status = "", None
-            try:
-                async with self.gate.slot(host, spec.min_delay_s, None):
-                    resp, raw, _, finding = await self._request("GET", robots_url, {}, None, ROBOTS_CAP)
-                status = resp.status_code
-                if status == 200 and finding is None:
-                    body = raw.decode("utf-8", errors="replace")
-            except (httpx.HTTPError, OSError):
-                status = None
+            body, status = await self._read_robots(host, spec)
             _, delay = RobotsCache.evaluate(body, status, url, ua)
             self.robots.store(host, body, status, delay)
             rec = {"body": body, "status": status, "crawl_delay": delay}
         allowed, delay = RobotsCache.evaluate(rec["body"], rec["status"], url, ua)
         return allowed, delay, rec["status"]
+
+    async def _read_robots(self, host: str, spec: AdapterSpec) -> tuple[str, int | None]:
+        """Fetch robots.txt the way RFC 9309 asks, on the safe side wherever it leaves a choice. Returns (body, status);
+        status None means unreachable, which disallows the whole host for ten minutes.
+
+        - Redirects: followed up to five hops (2.3.1.2) within the same site (the host or its www twin). A redirect to
+          another site is not followed, because this fetcher contacts allowlisted hosts only; it and a sixth hop both
+          leave robots.txt unreachable (the RFC would allow everything after five hops).
+        - Size: the first 500 KiB are parsed, cut at the last full line (2.5); more is never read.
+        - A bomb, a corrupt or unrequested encoding, or a deadline overrun: unreachable, never "no rules"."""
+        url = f"https://{host}/robots.txt"
+        for _ in range(ROBOTS_MAX_HOPS + 1):
+            try:
+                async with self.gate.slot(host_of(url), spec.min_delay_s, None):
+                    resp, raw, _, finding = await self._request("GET", url, {}, None, ROBOTS_CAP, truncate=True)
+            except (httpx.HTTPError, OSError):
+                return "", None
+            if resp.status_code in REDIRECT_CODES:
+                target = urljoin(url, resp.headers.get("location", ""))
+                thost = host_of(target)
+                if check_url(target) or not same_site(thost, host) or self.policy.host_denied(thost):
+                    self.policy_log.write({"event": "robots_redirect_refused", "host": host, "target_host": thost or "?",
+                                           "reason": "robots.txt redirects to another site; read as unreachable"})
+                    return "", None
+                url = target
+                continue
+            if resp.status_code != 200:
+                return "", resp.status_code
+            if finding is not None:
+                return "", None
+            text = raw.decode("utf-8", errors="replace")
+            if len(raw) >= ROBOTS_CAP:
+                text = text[:text.rfind("\n") + 1]
+            return text, 200
+        self.policy_log.write({"event": "robots_redirect_refused", "host": host, "target_host": host_of(url),
+                               "reason": f"more than {ROBOTS_MAX_HOPS} redirects; read as unreachable"})
+        return "", None
 
     def _record(self, r: Fetched, src: SourceConfig, state, conditional: bool, boosted: bool) -> None:
         plan = r.plan
