@@ -232,13 +232,7 @@ _WS = re.compile(r"\s+")
 
 
 def _strip_hidden(text: str) -> str:
-    out = []
-    for ch in text:
-        o = ord(ch)
-        if any(lo <= o <= hi for lo, hi in detectors.HIDDEN_RANGES):
-            continue
-        out.append(ch)
-    return "".join(out)
+    return detectors.strip_invisible(text)
 
 
 def sanitize_str(value: Any, max_len: int = 1000) -> str | None:

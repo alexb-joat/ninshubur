@@ -42,20 +42,41 @@ def codes(findings: Iterable[Finding]) -> tuple[str, ...]:
 
 
 # --- content -----------------------------------------------------------------------------
+# Invisible characters that can carry instructions or data a reader never sees. Found in a field: a finding, and the
+# character is removed.
 HIDDEN_RANGES = (
     (0x0000, 0x0008), (0x000B, 0x000C), (0x000E, 0x001F), (0x007F, 0x009F),
+    (0x061C, 0x061C),  # Arabic letter mark (a bidi control)
+    (0x180E, 0x180E),  # Mongolian vowel separator (zero width since Unicode 6.3)
     (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 0x2069),
-    (0xFEFF, 0xFEFF), (0xE0000, 0xE007F),
+    (0xFEFF, 0xFEFF),
+    (0xFFF9, 0xFFFB),  # interlinear annotation controls
+    (0xE0000, 0xE007F),  # tag characters
+    (0xE0100, 0xE01EF),  # variation selectors 17-256: carry one byte each, the core of "emoji smuggling"
 )
+# Invisible but common in honest text, so removed without a finding: the soft hyphen (German and Russian pages are
+# full of them) and variation selectors 1-16 (U+FE0F follows most emoji, as in the red heart).
+STRIP_ONLY_RANGES = ((0x00AD, 0x00AD), (0xFE00, 0xFE0F))
+
+
+def _char_class(ranges) -> str:
+    esc = lambda o: f"\\U{o:08x}"  # noqa: E731
+    return "".join(esc(lo) if lo == hi else f"{esc(lo)}-{esc(hi)}" for lo, hi in ranges)
+
+
+_HIDDEN = re.compile(f"[{_char_class(HIDDEN_RANGES)}]")
+_INVISIBLE = re.compile(f"[{_char_class(HIDDEN_RANGES + STRIP_ONLY_RANGES)}]")
+# One selector after a character is ordinary; two or more in a row select nothing and are how data is smuggled.
+_SELECTOR_RUN = re.compile(f"[{_char_class(((0xFE00, 0xFE0F), (0xE0100, 0xE01EF)))}]{{2,}}")
 
 
 def has_hidden_unicode(text: str) -> bool:
-    for ch in text:
-        o = ord(ch)
-        for lo, hi in HIDDEN_RANGES:
-            if lo <= o <= hi:
-                return True
-    return False
+    return bool(_HIDDEN.search(text) or _SELECTOR_RUN.search(text))
+
+
+def strip_invisible(text: str) -> str:
+    """``text`` without any hidden or strip-only character."""
+    return _INVISIBLE.sub("", text)
 
 
 _INJECTION = re.compile(

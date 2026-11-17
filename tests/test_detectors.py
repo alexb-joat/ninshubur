@@ -181,3 +181,25 @@ def test_json_ld_blocks_nested_too_deeply_are_skipped():
     doc = parse_html(f'<script type="application/ld+json">{deep}</script>'
                      '<script type="application/ld+json">{"@type": "Event", "name": "ok"}</script>')
     assert json_ld(doc) == [{"@type": "Event", "name": "ok"}]
+
+
+@pytest.mark.parametrize("text,flag", [
+    ("Konferenz\u00ad2026", False),            # soft hyphen: honest German text
+    ("I \u2764\ufe0f Python", False),          # one emoji presentation selector
+    ("plain", False),
+    ("x\u061cy", True), ("x\u180ey", True), ("x\ufff9note\ufffbx", True),
+    ("x\U000e0100y", True),                     # variation selector 17
+    ("\U0001f600" + "\ufe00\ufe01\ufe02", True),  # selectors carrying data after one emoji
+    ("x\u200by", True), ("x\U000e0041y", True),  # the old ranges still hold
+])
+def test_hidden_unicode_flags_smuggling_but_not_honest_invisibles(text, flag):
+    from ninshubur.detectors import has_hidden_unicode, scan_text, strip_invisible
+    assert has_hidden_unicode(text) is flag
+    assert ("hidden_unicode" in {f.code for f in scan_text(text)}) is flag
+    cleaned = strip_invisible(text)
+    assert not has_hidden_unicode(cleaned) and "\u00ad" not in cleaned and "\ufe0f" not in cleaned
+
+
+def test_sanitised_fields_lose_every_invisible_character():
+    from ninshubur.schemas import sanitize_str
+    assert sanitize_str("Kon\u00adfe\u200brenz \u2764\ufe0f \U000e0100x") == "Konferenz \u2764 x"
