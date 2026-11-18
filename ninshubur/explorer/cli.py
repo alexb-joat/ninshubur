@@ -33,9 +33,18 @@ def cmd_candidates(args, app) -> int:
 
 
 def cmd_reach(args, app) -> int:
-    from .reach.run import reach
+    from .reach.run import Ctx, reach
+    profiles = app.profiles
+    if args.profile:
+        if args.profile not in profiles:
+            print(f"explore reach: no profile {args.profile!r} in profiles.yaml; have: {', '.join(sorted(profiles))}",
+                  file=sys.stderr)
+            return 2
+        profiles = {args.profile: profiles[args.profile]}
+    ctx = Ctx(home=app.home, policy=app.policy, cfg=app.cfg, profiles=profiles, now=app.now, dry_run=args.dry_run,
+              max_queries=args.max_queries)
     try:
-        rep = reach(app.home, only=args.only, dry_run=args.dry_run, now=app.now())
+        rep = reach(ctx, only=args.only)
     except FileNotFoundError as e:
         print(f"explore reach: {e}", file=sys.stderr)
         return 2
@@ -47,6 +56,8 @@ def cmd_reach(args, app) -> int:
         print(f"{kind:<12} new {a.new}, seen again {a.seen_again}, refused {a.refused}")
     for n in rep.notes:
         print(n)
+    if not args.dry_run:
+        print(f"requests: {rep.requests}")
     return 0
 
 
@@ -62,6 +73,8 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     from .reach.run import ADAPTERS
     r = xs.add_parser("reach", help="turn logged links, profile topics and job-board tokens into candidates")
     r.add_argument("--only", choices=ADAPTERS, help="run one reach adapter (default: all)")
+    r.add_argument("--profile", help="use only this profile's topics and keywords (default: every profile)")
+    r.add_argument("--max-queries", type=int, default=4, help="queries per search API per run (default 4)")
     r.add_argument("--dry-run", action="store_true", help="list what would be asked; no request, nothing written")
     r.set_defaults(fn=cmd_reach)
     # -- frontier and gate (lane E1) --------------------------------------------------------------
