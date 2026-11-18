@@ -510,6 +510,28 @@ def test_network_errors_log_their_underlying_reason(home, policy):
     assert read_jsonl(home / "logs" / "fetch.jsonl")[-1]["detail"] == "[Errno 101] Network is unreachable"
 
 
+def test_a_real_connect_error_names_the_socket_reason():
+    """httpcore's pool re-raises a failed connect ``from None``, which hides the socket error from ``__cause__``
+    but leaves it in ``__context__``. A hand-built chain (above) can't show that; a refused loopback port can."""
+    import socket
+
+    from ninshubur.fetch import root_cause
+    with socket.socket() as s:  # a port nothing listens on: bind, note it, close
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    async def go():
+        t = httpx.AsyncHTTPTransport(retries=0)
+        try:
+            await t.handle_async_request(httpx.Request("GET", f"http://127.0.0.1:{port}/"))
+        except httpx.ConnectError as e:
+            return root_cause(e)
+        finally:
+            await t.aclose()
+    detail = run(go())
+    assert detail.startswith("[Errno 111]") and "All connection attempts failed" not in detail
+
+
 def test_reachable_needs_an_address_and_a_route(monkeypatch):
     from ninshubur import fetch
     monkeypatch.setattr(fetch, "resolve_host", lambda h: [])

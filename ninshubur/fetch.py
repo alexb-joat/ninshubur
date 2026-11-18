@@ -73,7 +73,19 @@ def reachable(host: str) -> bool:
 
 def root_cause(e: BaseException) -> str:
     """The innermost reason behind a network error ("[Errno -3] Temporary failure in name resolution"), not
-    httpx's wrapper ("All connection attempts failed")."""
+    httpx's wrapper ("All connection attempts failed").
+
+    httpcore's pool re-raises a failed connect ``from None``, which hides the socket error from ``__cause__`` but
+    not from ``__context__``. So the innermost error with an errno (a socket or TLS error) is looked for in both;
+    without one, ``from None`` is respected and our own messages ("no complete answer within 20 s") stand."""
+    x, walked, found = e, set(), None
+    while x is not None and id(x) not in walked:
+        walked.add(id(x))
+        if isinstance(x, OSError) and x.errno is not None:
+            found = x
+        x = x.__cause__ if x.__cause__ is not None else x.__context__
+    if found is not None:
+        return str(found)[:160]
     while True:
         inner = e.__cause__ if e.__cause__ is not None else (None if e.__suppress_context__ else e.__context__)
         if inner is None:
