@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 from ..db import rows
 from . import store
@@ -31,6 +32,24 @@ def cmd_candidates(args, app) -> int:
         conn.close()
 
 
+def cmd_reach(args, app) -> int:
+    from .reach.run import reach
+    try:
+        rep = reach(app.home, only=args.only, dry_run=args.dry_run, now=app.now())
+    except FileNotFoundError as e:
+        print(f"explore reach: {e}", file=sys.stderr)
+        return 2
+    if args.dry_run:
+        print("dry run: no request made, nothing written")
+        for adapter, what in rep.planned:
+            print(f"  {adapter:<9} {what}")
+    for kind, a in rep.added.items():
+        print(f"{kind:<12} new {a.new}, seen again {a.seen_again}, refused {a.refused}")
+    for n in rep.notes:
+        print(n)
+    return 0
+
+
 def add_commands(sub: argparse._SubParsersAction) -> None:
     x = sub.add_parser("explore", help="the explorer: open-web discovery with its own database and fences")
     xs = x.add_subparsers(dest="xcmd", required=True)
@@ -40,4 +59,9 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     c.add_argument("--limit", type=int, default=20, help="rows to list after the counts (0: counts only; default 20)")
     c.set_defaults(fn=cmd_candidates)
     # -- reach (lane D) ---------------------------------------------------------------------------
+    from .reach.run import ADAPTERS
+    r = xs.add_parser("reach", help="turn logged links, profile topics and job-board tokens into candidates")
+    r.add_argument("--only", choices=ADAPTERS, help="run one reach adapter (default: all)")
+    r.add_argument("--dry-run", action="store_true", help="list what would be asked; no request, nothing written")
+    r.set_defaults(fn=cmd_reach)
     # -- frontier and gate (lane E1) --------------------------------------------------------------
