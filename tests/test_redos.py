@@ -8,6 +8,7 @@ import pytest
 
 from ninshubur import detectors, redact
 from ninshubur.analyze import qualify
+from ninshubur.explorer import traps
 from ninshubur.parse import people
 
 N = 40_000
@@ -27,6 +28,11 @@ def _timed(fn, arg):
     ("people email count", people._EMAIL.findall, "a" * (N // 2) + "@" + "b" * (N // 2)),
     ("blank lines", detectors.scan_text, " \n" * (N // 2)),
     ("blank run in reply", qualify.parse_reply, "{" + " " * (3 * N) + "x}"),
+    ("explorer date tokens", lambda s: traps._DATE_TOKEN.findall(s), "2026-" * N),
+    ("explorer path session", lambda s: traps._PATH_SESSION.sub("", s), ";jsessionid=" * (N // 4)),
+    ("explorer unclosed tags", lambda s: traps.simhash(s.encode()), "<" * (5 * N)),
+    ("explorer unclosed scripts", lambda s: traps.simhash(s.encode()), "<script>" * N),
+    ("explorer canonical", lambda s: traps.canonical("https://ex.org/" + s), "a=" * N),
 ], ids=lambda v: v if isinstance(v, str) and len(v) < 30 else "")
 def test_linear_on_hostile_input(name, fn, text):
     assert _timed(fn, text) < BOUND_S, name

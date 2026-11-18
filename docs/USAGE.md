@@ -360,6 +360,34 @@ Open the CSV in a spreadsheet, read each row's `evidence`, and type one of the p
 The meta file records the question, the labels, the seed and, per row, the group, a hash of the
 evidence and the item ids, so a later comparison can prove the model was asked on the same lines.
 
+## 6d. The explorer (in progress)
+
+The explorer is Ninshubur's open-web discovery, kept apart from your sources. It has its own database and logs in
+`~/.ninshubur/explorer/`; deleting that folder resets it without touching anything else. So far it has a frontier
+(what may be asked for) and a gate (how it is asked). The sandboxed parser, the trial ladder and the hand-off into
+the main crawler come next, so for now nothing it fetches is kept or reaches your suggestions.
+
+```
+ninshubur explore offer --dry-run https://example.org/events/   # the verdict, nothing written
+ninshubur explore queue --dry-run          # how the reach candidates would fare
+ninshubur explore frontier                 # queued/fetched/refused, stopped sites and why, the caps in force
+ninshubur explore step --dry-run           # the next requests, one per site; drop --dry-run to send them
+touch ~/.ninshubur/explorer/STOP           # kill switch: no request leaves while this file exists
+```
+
+What it refuses, and logs to `explorer/logs/explorer.jsonl`:
+- **Anything aimed at this machine or its network**, logged as `ssrf_attempt`: IP literals, decimal or octal IP
+  spellings, ports other than 443, userinfo, single-label names, and names that resolve to a private, loopback,
+  link-local, metadata, NAT64 or tunnel address.
+- **Traps**, counted per registrable domain (from a vendored, dated Public Suffix List): more than 4 subdomains of
+  one site, more than 8 URLs of one shape (calendars, pagination), dates walked out of range, repeated path
+  segments, deep or long URLs, too many query parameters.
+- **Sites that waste requests** are stopped: most of the last 10 pages near-copies of each other (generated mazes),
+  a random path that answers 200 (soft-404), a parked or for-sale page, or 30 pages with nothing useful.
+
+A redirect to another site is never followed; its target is offered to the frontier like any other link. The caps
+live in the shipped `policy.yaml` under `explorer:`; your `~/.ninshubur/policy.yaml` can tighten them, never loosen.
+
 ## 7. Tuning before real work starts
 
 All numbers live in `~/.ninshubur/config.yaml`. After an edit: `ninshubur check`, then
