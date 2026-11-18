@@ -36,6 +36,7 @@ from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
 from .termsafe import guarded_output
+from .explorer.cli import add_commands as add_explore_commands
 
 
 class App:
@@ -825,6 +826,7 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--outcome", required=True, choices=["won", "lost", "meeting", "reply", "none"])
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
+    add_explore_commands(sub)
     ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv) or "
                                        "euboulia-facts (json) to feeds/")
     ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts"])
