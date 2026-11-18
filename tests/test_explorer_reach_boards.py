@@ -114,3 +114,18 @@ def test_dry_run_plans_probes_without_requests(home):
     rep = reach(ctx(home, dry_run=True, seen=seen), only="boards")
     assert rep.planned == [("boards", "GET https://boards-api.greenhouse.io/v1/boards/newco/jobs?content=false  [seen in 1 link(s)]")]
     assert seen.calls == [] and not (home / "explorer").exists()
+
+
+def test_probe_uses_the_reviewed_robots_status_of_the_configured_source(home):
+    import httpx
+    unauthorized = {"status": 401, "body": "Unauthorized", "headers": {"Content-Type": "text/plain"}}
+    jobs = {"jobs": [{"id": str(uuid.UUID(int=2)), "title": "Engineer", "jobUrl": "https://jobs.ashbyhq.com/newco/x"}]}
+    r = {("api.ashbyhq.com", "/robots.txt"): unauthorized, ("api.ashbyhq.com", "*"): lambda req: httpx.Response(200, json=jobs)}
+    _main(home, items=[("https://jobs.ashbyhq.com/newco", "", 0)])
+    write_config(home)  # no Ashby source: the 401 robots.txt keeps the host off limits
+    rep = reach(ctx(home, routes=r), only="boards")
+    assert rep.requests == 0 and any("robots_disallow" in n for n in rep.notes)
+    write_config(home, sources={"job-boards-ashby": {"adapter": "ashby", "params": {"boards": ["other"]},
+                                                     "trust": trust(0, "ashby_jobs.v1", robots_reviewed_status=401)}})
+    rep = reach(ctx(home, routes=r), only="boards")
+    assert rep.requests == 1 and rep.probes == {"trial": 1}

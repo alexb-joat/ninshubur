@@ -9,6 +9,9 @@ A board that answers with open jobs becomes a ``trial`` candidate; 404 or no job
 (a 5xx, a refusal, the network) leaves it a candidate for the next run. Config is never written: the run prints the
 YAML lines to add (applying them belongs to the settings engine).
 
+A probe uses the trust block of the configured source that reads the same platform, when there is one (see
+``probe_source``).
+
 Network: ``boards-api.greenhouse.io``, ``api.ashbyhq.com``, ``api.lever.co``, one GET per probed token.
 """
 from __future__ import annotations
@@ -21,10 +24,10 @@ from dataclasses import dataclass
 from ...adapters.ashby import BOARD_RE as ASHBY_RE
 from ...adapters.base import FetchPlan, Fetched, run_projection
 from ...adapters.greenhouse import BOARD_RE as GREENHOUSE_RE
-from ...config import Config
+from ...config import Config, SourceConfig
 from ...profiles import BOARD_ADAPTERS, Profile
 from . import schemas as _schemas  # noqa: F401  (registers lever_postings.v1)
-from .net import reach_spec
+from .net import reach_source, reach_spec
 
 LINK_RE = re.compile(
     r"https?://(?:boards|job-boards)\.greenhouse\.io/(?:embed/job_board\?for=)?(?P<greenhouse>[A-Za-z0-9_-]{1,64})"
@@ -56,6 +59,17 @@ def api_url(platform: str, token: str) -> str:
     if platform == "lever":
         return f"https://api.lever.co/v0/postings/{token}?mode=json&limit=100"
     raise ValueError(f"unknown board platform {platform!r}; one of {', '.join(SPECS)}")
+
+
+def probe_source(cfg: Config, platform: str) -> SourceConfig:
+    """The probe's source record. When config already reads this platform, its reviewed trust block is used (same API
+    host, already reviewed by a person: e.g. ``robots_reviewed_status: 401`` for api.ashbyhq.com, whose robots.txt
+    answers 401); otherwise the explorer's own Tier 3 record, under which a 401/403 robots.txt refuses the probe."""
+    spec = SPECS[platform]
+    reviewed = next((s for _, s in sorted(cfg.sources.items()) if s.adapter == platform and s.trust), None)
+    if reviewed is None:
+        return reach_source(spec)
+    return SourceConfig(name=spec.name, adapter=spec.name, trust=dict(reviewed.trust))
 
 
 def probe_plan(t: Token) -> FetchPlan:

@@ -47,6 +47,11 @@ class Ctx:
     sleep: Any = None
 
 
+def _sent(f) -> int:
+    """1 when the request went out (whatever came back), 0 when the fetcher refused it before connecting."""
+    return 0 if (f.error or "").startswith("refused:") else 1
+
+
 def _merge(report: ReachReport, kind: str, a: Added) -> None:
     cur = report.added.setdefault(kind, Added())
     cur.new, cur.seen_again, cur.refused = cur.new + a.new, cur.seen_again + a.seen_again, cur.refused + a.refused
@@ -91,8 +96,8 @@ async def run_boards(ctx: Ctx, conn: sqlite3.Connection | None, report: ReachRep
                 url=url, kind="board", via=f"board-probe:{t.platform}",
                 reason=f"{t.platform} token seen in {t.seen} link(s), e.g. {t.example}")], ctx.now()))
             spec = boards.SPECS[t.platform]
-            f = await fetcher.fetch(boards.probe_plan(t), reach_source(spec), spec)
-            report.requests += 1
+            f = await fetcher.fetch(boards.probe_plan(t), boards.probe_source(ctx.cfg, t.platform), spec)
+            report.requests += _sent(f)
             status, why = boards.judge(t.platform, f, ctx.now())
             cid = conn.execute("SELECT id FROM explorer_candidates WHERE url=?", (url,)).fetchone()["id"]
             if status is None:
@@ -123,7 +128,7 @@ async def run_search(ctx: Ctx, conn: sqlite3.Connection | None, report: ReachRep
     try:
         for q in queries:
             f = await fetcher.fetch(q.plan, src, spec)
-            report.requests += 1
+            report.requests += _sent(f)
             if f.status == 304:
                 _merge(report, api, Added())
                 continue
