@@ -118,6 +118,40 @@ def cmd_step(args, app) -> int:
         conn.close()
 
 
+def cmd_reach(args, app) -> int:
+    from .reach.run import Ctx, reach
+    profiles = app.profiles
+    if args.profile:
+        if args.profile not in profiles:
+            print(f"explore reach: no profile {args.profile!r} in profiles.yaml; have: {', '.join(sorted(profiles))}",
+                  file=sys.stderr)
+            return 2
+        profiles = {args.profile: profiles[args.profile]}
+    ctx = Ctx(home=app.home, policy=app.policy, cfg=app.cfg, profiles=profiles, now=app.now, dry_run=args.dry_run,
+              max_queries=args.max_queries, max_probes=args.max_probes)
+    try:
+        rep = reach(ctx, only=args.only)
+    except FileNotFoundError as e:
+        print(f"explore reach: {e}", file=sys.stderr)
+        return 2
+    if args.dry_run:
+        print("dry run: no request made, nothing written")
+        for adapter, what in rep.planned:
+            print(f"  {adapter:<9} {what}")
+    for kind, a in rep.added.items():
+        print(f"{kind:<12} new {a.new}, seen again {a.seen_again}, refused {a.refused}")
+    if rep.probes:
+        print("board probes: " + ", ".join(f"{k} {v}" for k, v in sorted(rep.probes.items())))
+    for n in rep.notes:
+        print(n)
+    if rep.yaml:
+        print("\nconfig.yaml is not changed; to read these boards, add:")
+        print("\n".join(rep.yaml))
+    if not args.dry_run:
+        print(f"requests: {rep.requests}")
+    return 0
+
+
 def add_commands(sub: argparse._SubParsersAction) -> None:
     x = sub.add_parser("explore", help="the explorer: open-web discovery with its own database and fences")
     xs = x.add_subparsers(dest="xcmd", required=True)
@@ -127,6 +161,14 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     c.add_argument("--limit", type=int, default=20, help="rows to list after the counts (0: counts only; default 20)")
     c.set_defaults(fn=cmd_candidates)
     # -- reach (lane D) ---------------------------------------------------------------------------
+    from .reach.run import ADAPTERS
+    r = xs.add_parser("reach", help="turn logged links, profile topics and job-board tokens into candidates")
+    r.add_argument("--only", choices=ADAPTERS, help="run one reach adapter (default: all)")
+    r.add_argument("--profile", help="use only this profile's topics and keywords (default: every profile)")
+    r.add_argument("--max-queries", type=int, default=4, help="queries per search API per run (default 4)")
+    r.add_argument("--max-probes", type=int, default=10, help="job-board tokens probed per run, one request each (default 10)")
+    r.add_argument("--dry-run", action="store_true", help="list what would be asked; no request, nothing written")
+    r.set_defaults(fn=cmd_reach)
     # -- frontier and gate (lane E1) --------------------------------------------------------------
     o = xs.add_parser("offer", help="offer URLs to the frontier: queued, or the reason it refuses them")
     o.add_argument("urls", nargs="+", metavar="URL")

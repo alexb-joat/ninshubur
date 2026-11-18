@@ -360,7 +360,30 @@ Open the CSV in a spreadsheet, read each row's `evidence`, and type one of the p
 The meta file records the question, the labels, the seed and, per row, the group, a hash of the
 evidence and the item ids, so a later comparison can prove the model was asked on the same lines.
 
-## 6d. The explorer (in progress)
+## 6d. Finding new sources: explorer reach
+
+`ninshubur explore reach` gathers *candidates* for the explorer into its own database
+(`~/.ninshubur/explorer/explorer.db`). It never touches `ninshubur.db` except to read it, and never writes
+`config.yaml`.
+
+```bash
+ninshubur explore reach --dry-run            # what would be asked; no request, nothing written
+ninshubur explore reach --only boards        # one adapter: logged, hn, github, mastodon or boards
+ninshubur explore reach --profile job-search --max-queries 2
+ninshubur explore candidates                 # counts by kind and status, then the top rows
+```
+
+| Adapter | Where candidates come from | Requests |
+|---|---|---|
+| `logged` | hosts the main crawler logged as candidates | none |
+| `hn`, `github`, `mastodon` | profile `topics`, then `keywords`, as search terms; one declared URL field per answer (story URL, repository homepage, post link card) | up to `--max-queries` (4) per API, least recently asked first |
+| `boards` | Greenhouse, Ashby and Lever tokens in links the main database holds, minus the ones already configured | one per token, up to `--max-probes` (10) |
+
+A board with open jobs is marked `trial` and the run prints the YAML lines to add to `config.yaml` by hand.
+Every request goes through the same fetcher as the main crawler (robots.txt, public addresses only, caps),
+logged in `~/.ninshubur/explorer/logs/fetch.jsonl`.
+
+## 6e. The explorer: frontier and gate (in progress)
 
 The explorer is Ninshubur's open-web discovery, kept apart from your sources. It has its own database and logs in
 `~/.ninshubur/explorer/`; deleting that folder resets it without touching anything else. So far it has a frontier
