@@ -24,11 +24,11 @@ dev = ["pytest", "anyio"]
 ninshubur = "ninshubur.__main__:main"
 
 [tool.setuptools]
-packages = ["ninshubur", "ninshubur.parse", "ninshubur.adapters", "ninshubur.analyze", "ninshubur.sinks"]
+packages = ["ninshubur", "ninshubur.parse", "ninshubur.adapters", "ninshubur.analyze", "ninshubur.sinks", "ninshubur.explorer"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-ninshubur = ["policy.yaml", "data/*.json", "static/*.html"]
+ninshubur = ["policy.yaml", "data/*.json", "data/*.dat", "static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
