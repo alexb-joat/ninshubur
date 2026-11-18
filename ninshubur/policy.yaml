@@ -41,6 +41,25 @@ fetch:
   # Documented invariants. There is no code path for any of these; tests assert it.
   never: [login, captcha_bypass, paywall_bypass, proxies, fingerprint_evasion]
 
+# Fences for the explorer (ninshubur/explorer): open-web discovery, kept apart from the sources above. A "site" is a
+# registrable domain from the vendored Public Suffix List, so endless subdomains of one name share one budget.
+explorer:
+  max_url_len: 512
+  max_depth: 6              # path segments
+  max_query_params: 4
+  hosts_per_site: 4         # a fifth subdomain of one site is refused: wildcard DNS mints names without end
+  pages_per_site_day: 20
+  pages_per_shape: 8        # URLs that differ only in their numbers (calendars, pagination, id runs) on one site
+  max_body_bytes: 1000000
+  daily_bytes: 50000000     # the explorer's own budget, apart from budgets.daily_bytes
+  min_delay_s: 5.0          # between two requests to one host
+  near_duplicate_hamming: 3 # simhash bits apart that still count as "the same page" (64-bit, k=3: Manku et al., WWW 2007)
+  near_duplicate_share: 0.6 # of the last 10 pages on a site; above it the site is stopped (generated mazes)
+  no_yield_pages: 30        # pages fetched with nothing useful found; then the site is stopped
+  year_min: 1995            # a date in a URL outside year_min .. this year + years_ahead marks a walked calendar
+  years_ahead: 2
+  content_types: [text/html, application/json]
+
 admission:
   min_field_validity: 0.95
   required_trust_fields: [tier, owner, owner_url, terms_url, licence, legal_basis,
