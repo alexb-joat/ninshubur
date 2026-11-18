@@ -337,6 +337,99 @@ def test_connection_goes_to_the_checked_address_with_the_name_kept_for_tls(home,
     assert got["addr"] == "2606:2800:220:1:248:1893:25c8:1946" and got["sni"] == HOST
 
 
+V4, V4B, V6 = "93.184.216.34", "93.184.216.35", "2606:2800:220:1:248:1893:25c8:1946"
+
+
+def refuse_on(*addrs: str, then=lambda request: httpx.Response(200, json={})):
+    """A route whose connection is refused on ``addrs`` (the way httpcore reports it) and answered elsewhere."""
+    def page(request):
+        if request.url.host in addrs:
+            try:
+                raise OSError(111, "Connection refused")
+            except OSError as e:
+                raise httpx.ConnectError("All connection attempts failed") from e
+        return then(request)
+    return page
+
+
+def test_a_refused_ipv4_falls_back_to_ipv6(home, policy):
+    f, _, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): refuse_on(V4)},
+                         resolve=lambda h: [V6, V4])
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.status == 200 and seen.addresses[-2:] == [V4, V6]
+
+
+def test_two_refusals_end_the_request_with_the_real_cause(home, policy):
+    """Two tries at most, both at checked addresses: a third answer is never contacted, and the error names the
+    socket's reason, not httpx's wrapper."""
+    f, _, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""},
+                                        (HOST, "/x"): refuse_on(V4, V4B, V6)}, resolve=lambda h: [V6, V4B, V4])
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.error == "ConnectError" and r.error_detail == "[Errno 111] Connection refused"
+    assert [a for p, a in zip([c[1] for c in seen.calls], seen.addresses) if p == "/x"] == [V4B, V4]  # IPv4 first, in answer order; V6 untried
+
+
+def test_an_error_after_the_request_was_sent_is_not_retried_elsewhere(home, policy):
+    """Only a failed connect moves on to the next address. A timeout after the request went out could mean the
+    server got it, so a second address would send it twice."""
+    def slow(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+    f, _, seen, _ = make(home, policy, {(HOST, "/robots.txt"): {"status": 404, "body": ""}, (HOST, "/x"): slow},
+                         resolve=lambda h: [V4, V6])
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
+    assert r.error == "ReadTimeout" and [c[1] for c in seen.calls].count("/x") == 1
+
+
+def test_ipv6_fallback_on_real_sockets():
+    """The same fallback through httpx's own transport and real loopback sockets: 127.0.0.1 refuses, the bracketed
+    IPv6 literal reaches the listener on [::1], and the Host header still names the site. Only the scheme and port
+    are rewritten under the pinned transport (TLS on 443 needs root and a certificate)."""
+    import socket
+
+    from ninshubur.fetch import PinnedTransport
+    try:
+        with socket.socket(socket.AF_INET6) as s:
+            s.bind(("::1", 0))
+    except OSError:
+        pytest.skip("no IPv6 loopback on this machine")
+
+    class ToPort(httpx.AsyncBaseTransport):
+        def __init__(self, port: int):
+            self.port, self.inner = port, httpx.AsyncHTTPTransport(retries=0)
+
+        async def handle_async_request(self, request):
+            url = request.url.copy_with(scheme="http", port=self.port)
+            return await self.inner.handle_async_request(
+                httpx.Request(request.method, url, headers=request.headers, extensions=request.extensions))
+
+    async def go():
+        got = []
+
+        async def answer(reader, writer):
+            head = (await reader.readuntil(b"\r\n\r\n")).decode()
+            got.append((writer.get_extra_info("sockname")[0], head.split("\r\n")))
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(answer, "::1", 0)
+        port = server.sockets[0].getsockname()[1]
+        with socket.socket() as probe:  # the test needs 127.0.0.1 on that port to refuse
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                pytest.skip("something listens on 127.0.0.1 at the test port")
+        async with server:
+            t = PinnedTransport(ToPort(port), lambda name: ["127.0.0.1", "::1"])
+            resp = await t.handle_async_request(httpx.Request("GET", f"https://{HOST}/x"))
+            body = await resp.aread()
+            await t.aclose()
+        return resp.status_code, body, got
+
+    status, body, got = run(go())
+    assert (status, body) == (200, b"ok")
+    [(addr, lines)] = got
+    assert addr == "::1" and lines[0] == "GET /x HTTP/1.1" and f"Host: {HOST}" in lines
+
+
 def test_dns_rebinding_cannot_swap_the_address_after_the_check(home, policy):
     """The name answers public, then private. The check and the connection share one answer, so every request goes
     to the public address, and once the answer expires the private one is refused before anything is sent."""
