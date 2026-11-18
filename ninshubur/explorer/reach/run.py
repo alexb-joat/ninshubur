@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -13,11 +14,12 @@ from ...policy import Policy
 from ...profiles import Profile
 from .. import store
 from ..store import Added
-from . import logged, search
+from . import boards, logged, search
 from .net import explorer_fetcher, reach_source
 
 ADAPTERS = ("logged", "hn", "github", "mastodon", "boards")
 DEFAULT_MAX_QUERIES = 4  # per search API per run
+DEFAULT_MAX_PROBES = 10  # board tokens per run
 
 
 @dataclass
@@ -26,6 +28,8 @@ class ReachReport:
     planned: list[tuple[str, str]] = field(default_factory=list)  # (adapter, what would be asked)
     notes: list[str] = field(default_factory=list)
     requests: int = 0
+    probes: dict[str, int] = field(default_factory=dict)  # board status -> count
+    yaml: list[str] = field(default_factory=list)  # config lines to add by hand (never written here)
 
 
 @dataclass
@@ -37,6 +41,7 @@ class Ctx:
     now: Callable[[], float]
     dry_run: bool
     max_queries: int = DEFAULT_MAX_QUERIES
+    max_probes: int = DEFAULT_MAX_PROBES
     transport: Any = None
     resolve: Any = None
     sleep: Any = None
@@ -57,6 +62,50 @@ def run_logged(ctx: Ctx, conn: sqlite3.Connection | None, report: ReachReport) -
         report.planned.append(("logged", f"logged hosts in the main database: {len(cands)} (no request)"))
         return
     _merge(report, "logged_link", store.add_candidates(conn, cands, ctx.now()))
+
+
+async def run_boards(ctx: Ctx, conn: sqlite3.Connection | None, report: ReachReport) -> None:
+    main = logged.open_main_readonly(ctx.home)
+    try:
+        found = boards.find_tokens(main, boards.known_tokens(ctx.cfg, ctx.profiles))
+    finally:
+        main.close()
+    done: set[str] = set()
+    if conn is not None:
+        done = {r["url"] for r in conn.execute("SELECT url FROM explorer_candidates WHERE kind='board' AND status!='candidate'")}
+    todo = [t for t in found if boards.api_url(t.platform, t.token) not in done]
+    queue = todo[:max(0, ctx.max_probes)]
+    if len(todo) > len(queue):
+        report.notes.append(f"boards: {len(todo) - len(queue)} more token(s) wait for the next run (--max-probes)")
+    if ctx.dry_run:
+        report.planned += [("boards", f"GET {boards.api_url(t.platform, t.token)}  [seen in {t.seen} link(s)]")
+                           for t in queue]
+        return
+    trials: list[tuple[boards.Token, str]] = []
+    fetcher = explorer_fetcher(conn, ctx.policy, ctx.cfg, ctx.home, transport=ctx.transport, resolve=ctx.resolve,
+                               now=ctx.now, sleep=ctx.sleep) if queue else None
+    try:
+        for t in queue:
+            url = boards.api_url(t.platform, t.token)
+            _merge(report, "board", store.add_candidates(conn, [store.Candidate(
+                url=url, kind="board", via=f"board-probe:{t.platform}",
+                reason=f"{t.platform} token seen in {t.seen} link(s), e.g. {t.example}")], ctx.now()))
+            spec = boards.SPECS[t.platform]
+            f = await fetcher.fetch(boards.probe_plan(t), reach_source(spec), spec)
+            report.requests += 1
+            status, why = boards.judge(t.platform, f, ctx.now())
+            cid = conn.execute("SELECT id FROM explorer_candidates WHERE url=?", (url,)).fetchone()["id"]
+            if status is None:
+                report.notes.append(f"boards: {t.platform}/{t.token} left for the next run ({why})")
+                continue
+            store.set_status(conn, cid, status, why, ctx.now())
+            report.probes[status] = report.probes.get(status, 0) + 1
+            if status == "trial":
+                trials.append((t, why))
+    finally:
+        if fetcher is not None:
+            await fetcher.aclose()
+    report.yaml = boards.yaml_preview(ctx.cfg, trials, time.strftime("%Y-%m-%d", time.gmtime(ctx.now())))
 
 
 async def run_search(ctx: Ctx, conn: sqlite3.Connection | None, report: ReachReport, api: str) -> None:
@@ -108,6 +157,8 @@ async def _reach(ctx: Ctx, only: str | None, report: ReachReport) -> None:
         for api in ("hn", "github", "mastodon"):
             if only in (None, api):
                 await run_search(ctx, conn, report, api)
+        if only in (None, "boards"):
+            await run_boards(ctx, conn, report)
     finally:
         if conn is not None:
             conn.close()
