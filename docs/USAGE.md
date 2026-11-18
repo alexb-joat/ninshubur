@@ -120,7 +120,7 @@ One profile per client, in `~/.ninshubur/profiles.yaml`. Copy the `client-templa
 | `titles` | hiring matches | the roles the client sells to |
 | `keywords`, `pains` | relevance of public posts | whole-word matches; keep them specific |
 | `topics` | conference categories | confs.tech topics: general, javascript, devops, data, python ... |
-| `target_companies` | hiring signals | `name` matches "Who is hiring?" posts; a `greenhouse` or `ashby` slug lets you admit their job board |
+| `target_companies` | hiring signals | `name` matches "Who is hiring?" posts; a `greenhouse`, `ashby` or `lever` slug lets you admit their job board |
 | `tools_in_use` | outage alerts | providers the client depends on |
 | `home_base`, `home_country` | reserved for local-meeting suggestions (later phase) | where the person working this client sits |
 | `weights.<kind>` | value multiplier | 1.2 if this client values hiring signals more, and so on |
@@ -154,6 +154,22 @@ ninshubur sources add acme-ashby --adapter ashby --param 'boards=[acme]' --tier 
 
 Only 401 or 403 can be recorded, only that exact answer is let through, and only for that source. The exception
 is written to `logs/policy.jsonl` (`robots_reviewed_exception`) and named in H2 of `sources test`.
+
+A Lever site (`jobs.lever.co/<site>`) needs no extra flag: `api.lever.co` serves a robots.txt that allows every
+path and asks for one second between requests, which the fetcher keeps.
+
+```bash
+ninshubur sources add acme-lever --adapter lever --param 'boards=[acme]' --tier 0 \
+    --owner "Lever postings API" --owner-url https://github.com/lever/postings-api \
+    --terms-url https://www.lever.co/legal/terms-of-service --licence "public API" \
+    --rate-limit "Crawl-delay 1; ETag; <= 4/day per page" --reviewed-by <your name>
+```
+
+Lever has no field filter, so every answer carries each posting's full description (about 19 KB a posting).
+Ninshubur drops it at projection, and reads each site in pages of 200 so no answer comes near the fetcher's
+8 MB cap; a larger answer would quarantine the whole source. Two pages (400 postings) are read by default.
+For a bigger site set `--param max_postings=1000` (at most 2000); a run whose last page comes back full says
+so in its notes. Sites on Lever's EU instance (`jobs.eu.lever.co`) are not read yet.
 
 `sources add` runs the eight admission checks against the live source and refuses to write the
 config if any fails. That is deliberate: a source nobody vouched for is never fetched.

@@ -95,6 +95,59 @@ def test_ashby_drops_a_posting_without_a_valid_id():
     assert res.items == [] and res.projection.dropped_rows == 1
 
 
+def test_lever_plan_and_parse():
+    a = get_adapter("lever")
+    src = SourceConfig(name="lv", adapter="lever",
+                       params={"boards": ["acme", "Bad Board!", "../x"], "companies": {"acme": {"name": "Acme Inc", "domain": "acme.example"}}},
+                       trust={"legal_basis": "public_business_info"})
+    plans = a.plan(src, {}, NOW)
+    # two pages of 200 by default, each its own request and fetch-state key
+    assert [p.url for p in plans] == ["https://api.lever.co/v0/postings/acme?mode=json&skip=0&limit=200",
+                                      "https://api.lever.co/v0/postings/acme?mode=json&skip=200&limit=200"]
+    assert [p.key for p in plans] == ["lever:acme:0", "lever:acme:200"] and plans[0].max_bytes == 8_000_000
+    res = a.parse(src, fetched(plans[0], load_sample("lever/postings.json")), NOW)
+    assert res.notes == []
+    # the posting with a path-like id is dropped at projection
+    assert [i.title for i in res.items] == ["Sales Development Representative", "Head of Growth", "Senior Backend Engineer", "Data Analyst"]
+    assert res.projection.dropped_rows == 1
+    sdr, growth, backend, analyst = res.items
+    assert sdr.kind == "hiring" and sdr.entities[0].key == "company:acme.example" and sdr.entities[0].name == "Acme Inc"
+    assert sdr.attrs == {"board": "acme", "company": "Acme Inc", "location": "Lisbon, Portugal",
+                         "job_id": "00000001-aaaa-4bbb-8ccc-000000000001", "department": "Sales", "team": "SDR",
+                         "workplace": "onsite", "employment": "Full-time", "country": "PT", "remote": False}
+    assert sdr.url == "https://jobs.lever.co/acme/00000001-aaaa-4bbb-8ccc-000000000001"
+    # createdAt is epoch milliseconds
+    assert sdr.dates[0].kind == "posted" and sdr.published_at == sdr.dates[0].at == 1_790_845_200.0
+    # no department: the team stands in; a null country stays empty
+    assert growth.attrs["department"] == "Marketing" and growth.attrs["country"] is None and growth.attrs["remote"] is True
+    # a job link off Lever's job host is replaced by the one built from site and id
+    assert backend.url == "https://jobs.lever.co/acme/00000003-aaaa-4bbb-8ccc-000000000003"
+    assert backend.attrs["remote"] is False and analyst.attrs["remote"] is None  # "unspecified" is not a no
+    # descriptions, lists, salary and the apply link are never declared, so never stored anywhere on the item
+    assert all("DESCRIPTION-MARKER" not in repr(i) and "/apply" not in repr(i) and "40000" not in repr(i) for i in res.items)
+
+
+@pytest.mark.parametrize("given,pages", [(None, 2), (200, 1), (1000, 5), (1, 1), ("lots", 2), (99999, 10)])
+def test_lever_max_postings_sets_the_pages(given, pages):
+    params = {"boards": ["acme"]} | ({} if given is None else {"max_postings": given})
+    src = SourceConfig(name="lv", adapter="lever", params=params, trust={"legal_basis": "public_business_info"})
+    assert len(get_adapter("lever").plan(src, {}, NOW)) == pages
+
+
+def test_lever_a_full_last_page_says_the_site_may_list_more():
+    import json
+    a = get_adapter("lever")
+    src = SourceConfig(name="lv", adapter="lever", params={"boards": ["acme"]}, trust={"legal_basis": "public_business_info"})
+    first, last = a.plan(src, {}, NOW)
+    full = json.dumps([{"id": f"{n:08x}-aaaa-4bbb-8ccc-000000000000", "text": f"Job {n}",
+                        "hostedUrl": f"https://jobs.lever.co/acme/{n}"} for n in range(200)]).encode()
+    assert a.parse(src, fetched(first, full), NOW).notes == []  # a full page with a page after it is fine
+    res = a.parse(src, fetched(last, full), NOW)
+    assert len(res.items) == 200
+    assert res.notes == ["acme: the last page read (201 to 400) is full, so the site may list more; "
+                         "raise params.max_postings (now 400, at most 2000)"]
+
+
 def test_hn_stories_followups_from_ids_only():
     a = get_adapter("hn")
     src = SourceConfig(name="hn", adapter="hn", params={"show_hn_queries": ["lead gen", "<bad>"]}, trust={"legal_basis": "public_business_info"})

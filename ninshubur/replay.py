@@ -1,8 +1,8 @@
 """Replay transport: serve sample files instead of the network (``run --replay DIR``, smoke tests).
 
 Directory layout is by adapter: ``DIR/confs_tech/*.json``, ``DIR/greenhouse/*.json``, ``DIR/ashby/*.json``,
-``DIR/hn/{*stories*,*comments*}.json``, ``DIR/statuspage/*.json``, ``DIR/event_sites/*.html`` (served for the
-event hosts named in the confs sample). Any host not covered answers 599.
+``DIR/lever/*.json``, ``DIR/hn/{*stories*,*comments*}.json``, ``DIR/statuspage/*.json``, ``DIR/event_sites/*.html``
+(served for the event hosts named in the confs sample). Any host not covered answers 599.
 """
 from __future__ import annotations
 
@@ -47,6 +47,8 @@ def replay_transport(root: Path) -> httpx.MockTransport:
             body = _first(root / "greenhouse", "*.json")
         elif host == "api.ashbyhq.com":
             body = _first(root / "ashby", "*.json")
+        elif host == "api.lever.co":
+            body = _first(root / "lever", "*.json")
         elif host == "hn.algolia.com":
             tags = dict(req.url.params).get("tags", "")
             body = _first(root / "hn", "*comments*.json") if tags.startswith("comment") else _first(root / "hn", "*stories*.json")

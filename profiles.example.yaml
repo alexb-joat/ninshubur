@@ -54,7 +54,7 @@ profiles:
     # Where the client's team sits: trips from here are costed by band (same city / same country / abroad).
     home_base: Berlin
     home_country: Germany
-    # Companies the client wants to reach. `greenhouse`/`ashby` slugs let you admit their job boards as sources
+    # Companies the client wants to reach. `greenhouse`/`ashby`/`lever` slugs let you admit their job boards as sources
     # (`ninshubur sources add <name> --adapter greenhouse --param 'boards=[slug]' ...`); `name` also matches HN hiring posts.
     target_companies:
       - {name: Example GmbH, domain: example.de, greenhouse: examplegmbh}

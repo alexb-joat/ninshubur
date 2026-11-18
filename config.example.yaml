@@ -187,3 +187,22 @@ sources:
   #     reviewed_by: alex
   #     reviewed_at: 2026-11-13
   #     review_every_days: 180
+
+  # Example Lever site (the site name is the last part of jobs.lever.co/<site>). Read in pages of 200;
+  # max_postings (default 400, at most 2000) sets how many pages. No robots exception is needed.
+  # acme-lever:
+  #   adapter: lever
+  #   params: {boards: [acme], max_postings: 400, companies: {acme: {name: Acme Inc, domain: acme.example}}}
+  #   trust:
+  #     tier: 0
+  #     owner: "Lever postings API (documented, unauthenticated)"
+  #     owner_url: https://github.com/lever/postings-api
+  #     terms_url: https://www.lever.co/legal/terms-of-service
+  #     licence: "public API; Lever's general terms of service"
+  #     legal_basis: public_business_info
+  #     rate_limit: "none published for reads; robots.txt Crawl-delay 1; ETag; <= 4 req/day per page"
+  #     expected_content_type: application/json
+  #     schema: lever_postings.v1
+  #     reviewed_by: alex
+  #     reviewed_at: 2026-11-18
+  #     review_every_days: 180

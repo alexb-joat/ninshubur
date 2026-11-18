@@ -55,7 +55,8 @@ lawful reading is the only reading the code can take.
 |---|---|
 | confs.tech | MIT-licensed JSON on GitHub; attribution kept in the trust block. |
 | Hacker News (Algolia API) | Public API without a key; published request ceiling to verify (commonly cited 10 000/h); we self-cap at 1 req/s and a few dozen requests a day. Comment text is user content: taint-scanned, Tier 3. |
-| Greenhouse / Lever | Public job-board APIs, `content=false`; only id, title, dates, location, URL. |
+| Greenhouse | Public job-board API, `content=false`; only id, title, dates, location, URL. |
+| Lever | Public postings API, no key. The answer always carries each posting's description, lists, salary and apply link; none is a declared field, so all are dropped and never stored. Kept: id, title, creation date, location, department, team, commitment, workplace type, country, URL. |
 | Ashby | Public job posting API, no key. The answer always carries each posting's description; it is not a declared field, so it is dropped and never stored. Kept: id, title, date, location, department, workplace and employment type, URL. Ashby publishes no terms for this API and its host answers 401 on robots.txt, so each source records `robots_reviewed_status: 401` after a person's review. |
 | Statuspage | Public JSON summaries of providers we depend on. |
 | Event websites | Each organiser's own terms; robots.txt honoured; same-host public listings only; see above. |

@@ -122,6 +122,26 @@ SCHEMAS: dict[str, dict] = {
             "jobUrl": {"type": "url"},
         },
     },
+    # Lever's public postings API (github.com/lever/postings-api), a top-level list. `createdAt` is in every live
+    # answer (epoch milliseconds, checked 18 Nov 2026) but not in Lever's field list; it is when the posting was
+    # created, the nearest thing Lever gives to a posted date. The descriptions, lists, salary and apply link
+    # are not declared, so never stored. Workplace type is a short word, not an enum, so a new value is kept.
+    "lever_postings.v1": {
+        "max_items": 2000,
+        "required": ["id", "text", "hostedUrl"],
+        "fields": {
+            "id": {"type": "str", "max": 36, "pattern": r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
+            "text": {"type": "str", "max": 200, "text": True},
+            "createdAt": {"type": "datetime"},
+            "location": {"type": "str", "max": 120, "path": "categories.location"},
+            "department": {"type": "str", "max": 120, "text": True, "path": "categories.department"},
+            "team": {"type": "str", "max": 120, "text": True, "path": "categories.team"},
+            "commitment": {"type": "str", "max": 80, "text": True, "path": "categories.commitment"},
+            "workplaceType": {"type": "str", "max": 20, "pattern": r"^[A-Za-z-]{1,20}$"},
+            "country": {"type": "str", "max": 2, "pattern": r"^[A-Z]{2}$"},
+            "hostedUrl": {"type": "url"},
+        },
+    },
     # A model's reply to `ninshubur qualify`. Not a crawled payload, but untrusted text all the same, so it
     # goes through the same projection: only these three fields are read and the reason is taint-scanned.
     "llm_qualify.v1": {
