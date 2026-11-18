@@ -87,7 +87,9 @@ def test_probe_each_token_alone_mark_status_and_preview_yaml(home):
                   "emptyco": ("rejected", "board answers but lists no open jobs"), "levco": ("trial", "1 open job")}
     assert rep.yaml[0] == "# add under sources.job-boards-greenhouse.params.boards in config.yaml:"
     assert rep.yaml[1].startswith("      - newco   # 1 open job, probed ")
-    assert "no Lever adapter yet: levco" in rep.yaml[2]
+    # no Lever source is configured, so the preview names a new one
+    assert rep.yaml[2] == "# add under a new source with `adapter: lever`, params.boards in config.yaml:"
+    assert rep.yaml[3].startswith("      - levco   # 1 open job, probed ")
     assert (home / "config.yaml").read_bytes() == cfg_before  # never written
     again = reach(ctx(home, routes=_routes(paths)), only="boards")
     assert again.requests == 0  # decided boards are not probed again
@@ -129,3 +131,20 @@ def test_probe_uses_the_reviewed_robots_status_of_the_configured_source(home):
                                                      "trust": trust(0, "ashby_jobs.v1", robots_reviewed_status=401)}})
     rep = reach(ctx(home, routes=r), only="boards")
     assert rep.requests == 1 and rep.probes == {"trial": 1}
+
+
+def test_a_lever_probe_that_hits_its_limit_says_there_may_be_more():
+    import json
+
+    from ninshubur.adapters.base import FetchPlan, Fetched
+    from tests.conftest import NOW
+
+    def judged(n):
+        body = json.dumps([{"id": str(uuid.UUID(int=i + 1)), "text": "Engineer", "hostedUrl": f"https://jobs.lever.co/levco/{i}"}
+                           for i in range(n)]).encode()
+        plan = FetchPlan(url=boards.api_url("lever", "levco"), key="probe")
+        f = Fetched(plan=plan, status=200, body=body, headers={"content-type": "application/json"}, changed=True, fetched_at=NOW)
+        return boards.judge("lever", f, NOW)
+
+    assert judged(boards.LEVER_PROBE_LIMIT) == ("trial", "100+ open jobs")
+    assert judged(99) == ("trial", "99 open jobs")

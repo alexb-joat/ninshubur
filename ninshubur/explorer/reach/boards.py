@@ -22,11 +22,11 @@ from collections import Counter
 from dataclasses import dataclass
 
 from ...adapters.ashby import BOARD_RE as ASHBY_RE
+from ...adapters.lever import BOARD_RE as LEVER_RE
 from ...adapters.base import FetchPlan, Fetched, run_projection
 from ...adapters.greenhouse import BOARD_RE as GREENHOUSE_RE
 from ...config import Config, SourceConfig
 from ...profiles import BOARD_ADAPTERS, Profile
-from . import schemas as _schemas  # noqa: F401  (registers lever_postings.v1)
 from .net import reach_source, reach_spec
 
 LINK_RE = re.compile(
@@ -34,7 +34,8 @@ LINK_RE = re.compile(
     r"|https?://jobs\.ashbyhq\.com/(?P<ashby>[A-Za-z0-9_-]{1,64})(?![A-Za-z0-9_.%-])"
     r"|https?://jobs\.lever\.co/(?P<lever>[A-Za-z0-9_-]{1,64})(?![A-Za-z0-9_.%-])")
 NOT_TOKENS = {"embed", "v1", "jobs", "api"}
-TOKEN_RE = {"greenhouse": GREENHOUSE_RE, "ashby": ASHBY_RE, "lever": re.compile(r"^[A-Za-z0-9_-]{1,64}$")}
+TOKEN_RE = {"greenhouse": GREENHOUSE_RE, "ashby": ASHBY_RE, "lever": LEVER_RE}
+LEVER_PROBE_LIMIT = 100  # a probe only counts jobs; Lever's answer carries every description otherwise
 
 SPECS = {
     "greenhouse": reach_spec("explorer-board-greenhouse", {"boards-api.greenhouse.io"}, "greenhouse_jobs.v1"),
@@ -57,7 +58,7 @@ def api_url(platform: str, token: str) -> str:
     if platform == "ashby":
         return f"https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=false"
     if platform == "lever":
-        return f"https://api.lever.co/v0/postings/{token}?mode=json&limit=100"
+        return f"https://api.lever.co/v0/postings/{token}?mode=json&limit={LEVER_PROBE_LIMIT}"
     raise ValueError(f"unknown board platform {platform!r}; one of {', '.join(SPECS)}")
 
 
@@ -131,7 +132,8 @@ def judge(platform: str, f: Fetched, now: float) -> tuple[str | None, str]:
     if proj.findings:
         return None, "answer is not the expected JSON: " + ",".join(x.code for x in proj.findings)
     n = len(proj.rows)
-    return ("trial", f"{n} open job" + ("s" if n != 1 else "")) if n else ("rejected", "board answers but lists no open jobs")
+    more = "+" if platform == "lever" and n + proj.dropped_rows >= LEVER_PROBE_LIMIT else ""  # the probe's limit was hit
+    return ("trial", f"{n}{more} open job" + ("s" if n != 1 else "")) if n else ("rejected", "board answers but lists no open jobs")
 
 
 def yaml_preview(cfg: Config, trials: list[tuple[Token, str]], today: str) -> list[str]:
@@ -142,10 +144,6 @@ def yaml_preview(cfg: Config, trials: list[tuple[Token, str]], today: str) -> li
         if not group:
             continue
         names = sorted(n for n, s in cfg.sources.items() if s.adapter == platform)
-        if platform == "lever" and not names:
-            lines.append(f"# {len(group)} Lever board(s) answer, but Ninshubur has no Lever adapter yet: "
-                         + ", ".join(t.token for t, _ in group))
-            continue
         where = f"sources.{names[0]}.params.boards" if names else f"a new source with `adapter: {platform}`, params.boards"
         lines.append(f"# add under {where} in config.yaml:")
         lines += [f"      - {t.token}   # {why}, probed {today}, seen in {t.seen} link(s)" for t, why in group]

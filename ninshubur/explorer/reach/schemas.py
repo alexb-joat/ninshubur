@@ -29,16 +29,6 @@ REACH_SCHEMAS: dict[str, dict] = {
             "card_url": {"type": "url", "path": "card.url"},
         },
     },
-    # Lever postings (github.com/lever/postings-api): a top-level list. Descriptions are not declared.
-    "lever_postings.v1": {
-        "max_items": 2000,
-        "required": ["id", "text", "hostedUrl"],
-        "fields": {
-            "id": {"type": "str", "max": 36, "pattern": r"^[0-9a-fA-F-]{36}$"},
-            "text": {"type": "str", "max": 200, "text": True},
-            "hostedUrl": {"type": "url"},
-        },
-    },
 }
 
 for _k, _v in REACH_SCHEMAS.items():
