@@ -382,8 +382,9 @@ What it refuses, and logs to `explorer/logs/explorer.jsonl`:
 - **Traps**, counted per registrable domain (from a vendored, dated Public Suffix List): more than 4 subdomains of
   one site, more than 8 URLs of one shape (calendars, pagination), dates walked out of range, repeated path
   segments, deep or long URLs, too many query parameters.
-- **Sites that waste requests** are stopped: most of the last 10 pages near-copies of each other (generated mazes),
-  a random path that answers 200 (soft-404), a parked or for-sale page, or 30 pages with nothing useful.
+- **Sites that waste requests** are stopped: more than 6 of the last 10 pages near-copies of each other (generated
+  mazes), a random path that answers 200 (soft-404), a parked or for-sale page, or 30 pages with nothing useful
+  (until the parser lands, no page counts as useful, so every site stops after 30 pages).
 
 A redirect to another site is never followed; its target is offered to the frontier like any other link. The caps
 live in the shipped `policy.yaml` under `explorer:`; your `~/.ninshubur/policy.yaml` can tighten them, never loosen.
