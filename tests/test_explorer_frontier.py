@@ -190,3 +190,16 @@ def test_limits_come_from_policy_and_only_tighten(home, policy):
     (home / "policy.yaml").write_text("explorer:\n  hosts_per_site: 2\n  pages_per_shape: 50\n  content_types: [text/html]\n")
     lim = Limits.from_policy(Policy.load(home))
     assert lim.hosts_per_site == 2 and lim.pages_per_shape == 8 and lim.content_types == ("text/html",)
+
+
+def test_stopping_a_site_never_seen_before_still_sticks(home, policy):
+    """Regression: stop_site used to update no row for a site with nothing queued yet, so the stop was lost."""
+    f, _ = make(home, policy)
+    f.stop_site("never.example", "manual")
+    assert f.offer("https://never.example/").code == "site_stopped"
+
+
+def test_a_malformed_port_is_refused_not_raised(home, policy):
+    f, _ = make(home, policy)
+    assert f.offer("http://ex.org:99999/").code == "url_not_https"  # http is asked about before the port
+    assert f.offer("https://ex.org:99999/").code == "url_bad_port"

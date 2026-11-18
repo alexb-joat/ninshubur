@@ -96,9 +96,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 def _https(url: str) -> str:
     """Links on the open web are often written http://; the explorer only ever asks over https (and the fetcher
     refuses anything else), so the https form is what gets offered. A site without TLS simply fails to connect."""
-    p = urlsplit(url)
-    if p.scheme.lower() == "http":
+    try:
+        p = urlsplit(url)
         port = p.port
+    except ValueError:
+        return url  # check_url names what is wrong with it
+    if p.scheme.lower() == "http":
         netloc = p.netloc if port not in (80,) else p.netloc.rsplit(":", 1)[0]
         return urlunsplit(("https", netloc, p.path, p.query, p.fragment))
     return url
@@ -115,15 +118,19 @@ class Frontier:
         self.log = JsonlLog(explorer_home(home) / "logs" / "explorer.jsonl")
 
     # -- in -------------------------------------------------------------------------------------------------------
-    def offer(self, url: str, *, depth: int = 0, found_from: str | None = None, candidate_id: int | None = None) -> Offer:
+    def offer(self, url: str, *, depth: int = 0, found_from: str | None = None, candidate_id: int | None = None,
+              dry_run: bool = False) -> Offer:
+        """Queue ``url`` or say why not. With ``dry_run`` the verdict is the same but nothing is written or logged."""
+        refuse = (lambda u, site, code, detail="": Offer(False, code, str(u), site)) if dry_run else (  # noqa: E731
+            lambda u, site, code, detail="": self._refuse(u, site, code, found_from, detail))
         url = _https(url.strip()) if isinstance(url, str) else url
         code = check_url(url)
         if code:
-            return self._refuse(url, "", code, found_from)
+            return refuse(url, "", code)
         url = traps.canonical(url)
         host = host_of(url)
         if self.policy.host_denied(host):
-            return self._refuse(url, "", "host_denied", found_from)
+            return refuse(url, "", "host_denied")
         site = psl.registrable(host)
         if one(self.conn, "SELECT 1 AS x FROM explorer_frontier WHERE url=?", (url,)):
             return Offer(False, "already_known", url, site)
@@ -132,19 +139,22 @@ class Frontier:
         code = traps.url_trap(url, max_len=lim.max_url_len, max_depth=lim.max_depth, max_query_params=lim.max_query_params,
                               year_min=lim.year_min, year_max=year_max)
         if code:
-            return self._refuse(url, site, code, found_from)
-        s = self._site(site)
+            return refuse(url, site, code)
+        s = one(self.conn, "SELECT status, hosts FROM explorer_sites WHERE site=?", (site,)) or {"status": "open", "hosts": "[]"}
         if s["status"] != "open":
             return Offer(False, f"site_{s['status']}", url, site)
         hosts = json.loads(s["hosts"])
         if host not in hosts and len(hosts) >= lim.hosts_per_site:
-            return self._refuse(url, site, "trap_subdomains", found_from, detail=f"{len(hosts)} hosts already")
+            return refuse(url, site, "trap_subdomains", f"{len(hosts)} hosts already")
         shp = traps.shape(url)
         n = one(self.conn, "SELECT n FROM explorer_shapes WHERE site=? AND shape=?", (site, shp))
         if n and n["n"] >= lim.pages_per_shape:
-            return self._refuse(url, site, "trap_shape", found_from, detail=shp[:120])
+            return refuse(url, site, "trap_shape", shp[:120])
+        if dry_run:
+            return Offer(True, None, url, site)
         now = self.now()
         with self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO explorer_sites(site, first_seen) VALUES (?,?)", (site, now))
             self.conn.execute("""INSERT INTO explorer_frontier(url, site, host, shape, depth, found_from, candidate_id, added_at)
                                  VALUES (?,?,?,?,?,?,?,?)""", (url, site, host, shp, depth, found_from, candidate_id, now))
             self.conn.execute("""INSERT INTO explorer_shapes(site, shape, n) VALUES (?,?,1)
@@ -230,7 +240,9 @@ class Frontier:
         return soft
 
     def stop_site(self, site: str, reason: str) -> None:
+        """Stop ``site`` (created if it has no row yet, so a stop is never lost) and drop its queued URLs."""
         with self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO explorer_sites(site, first_seen) VALUES (?,?)", (site, self.now()))
             self.conn.execute("UPDATE explorer_sites SET status='stopped', status_reason=?, status_at=? WHERE site=?",
                               (reason[:200], self.now(), site))
             self.conn.execute("UPDATE explorer_frontier SET status='dropped', outcome=? WHERE site=? AND status='queued'",
