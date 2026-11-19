@@ -399,12 +399,12 @@ A board with open jobs is marked `trial` and the run prints the YAML lines to ad
 Every request goes through the same fetcher as the main crawler (robots.txt, public addresses only, caps),
 logged in `~/.ninshubur/explorer/logs/fetch.jsonl`.
 
-## 6e. The explorer: frontier and gate (in progress)
+## 6e. The explorer: frontier and gate
 
 The explorer is Ninshubur's open-web discovery, kept apart from your sources. It has its own database and logs in
-`~/.ninshubur/explorer/`; deleting that folder resets it without touching anything else. So far it has a frontier
-(what may be asked for) and a gate (how it is asked). The sandboxed parser, the trial ladder and the hand-off into
-the main crawler come next, so for now nothing it fetches is kept or reaches your suggestions.
+`~/.ninshubur/explorer/`; deleting that folder resets it without touching anything else. It has a frontier (what
+may be asked for), a gate (how it is asked), a sandboxed parser, a trial ladder and a one-way hand-off into the main
+crawler (section 6f).
 
 ```
 ninshubur explore offer --dry-run https://example.org/events/   # the verdict, nothing written
@@ -423,10 +423,57 @@ What it refuses, and logs to `explorer/logs/explorer.jsonl`:
   segments, deep or long URLs, too many query parameters.
 - **Sites that waste requests** are stopped: more than 6 of the last 10 pages near-copies of each other (generated
   mazes), a random path that answers 200 (soft-404), a parked or for-sale page, or 30 pages with nothing useful
-  (until the parser lands, no page counts as useful, so every site stops after 30 pages).
+  (a page is useful when it carries an event or a job with a date or a link).
 
 A redirect to another site is never followed; its target is offered to the frontier like any other link. The caps
 live in the shipped `policy.yaml` under `explorer:`; your `~/.ninshubur/policy.yaml` can tighten them, never loosen.
+
+## 6f. The explorer: running it
+
+```
+ninshubur explore check                    # proves the parser sandbox is fenced (no home, no network, no secrets)
+ninshubur explore run --dry-run            # the next pages and probes; nothing is sent
+ninshubur explore run                      # one cycle: probe, fetch, parse in the sandbox, follow links, ladder
+ninshubur explore sites --stage trial      # sites on a rung, with their counts
+ninshubur explore status                   # stopped or running, sandbox, bytes, tripwire, disk, ladder, hand-off
+ninshubur explore stop --reason "odd"      # the kill switch; `explore resume` undoes it and says why it was set
+ninshubur explore inbox --dry-run          # what main Ninshubur would take from the hand-off
+deploy/linux/install-explorer.sh --print   # the hourly systemd timer; drop --print to install, --remove to undo
+```
+
+**The parser runs in bubblewrap** (`bwrap`, install it from your distribution: `apt install bubblewrap`). Inside:
+no network, no home folder, an empty environment, read-only system files, 1 GB of memory, 10 s of CPU and 20 s of
+wall clock per page. Without `bwrap` the explorer fetches nothing: an unparsed page is never used. Its output is
+checked again outside (exact keys, types, sizes) and scanned for injection; a page with high taint offers no links
+and hands nothing on.
+
+**The trial ladder.** A site moves candidate → probed (the random-path probe answered 404) → trial (one page a day
+until its first clean page, then 5) → admitted (20 a day) after 20 clean pages, or after 7 days with at least 3.
+Admitted is still the lowest trust: only you promote a site to a real source. An admitted site goes back to trial
+when its address moves network (another IPv4 /16 or IPv6 /32), its front page drifts more than 24 of 64 simhash bits
+from the one it was admitted with, or it hasn't had a clean page in 30 days. High taint, a soft-404, an integrity
+failure (certificate error, wrong content type, decompression bomb, oversized body, invalid UTF-8) or a parser
+failure (timeout, memory, crash, bad output) stops it.
+
+**The hand-off is one-way.** Events and jobs from sites in trial or admitted go to
+`explorer/out/YYYY-MM-DD.jsonl` (4 KB a line, 2 MB a file, 14 files kept). The main daemon reads them each tick,
+checks every line again, scans it again and stores what passes as **held** Tier 3 items of the source `explorer`,
+marked "found by explorer": a suggestion built on one is marked held too and never leaves this machine. Neither
+side opens the other's database. `explorer: {read_inbox: false}` in `config.yaml` stops reading.
+
+**Two switches stop it.** `explore stop` writes `explorer/STOP`: the gate checks it before every request, so a
+running cycle halts at its next one, and the systemd unit won't start while it exists. The second layer is
+`systemctl --user stop ninshubur-explorer.timer ninshubur-explorer.service`.
+
+**The tripwire.** A request that would reach a private or reserved address (a site resolving to one, a redirect
+pointing at one) stops that site and counts; three in 24 hours write the STOP file (`by: tripwire`). Links a page
+only mentions (`http://localhost:8000` in a tutorial) are refused and logged but don't count. `explore resume`
+starts the count again from zero. `explore run` also refuses when the explorer folder is over 500 MB
+(`disk_quota_bytes`).
+
+**The service** (`install-explorer.sh`) runs one cycle an hour, writes only `~/.ninshubur/explorer/`, has no
+capabilities and is capped at 1.5 GB, half a CPU and 64 tasks. It allows the namespaces, netlink and mount calls
+`bwrap` needs, and nothing else beyond the main unit's set.
 
 ## 7. Tuning before real work starts
 

@@ -31,7 +31,9 @@ that proves no follow-up URL comes from content. `ninshubur sources test NAME` m
 
 - **Network.** Only `fetch.py` opens connections. Adapters are pure; no new network paths.
 - **Content is data.** Never store a raw body, never fetch a URL found in a payload, never send
-  tainted text to a model, never log prompt or response text.
+  tainted text to a model, never log prompt or response text. The explorer's one exception: links from a page
+  (and redirect targets) may only be *offered* to its frontier, which checks them like any candidate; nothing
+  else in the code acts on a URL from a payload.
 - **No** `subprocess`, `eval`, `pickle`, browser automation or CAPTCHA/paywall tooling: tests fail on them.
   The one exception is `ninshubur/explorer/sandbox.py`, which starts `bwrap` for the parser sandbox; a test pins
   down exactly what it may start.
