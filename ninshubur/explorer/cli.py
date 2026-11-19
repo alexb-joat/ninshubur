@@ -201,6 +201,11 @@ def cmd_run(args, app) -> int:
         if gate.stopped:
             print(_stopped_line(app), file=sys.stderr)
             return 2
+        from . import tripwire
+        why = tripwire.check(app.home, gate.frontier.limits, now=app.now())
+        if why:
+            print(why + "; `ninshubur explore status` shows the count, `explore resume` starts again", file=sys.stderr)
+            return 2
         sb = _sandbox(app)
         why = sb.unavailable()
         if why:
@@ -308,6 +313,10 @@ def cmd_status(args, app) -> int:
         print("sandbox:  " + (f"unavailable: {why}" if why else "bwrap present (`explore check` proves the fences)"))
         used = ledger_sum(conn, "bytes", app.now() - 86400)  # the same rolling window the fetcher's budget uses
         print(f"bytes:    {used:,.0f} of {fr.limits.daily_bytes:,} in the last 24 h")
+        from . import tripwire
+        tc = tripwire.count(app.home, now=app.now(), window_s=fr.limits.tripwire_window_s)
+        print("tripwire: " + (tc.error or f"{tc.n} of {fr.limits.tripwire_ssrf} attempts to reach denied addresses "
+                                          f"since {app.local(tc.since)}"))
         print("ladder:   " + ", ".join(f"{k} {v}" for k, v in Ladder(fr).counts().items()))
         d = out_dir(app.home)
         files = sorted(d.glob("*.jsonl")) if d.is_dir() else []

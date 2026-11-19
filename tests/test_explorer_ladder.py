@@ -210,12 +210,12 @@ def test_an_admitted_site_whose_address_moves_network_goes_back_to_trial(home, p
     e.clock.t += 700  # past the fetcher's 10-minute address cache
     e.cycle()
     assert e.stage("one.example") == "admitted"
-    e.addr["ip"] = "203.0.113.7"
+    e.addr["ip"] = "151.101.1.1"  # another /16 (a public one: a reserved range is refused and stops the site)
     e.clock.t += 700
     e.cycle()
     assert e.stage("one.example") == "trial"
     ev = [x for x in read_jsonl(home / "explorer" / "logs" / "explorer.jsonl") if x["event"] == "ladder"][-1]
-    assert "203.0.0.0/16" in ev["reason"]
+    assert "151.101.0.0/16" in ev["reason"]
 
 
 def test_an_admitted_site_whose_front_page_changes_sharply_goes_back_to_trial(home, policy):

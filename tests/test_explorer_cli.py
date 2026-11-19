@@ -131,3 +131,19 @@ def test_stop_resume_and_status_round_trip(cli, home):
     assert "isn't stopped" in out
     events = [e["event"] for e in read_jsonl(home / "explorer" / "logs" / "explorer.jsonl")]
     assert events.count("stopped") == 1 and events.count("resumed") == 1
+
+
+def test_run_refuses_when_tripped(cli, home):
+    import json
+    from ninshubur.explorer.killswitch import read_stop
+    from ninshubur.explorer.tripwire import log_path
+    from tests.conftest import NOW
+    p = log_path(home)
+    p.parent.mkdir(parents=True)
+    p.write_text("".join(json.dumps({"event": "ssrf_attempt", "via": "connect", "site": f"s{i}.example",
+                                     "at": NOW - 60 * i}) + "\n" for i in range(3)))
+    cli("explore", "offer", "https://ex.org/a")
+    code, out = cli("explore", "status")
+    assert "3 of 3 attempts" in out
+    code, out = cli("explore", "run")
+    assert code == 2 and "tripwire: 3 attempts" in out and read_stop(home)["by"] == "tripwire"

@@ -10,7 +10,8 @@ nothing useful for ``no_yield_pages`` pages is stopped, and none of its URLs is 
 
 Every refusal and every stop goes to ``explorer/logs/explorer.jsonl``. Refusals of addresses or URL forms that only
 make sense as an attack on this machine (IP literals, ports, userinfo, private addresses) are logged as
-``ssrf_attempt``; session E2 counts them toward the explorer's tripwire.
+``ssrf_attempt`` with ``via`` (``link``, ``candidate``, ``redirect``); only attempts to *reach* one (redirects,
+connect-time refusals) count toward the tripwire (``tripwire.py``).
 """
 from __future__ import annotations
 
@@ -85,6 +86,8 @@ class Limits:
     parser_memory_mb: int = 1024
     parser_cpu_s: int = 10
     parser_timeout_s: float = 20.0
+    tripwire_ssrf: int = 3
+    tripwire_window_s: int = 86400
 
     @classmethod
     def from_policy(cls, policy: Policy) -> "Limits":
@@ -141,10 +144,10 @@ class Frontier:
 
     # -- in -------------------------------------------------------------------------------------------------------
     def offer(self, url: str, *, depth: int = 0, found_from: str | None = None, candidate_id: int | None = None,
-              dry_run: bool = False) -> Offer:
+              via: str | None = None, dry_run: bool = False) -> Offer:
         """Queue ``url`` or say why not. With ``dry_run`` the verdict is the same but nothing is written or logged."""
         refuse = (lambda u, site, code, detail="": Offer(False, code, str(u), site)) if dry_run else (  # noqa: E731
-            lambda u, site, code, detail="": self._refuse(u, site, code, found_from, detail))
+            lambda u, site, code, detail="": self._refuse(u, site, code, found_from, detail, via))
         url = _https(url.strip()) if isinstance(url, str) else url
         code = check_url(url)
         if code:
@@ -189,9 +192,11 @@ class Frontier:
         self.conn.execute("INSERT OR IGNORE INTO explorer_sites(site, first_seen) VALUES (?,?)", (site, self.now()))
         return one(self.conn, "SELECT * FROM explorer_sites WHERE site=?", (site,)) or {}
 
-    def _refuse(self, url: str, site: str, code: str, found_from: str | None, detail: str = "") -> Offer:
+    def _refuse(self, url: str, site: str, code: str, found_from: str | None, detail: str = "",
+                via: str | None = None) -> Offer:
         event = "ssrf_attempt" if code in SSRF_CODES else "frontier_refused"
-        self.log.write({"event": event, "url": str(url)[:300], "site": site, "code": code,
+        self.log.write({"event": event, "url": str(url)[:300], "site": site, "code": code, "at": round(self.now(), 3),
+                        "via": via or ("link" if found_from else "candidate"),
                         **({"found_from": found_from[:300]} if found_from else {}), **({"detail": detail} if detail else {})})
         return Offer(False, code, str(url), site)
 

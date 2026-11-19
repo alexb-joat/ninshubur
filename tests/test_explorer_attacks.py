@@ -67,7 +67,7 @@ def test_a_name_resolving_to_a_denied_address_is_never_contacted(home, policy, a
     gate, seen, _ = make(home, policy, {("inside.example", "*"): page("secret")}, resolve=lambda h: [addr])
     out = fetch(gate, "https://inside.example/")
     assert out.code == "private_address" and seen.calls == []
-    assert log(home)[-1]["event"] == "ssrf_attempt"
+    assert any(e["event"] == "ssrf_attempt" and e["via"] in ("connect", "redirect") for e in log(home))
 
 
 @pytest.mark.parametrize("target", ["https://127.0.0.1/admin", "https://[::1]/", "https://169.254.169.254/latest/meta-data/",
@@ -81,7 +81,7 @@ def test_a_redirect_to_an_internal_target_is_offered_never_followed_and_refused(
     out = fetch(gate, "https://site.example/go")
     assert out.code.startswith("redirect_refused:") and out.offered == [target]
     assert [c[1] for c in seen.calls] == ["/robots.txt", "/go"]  # nothing went to the target
-    assert log(home)[-1]["event"] == "ssrf_attempt"
+    assert any(e["event"] == "ssrf_attempt" and e["via"] in ("connect", "redirect") for e in log(home))
 
 
 def test_a_location_header_httpx_cannot_parse_ends_the_fetch_unfollowed(home, policy):

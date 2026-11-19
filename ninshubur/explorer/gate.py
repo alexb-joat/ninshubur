@@ -28,7 +28,7 @@ from ..adapters.base import AdapterSpec, FetchPlan
 from ..config import Config, SourceConfig
 from ..fetch import Fetcher, resolve_host
 from ..policy import Policy, host_of
-from . import psl
+from . import psl, tripwire
 from .frontier import SSRF_CODES, Frontier
 from .store import explorer_home
 
@@ -77,6 +77,8 @@ class ExplorerGate:
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
                  now: Callable[[], float] = time.time):
         self.home = explorer_home(home)
+        self.app_home = home
+        self.tripped: str | None = None  # set when this gate's attempts wrote the STOP file
         self.stop_path = self.home / "STOP"
         self.frontier = Frontier(conn, policy, home, now=now)
         lim = self.frontier.limits
@@ -126,19 +128,29 @@ class ExplorerGate:
             out.code = ",".join(x.code for x in f.findings)
             if any(x.code == "off_host_redirect" for x in f.findings) and f.headers.get("location"):
                 target = urljoin(f.final_url or url, f.headers["location"])
-                o = self.frontier.offer(target, depth=1, found_from=url)
+                o = self.frontier.offer(target, depth=1, found_from=url, via="redirect_target")  # logged, not counted: _attempt below counts it once
                 out.offered.append(target)
                 out.code = "redirect_offered" if o.queued else f"redirect_refused:{o.code}"
+                if o.code in SSRF_CODES:
+                    self._attempt(url, o.code, "redirect", f"redirects to {target[:200]}")
         elif f.status == 200:
             out.body = f.body
         else:
             out.code = f"http_{f.status}"
         if out.code in SSRF_CODES:
-            self.frontier.log.write({"event": "ssrf_attempt", "url": url[:300], "code": out.code,
-                                     "detail": (f.error_detail or "")[:200]})
+            self._attempt(url, out.code, "connect", f.error_detail or "")
         if record:
             out.stopped_site = self.frontier.record(url, status=f.status, body=out.body, outcome=out.code)
         return out
+
+    def _attempt(self, url: str, code: str, via: str, detail: str) -> None:
+        """A request that would have reached a denied address: log it, stop its site, count it (``tripwire.py``)."""
+        site = psl.registrable(host_of(url) or "")
+        self.frontier.log.write({"event": "ssrf_attempt", "url": url[:300], "site": site, "code": code, "via": via,
+                                 "at": round(self.frontier.now(), 3), "detail": detail[:200]})
+        if site:
+            self.frontier.stop_site(site, f"ssrf_{via}: {code}")
+        self.tripped = tripwire.check(self.app_home, self.frontier.limits, now=self.frontier.now()) or self.tripped
 
     async def probe_soft404(self, host: str) -> bool | None:
         """Ask for a random path nobody links to; 200 (or a redirect to the front page) stops the site. None when
@@ -147,6 +159,10 @@ class ExplorerGate:
         plan = FetchPlan(url=url, key=f"explore-probe:{host}", max_bytes=65_536, expected_content_type=self.expected,
                          purpose="soft-404 probe")
         f = await self.fetcher.fetch(plan, SOURCE, self.spec, extra_hosts=(host,))
+        if f.error and f.error != "Stopped":
+            code = "address_refused" if f.error == "AddressRefused" else f.error.removeprefix("refused:")
+            if code in SSRF_CODES:
+                self._attempt(url, code, "connect", f.error_detail or "")
         if f.error == "Stopped" or self.stopped or f.status is None:
             return None
         return self.frontier.note_soft404(psl.registrable(host), f.status, f.headers.get("location", ""))
