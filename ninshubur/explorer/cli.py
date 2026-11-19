@@ -191,6 +191,67 @@ def cmd_check(args, app) -> int:
     return 0 if r["fenced"] else 1
 
 
+def cmd_run(args, app) -> int:
+    """One cycle: probe, fetch, parse in the sandbox, follow links, move sites on the trial ladder."""
+    from .cycle import run_cycle
+    from .gate import ExplorerGate
+    conn = store.connect(app.home)
+    gate = ExplorerGate(conn, app.policy, app.cfg, app.home, now=app.now)
+    try:
+        if gate.stopped:
+            print(f"the explorer is stopped: {gate.stop_path} exists (`ninshubur explore resume` clears it)", file=sys.stderr)
+            return 2
+        sb = _sandbox(app)
+        why = sb.unavailable()
+        if why:
+            print(f"explore run: {why}; nothing is fetched without the parser sandbox", file=sys.stderr)
+            return 2
+        if args.dry_run:
+            batch = gate.frontier.next_batch(args.limit)
+            for r in batch:
+                probe = " (+ soft-404 probe)" if r["stage"] == "candidate" else ""
+                print(f"would fetch {r['url'][:100]}{probe}")
+            print(f"{len(batch)} pages planned; nothing was sent")
+            return 0
+        rep = asyncio.run(run_cycle(gate, sb, args.limit))
+        for x in rep.lines:
+            moved = f" ({x.moved})" if x.moved else ""
+            stop = f"; site stopped: {x.stopped}" if x.stopped else ""
+            print(f"{x.code:<24} {x.status or '-':<4} {x.bytes:>9,} B  {x.stage}{moved}  links {x.links_queued}/{x.links_offered}"
+                  f"  records {x.records}  {x.url[:80]}{stop}")
+        print(f"{len(rep.lines)} pages, {rep.probes} probes, {len(rep.records)} records"
+              + (f"; halted: {rep.halted}" if rep.halted else ""))
+        return 2 if rep.halted else 0
+    finally:
+        asyncio.run(gate.aclose())
+        conn.close()
+
+
+def cmd_sites(args, app) -> int:
+    """The trial ladder: how many sites on each rung, and the sites themselves."""
+    from .frontier import Frontier
+    from .ladder import Ladder
+    conn = store.connect(app.home)
+    try:
+        fr = Frontier(conn, app.policy, app.home, now=app.now)
+        c = Ladder(fr).counts()
+        print("sites: " + ", ".join(f"{k} {v}" for k, v in c.items()))
+        lim = fr.limits
+        print(f"rungs: 1 page a day until a clean page, {lim.trial_pages_per_day} in trial, {lim.pages_per_site_day} admitted; "
+              f"admitted after {lim.trial_clean_fetches} clean pages, or {lim.trial_days} days and {lim.trial_min_clean}")
+        where = "WHERE status='open' AND stage=?" if args.stage and args.stage != "stopped" else (
+            "WHERE status!='open'" if args.stage == "stopped" else "")
+        params = [args.stage] if where.endswith("?") else []
+        for r in rows(conn, f"SELECT * FROM explorer_sites {where} ORDER BY COALESCE(stage_at, first_seen) DESC LIMIT ?",
+                      [*params, args.limit]):
+            state = r["stage"] if r["status"] == "open" else f"stopped ({r['status_reason']})"
+            age = f", trial {(app.now() - r['trial_started']) / 86400:.1f} d" if r["trial_started"] and r["stage"] == "trial" else ""
+            print(f"  {r['site'][:40]:<40} {state[:70]:<12} clean {r['clean_fetches']}, pages {r['pages_total']}{age}")
+        return 0
+    finally:
+        conn.close()
+
+
 def add_commands(sub: argparse._SubParsersAction) -> None:
     x = sub.add_parser("explore", help="the explorer: open-web discovery with its own database and fences")
     xs = x.add_subparsers(dest="xcmd", required=True)
@@ -227,3 +288,11 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     # -- sandbox, ladder, handoff, kill switch (lane E2) ------------------------------------------
     ck = xs.add_parser("check", help="prove the parser sandbox has no home, network or secrets (with a control)")
     ck.set_defaults(fn=cmd_check)
+    rn = xs.add_parser("run", help="one cycle: probe, fetch, parse in the sandbox, follow links, move sites on the ladder")
+    rn.add_argument("--limit", type=int, default=10, help="pages at most, one per site (default 10)")
+    rn.add_argument("--dry-run", action="store_true", help="list the pages it would fetch; send nothing")
+    rn.set_defaults(fn=cmd_run)
+    si = xs.add_parser("sites", help="the trial ladder: sites per rung, and each site's rung, clean pages and trial age")
+    si.add_argument("--stage", choices=("candidate", "probed", "trial", "admitted", "stopped"))
+    si.add_argument("--limit", type=int, default=20, help="sites to list (default 20)")
+    si.set_defaults(fn=cmd_sites)

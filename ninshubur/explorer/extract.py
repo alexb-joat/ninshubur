@@ -10,8 +10,9 @@ It returns links and a few declared fields, nothing else:
 - ``records``: schema.org ``Event`` (and its subtypes) and ``JobPosting`` objects from JSON-LD, reduced to name, url,
   dates, place and organisation. Person objects are dropped wherever they appear: the explorer stores no person
   fields;
-- ``title``, ``description``, ``lang``, and ``attr_texts`` (alt, title, aria-label and meta text) so the parent can
-  scan the hidden channels for injection, as hostile as body text.
+- ``title``, ``description``, ``lang``, the visible ``text`` (first 20,000 characters) and ``attr_texts`` (alt,
+  title, aria-label and meta text), so the parent can scan the page and its hidden channels for injection. The text
+  is scanned and then dropped: it is never stored.
 
 The parent treats every byte of this output as untrusted: it checks the shape and sizes again, scans the text for
 taint, and sends links through the frontier like any other offer.
@@ -30,6 +31,7 @@ KEEP = KEEP_ATTRS | {"hidden", "aria-hidden", "style", "aria-label", "lang"}
 MAX_LINKS = 200
 MAX_RECORDS = 50
 MAX_ATTR_TEXTS = 40
+MAX_TEXT = 20_000
 MAX_HEADER = 4096
 _WS = re.compile(r"\s+")
 _HIDING_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)
@@ -194,7 +196,7 @@ def _meta(doc: Doc, *names: str) -> str:
 
 def extract(body: bytes, url: str, content_type: str) -> dict:
     out = {"v": VERSION, "title": "", "description": "", "lang": "", "links": [], "hidden_links": 0, "records": [],
-           "attr_texts": [], "limited": False, "nodes": 0}
+           "attr_texts": [], "text": "", "limited": False, "nodes": 0}
     if "json" in content_type.lower():
         data = _load(body.decode("utf-8", errors="replace"))
         out["records"] = records([data], url) if data is not None else []
@@ -208,7 +210,7 @@ def extract(body: bytes, url: str, content_type: str) -> dict:
         description=_clip(_meta(doc, "description", "og:description"), 500),
         lang=_clip(html[0].attrs.get("lang", ""), 20) if html else "",
         records=records([b for b in (_load(raw) for raw in doc.ld_blocks) if b is not None], url),
-        attr_texts=attr_texts(doc), limited=doc.limited, nodes=doc.count)
+        attr_texts=attr_texts(doc), text=doc.text(MAX_TEXT), limited=doc.limited, nodes=doc.count)
     out["links"], out["hidden_links"] = links(doc, url)
     return out
 

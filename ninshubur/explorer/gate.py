@@ -9,7 +9,7 @@ per-host pacing and breaker) bound to the explorer's own database, logs and caps
 
 Network calls: only ``GET https://<host>/...`` for URLs the frontier queued, ``/robots.txt`` on those hosts, and one
 random-path probe per site (``probe_soft404``). Nothing is parsed here and no body is stored; bytes go back to the
-caller (the bwrap parser, session E2).
+caller, which hands them to the bwrap parser (``sandbox.py``, ``cycle.py``).
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import httpx
 
 from ..adapters.base import AdapterSpec, FetchPlan
 from ..config import Config, SourceConfig
-from ..fetch import Fetcher
+from ..fetch import Fetcher, resolve_host
 from ..policy import Policy, host_of
 from . import psl
 from .frontier import SSRF_CODES, Frontier
@@ -65,6 +65,9 @@ class Outcome:
     bytes: int = 0
     stopped_site: str | None = None
     offered: list[str] = field(default_factory=list)  # redirect targets handed to the frontier
+    content_type: str = ""
+    final_url: str = ""
+    addrs: tuple[str, ...] = ()  # what the host resolved to when the fetcher pinned it (the ladder's network check)
 
 
 class ExplorerGate:
@@ -77,17 +80,24 @@ class ExplorerGate:
         self.stop_path = self.home / "STOP"
         self.frontier = Frontier(conn, policy, home, now=now)
         lim = self.frontier.limits
+        self._resolve = resolve or resolve_host
+        self.resolved: dict[str, tuple[str, ...]] = {}
         inner = transport or httpx.AsyncHTTPTransport(verify=True, trust_env=False, retries=0,
                                                       limits=httpx.Limits(max_keepalive_connections=0))
         # Logs go to explorer/logs/, the ledger and robots cache to explorer.db: nothing here touches the main crawler's.
         self.fetcher = Fetcher(conn, policy, cfg, self.home, transport=StopTransport(inner, self.stop_path),
-                               sleep=sleep, now=now, resolve=resolve)
+                               sleep=sleep, now=now, resolve=self._remember)
         self.fetcher.daily_bytes = min(self.fetcher.daily_bytes or lim.daily_bytes, lim.daily_bytes)
         self.max_bytes = min(lim.max_body_bytes, self.fetcher.hard_cap)
         self.expected = "|".join(lim.content_types)
         self.spec = AdapterSpec(name="explorer", kind="discovery", hosts=frozenset(), schema="", expected_content_type=self.expected,
                                 base_interval_s=86400, max_interval_s=86400 * 7, default_tier=3,
                                 legal_basis="public_business_info", min_delay_s=lim.min_delay_s, dynamic_hosts=True)
+
+    def _remember(self, host: str) -> list[str]:
+        addrs = list(self._resolve(host))
+        self.resolved[host] = tuple(addrs)
+        return addrs
 
     @property
     def stopped(self) -> bool:
@@ -96,15 +106,17 @@ class ExplorerGate:
     async def aclose(self) -> None:
         await self.fetcher.aclose()
 
-    async def fetch(self, url: str) -> Outcome:
-        """Fetch one URL the frontier queued and record what came back."""
+    async def fetch(self, url: str, *, record: bool = True) -> Outcome:
+        """Fetch one URL the frontier queued and record what came back. With ``record=False`` the caller records it
+        (``Frontier.record``) once the parser has said whether the page was useful."""
         if self.stopped:  # asked here too, so a stopped run doesn't count toward any host's error breaker
             return Outcome(url=url, status=None, code="stopped")
         host = host_of(url)
         plan = FetchPlan(url=url, key=f"explore:{url}", max_bytes=self.max_bytes, expected_content_type=self.expected,
                          purpose="explore")
         f = await self.fetcher.fetch(plan, SOURCE, self.spec, extra_hosts=(host,))
-        out = Outcome(url=url, status=f.status, code="ok", bytes=len(f.body))
+        out = Outcome(url=url, status=f.status, code="ok", bytes=len(f.body), content_type=f.headers.get("content-type", ""),
+                      final_url=f.final_url or url, addrs=self.resolved.get(host, ()))
         if f.error:
             out.code = "address_refused" if f.error == "AddressRefused" else f.error.removeprefix("refused:")
             if f.error == "Stopped" or self.stopped:
@@ -124,17 +136,19 @@ class ExplorerGate:
         if out.code in SSRF_CODES:
             self.frontier.log.write({"event": "ssrf_attempt", "url": url[:300], "code": out.code,
                                      "detail": (f.error_detail or "")[:200]})
-        out.stopped_site = self.frontier.record(url, status=f.status, body=out.body, outcome=out.code)
+        if record:
+            out.stopped_site = self.frontier.record(url, status=f.status, body=out.body, outcome=out.code)
         return out
 
-    async def probe_soft404(self, host: str) -> bool:
-        """Ask for a random path nobody links to; 200 (or a redirect to the front page) stops the site."""
+    async def probe_soft404(self, host: str) -> bool | None:
+        """Ask for a random path nobody links to; 200 (or a redirect to the front page) stops the site. None when
+        nothing answered (stopped, refused, network error): the site stays unprobed."""
         url = f"https://{host}/ninshubur-probe-{secrets.token_hex(8)}"
         plan = FetchPlan(url=url, key=f"explore-probe:{host}", max_bytes=65_536, expected_content_type=self.expected,
                          purpose="soft-404 probe")
         f = await self.fetcher.fetch(plan, SOURCE, self.spec, extra_hosts=(host,))
-        if f.error == "Stopped" or self.stopped:
-            return False
+        if f.error == "Stopped" or self.stopped or f.status is None:
+            return None
         return self.frontier.note_soft404(psl.registrable(host), f.status, f.headers.get("location", ""))
 
     async def step(self, n: int) -> list[Outcome]:

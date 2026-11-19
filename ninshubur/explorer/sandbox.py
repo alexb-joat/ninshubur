@@ -42,7 +42,7 @@ BOOT = (f"import sys; sys.path.insert(0, {INSIDE!r}); "
 HARMLESS_ENV = frozenset({"PWD", "LC_CTYPE"})
 RECORD_KEYS = frozenset({"type", "name", "url", "start", "end", "place", "org"})
 RECORD_CAPS = {"name": 200, "url": 2048, "start": 40, "end": 40, "place": 160, "org": 160}
-TEXT_CAPS = {"title": 300, "description": 500, "lang": 20}
+TEXT_CAPS = {"title": 300, "description": 500, "lang": 20, "text": 20_000}
 
 
 class SandboxError(Exception):
@@ -250,7 +250,7 @@ def check_output(raw: bytes, max_output: int) -> dict:
         o = json.loads(raw)
     except (ValueError, RecursionError) as e:
         raise SandboxError("parser_output_invalid", f"not JSON: {type(e).__name__}") from None
-    want = {"v", "title", "description", "lang", "links", "hidden_links", "records", "attr_texts", "limited", "nodes"}
+    want = {"v", "title", "description", "lang", "links", "hidden_links", "records", "attr_texts", "text", "limited", "nodes"}
     if not isinstance(o, dict) or set(o) != want or o["v"] != 1:
         raise SandboxError("parser_output_invalid", "unexpected keys or version")
     for k, cap in TEXT_CAPS.items():
@@ -297,9 +297,9 @@ class Page:
 
 
 def read_page(o: dict) -> Page:
-    """Scan every text the sandbox returned (title, description, alt/title/aria-label/meta texts, record fields) for
-    taint on the raw string, then sanitise what is kept."""
-    texts = [o["title"], o["description"], *o["attr_texts"]]
+    """Scan every text the sandbox returned (title, description, visible text, alt/title/aria-label/meta texts,
+    record fields) for taint on the raw string, then sanitise what is kept. The visible text is not kept."""
+    texts = [o["title"], o["description"], o["text"], *o["attr_texts"]]
     for r in o["records"]:
         texts += [r["name"], r["place"], r["org"]]
     findings = [f for t in texts for f in detectors.scan_text(t)]

@@ -155,6 +155,7 @@ def test_endless_generated_maze_stops_its_site(home, policy):
     for p in paths:
         if not gate.frontier.offer(f"https://maze.example{p}").queued:
             break
+        gate.frontier.conn.execute("UPDATE explorer_sites SET stage='admitted'")  # the widest day cap (ladder: E2)
         out = run(gate.step(1))[0]
         stopped = stopped or out.stopped_site
     assert stopped and stopped.startswith("near_duplicates")

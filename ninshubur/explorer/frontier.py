@@ -34,7 +34,9 @@ SCHEMA = [
         pages_total INTEGER NOT NULL DEFAULT 0, day TEXT, pages_day INTEGER NOT NULL DEFAULT 0,
         useful_total INTEGER NOT NULL DEFAULT 0, since_useful INTEGER NOT NULL DEFAULT 0,
         recent TEXT NOT NULL DEFAULT '[]', soft404 INTEGER, parked TEXT,
-        status TEXT NOT NULL DEFAULT 'open', status_reason TEXT, status_at REAL)""",
+        status TEXT NOT NULL DEFAULT 'open', status_reason TEXT, status_at REAL,
+        stage TEXT NOT NULL DEFAULT 'candidate', stage_at REAL, trial_started REAL,
+        clean_fetches INTEGER NOT NULL DEFAULT 0, last_clean REAL, fingerprint TEXT, nets TEXT NOT NULL DEFAULT '[]')""",
     """CREATE TABLE IF NOT EXISTS explorer_frontier (
         url TEXT PRIMARY KEY, site TEXT NOT NULL, host TEXT NOT NULL, shape TEXT NOT NULL, depth INTEGER NOT NULL,
         found_from TEXT, candidate_id INTEGER, added_at REAL NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
@@ -43,6 +45,11 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS explorer_shapes (site TEXT NOT NULL, shape TEXT NOT NULL, n INTEGER NOT NULL,
         PRIMARY KEY(site, shape))""",
 ]
+
+# Ladder columns added in session E2; a database made by E1 gets them on first open.
+SITE_COLUMNS = {"stage": "TEXT NOT NULL DEFAULT 'candidate'", "stage_at": "REAL", "trial_started": "REAL",
+                "clean_fetches": "INTEGER NOT NULL DEFAULT 0", "last_clean": "REAL", "fingerprint": "TEXT",
+                "nets": "TEXT NOT NULL DEFAULT '[]'"}
 
 # Refusal codes that name an attempt to reach this machine or its network rather than a public page.
 SSRF_CODES = frozenset({"url_ip_literal", "url_port", "url_numeric_host", "url_userinfo", "url_single_label",
@@ -67,6 +74,14 @@ class Limits:
     year_min: int = 1995
     years_ahead: int = 2
     content_types: tuple[str, ...] = ("text/html", "application/json")
+    max_hops: int = 2               # links followed from a candidate page, then from those pages; no further
+    links_per_page: int = 20
+    trial_pages_per_day: int = 5
+    trial_days: int = 7
+    trial_clean_fetches: int = 20
+    trial_min_clean: int = 3
+    admitted_stale_days: int = 30
+    content_shift_bits: int = 24
     parser_memory_mb: int = 1024
     parser_cpu_s: int = 10
     parser_timeout_s: float = 20.0
@@ -94,6 +109,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     with conn:
         for stmt in SCHEMA:
             conn.execute(stmt)
+        have = {r["name"] for r in rows(conn, "PRAGMA table_info(explorer_sites)")}
+        for col, decl in SITE_COLUMNS.items():
+            if col not in have:
+                conn.execute(f"ALTER TABLE explorer_sites ADD COLUMN {col} {decl}")
 
 
 def _https(url: str) -> str:
@@ -177,15 +196,25 @@ class Frontier:
         return Offer(False, code, str(url), site)
 
     # -- out ------------------------------------------------------------------------------------------------------
+    def day_cap(self, stage: str) -> int:
+        """Pages a day for a site on this rung of the trial ladder: one until its first clean page, then the trial
+        cap, then the admitted cap."""
+        lim = self.limits
+        return lim.pages_per_site_day if stage == "admitted" else lim.trial_pages_per_day if stage == "trial" else 1
+
     def next_batch(self, n: int) -> list[dict]:
-        """Up to ``n`` queued URLs, at most one per site, oldest first, from open sites with day budget left."""
+        """Up to ``n`` queued URLs, at most one per site, oldest first, from open sites with day budget left (the
+        budget depends on the site's rung, ``day_cap``)."""
         today = time.strftime("%Y-%m-%d", time.gmtime(self.now()))
+        lim = self.limits
         return rows(self.conn, """
             SELECT * FROM (
-              SELECT f.*, ROW_NUMBER() OVER (PARTITION BY f.site ORDER BY f.added_at, f.url) AS k
+              SELECT f.*, s.stage, ROW_NUMBER() OVER (PARTITION BY f.site ORDER BY f.added_at, f.url) AS k
               FROM explorer_frontier f JOIN explorer_sites s ON s.site = f.site
-              WHERE f.status='queued' AND s.status='open' AND (s.day IS NOT ? OR s.pages_day < ?))
-            WHERE k = 1 ORDER BY added_at, url LIMIT ?""", (today, self.limits.pages_per_site_day, max(n, 0)))
+              WHERE f.status='queued' AND s.status='open'
+                AND (s.day IS NOT ? OR s.pages_day < CASE s.stage WHEN 'admitted' THEN ? WHEN 'trial' THEN ? ELSE 1 END))
+            WHERE k = 1 ORDER BY added_at, url LIMIT ?""",
+                    (today, lim.pages_per_site_day, lim.trial_pages_per_day, max(n, 0)))
 
     def record(self, url: str, *, status: int | None, body: bytes = b"", outcome: str = "",
                useful: bool | None = None) -> str | None:

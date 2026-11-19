@@ -133,6 +133,7 @@ def test_batches_take_one_url_per_site_and_respect_the_day_budget(home, policy):
     for p in ("a", "b", "c"):
         f.offer(f"https://one.example/{p}")
     f.offer("https://two.example/a")
+    f.conn.execute("UPDATE explorer_sites SET stage='admitted' WHERE site='one.example'")  # the admitted cap applies
     assert [r["url"] for r in f.next_batch(10)] == ["https://one.example/a", "https://two.example/a"]
     for u in ("https://one.example/a", "https://one.example/b"):
         f.record(u, status=200, body=b"<p>x</p>", useful=True)
@@ -203,3 +204,25 @@ def test_a_malformed_port_is_refused_not_raised(home, policy):
     f, _ = make(home, policy)
     assert f.offer("http://ex.org:99999/").code == "url_not_https"  # http is asked about before the port
     assert f.offer("https://ex.org:99999/").code == "url_bad_port"
+
+
+def test_a_site_gets_one_page_a_day_until_its_trial_then_the_trial_cap(home, policy):
+    f, clock = make(home, policy, trial_pages_per_day=2)
+    for p in ("a", "b", "c"):
+        f.offer(f"https://one.example/{p}")
+    f.record("https://one.example/a", status=200, body=b"<p>x</p>", useful=True)
+    assert f.next_batch(10) == []  # still a candidate: one page today
+    f.conn.execute("UPDATE explorer_sites SET stage='trial'")
+    assert [r["url"] for r in f.next_batch(10)] == ["https://one.example/b"]
+    f.record("https://one.example/b", status=200, body=b"<p>y</p>", useful=True)
+    assert f.next_batch(10) == []  # the trial cap of 2 is used
+
+
+def test_an_e1_database_gets_the_ladder_columns(home, policy):
+    from ninshubur.explorer import frontier as fr
+    conn = connect(home)
+    conn.execute("DROP TABLE IF EXISTS explorer_sites")
+    conn.execute(fr.SCHEMA[0].split(",\n        stage TEXT")[0] + ")")  # the E1 shape
+    assert "stage" not in {r[1] for r in conn.execute("PRAGMA table_info(explorer_sites)")}
+    fr.ensure_schema(conn)
+    assert set(fr.SITE_COLUMNS) <= {r[1] for r in conn.execute("PRAGMA table_info(explorer_sites)")}

@@ -66,3 +66,30 @@ def test_frontier_lists_caps_and_stopped_sites(cli, home):
     conn.close()
     code, out = cli("explore", "frontier")
     assert "stopped maze.example: near_duplicates" in out and "caps: 4 hosts" in out
+
+
+# -- lane E2: run, sites, check ------------------------------------------------------------------------------------
+def test_run_dry_run_lists_pages_and_their_probes_and_sends_nothing(cli, home):
+    cli("explore", "offer", "https://ex.org/a")
+    code, out = cli("explore", "run", "--dry-run")
+    assert code == 0 and "would fetch https://ex.org/a (+ soft-404 probe)" in out and "nothing was sent" in out
+    (home / "explorer" / "STOP").write_text("test")
+    code, out = cli("explore", "run")
+    assert code == 2 and "explore resume" in out
+
+
+def test_run_refuses_without_the_sandbox(cli, home, monkeypatch):
+    monkeypatch.setattr("ninshubur.explorer.sandbox.shutil.which", lambda name: None)
+    cli("explore", "offer", "https://ex.org/a")
+    code, out = cli("explore", "run")
+    assert code == 2 and "install bubblewrap" in out and "nothing is fetched" in out
+    code, out = cli("explore", "check")
+    assert code == 2 and "install bubblewrap" in out
+
+
+def test_sites_counts_every_rung(cli, home):
+    cli("explore", "offer", "https://ex.org/a", "https://two.example/b")
+    code, out = cli("explore", "sites")
+    assert code == 0 and "candidate 2" in out and "admitted 0" in out and "ex.org" in out
+    code, out = cli("explore", "sites", "--stage", "stopped")
+    assert code == 0 and "ex.org" not in out
