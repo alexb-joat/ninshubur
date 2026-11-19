@@ -99,7 +99,7 @@ def cmd_step(args, app) -> int:
     gate = ExplorerGate(conn, app.policy, app.cfg, app.home, now=app.now)
     try:
         if gate.stopped:
-            print(f"the explorer is stopped: {gate.stop_path} exists (remove it to resume)", file=sys.stderr)
+            print(_stopped_line(app), file=sys.stderr)
             return 2
         if args.dry_run:
             batch = gate.frontier.next_batch(args.limit)
@@ -199,7 +199,7 @@ def cmd_run(args, app) -> int:
     gate = ExplorerGate(conn, app.policy, app.cfg, app.home, now=app.now)
     try:
         if gate.stopped:
-            print(f"the explorer is stopped: {gate.stop_path} exists (`ninshubur explore resume` clears it)", file=sys.stderr)
+            print(_stopped_line(app), file=sys.stderr)
             return 2
         sb = _sandbox(app)
         why = sb.unavailable()
@@ -252,6 +252,67 @@ def cmd_sites(args, app) -> int:
             state = r["stage"] if r["status"] == "open" else f"stopped ({r['status_reason']})"
             age = f", trial {(app.now() - r['trial_started']) / 86400:.1f} d" if r["trial_started"] and r["stage"] == "trial" else ""
             print(f"  {r['site'][:40]:<40} {state[:70]:<12} clean {r['clean_fetches']}, pages {r['pages_total']}{age}")
+        return 0
+    finally:
+        conn.close()
+
+
+def _stopped_line(app) -> str:
+    from .killswitch import read_stop
+    note = read_stop(app.home) or {}
+    when = f" at {app.local(note['at'])}" if isinstance(note.get("at"), (int, float)) else ""
+    return (f"the explorer is stopped (by {note.get('by', '?')}{when}: {note.get('reason', '')}); "
+            "`ninshubur explore resume` starts it again")
+
+
+def cmd_stop(args, app) -> int:
+    from .killswitch import read_stop, stop
+    was = read_stop(app.home)
+    note = stop(app.home, args.reason, by="alex", now=app.now())
+    if was:
+        print(_stopped_line(app) + " (already stopped; the first note is kept)")
+    else:
+        print(f"stopped: {note['reason']}. A running cycle halts at its next request; nothing starts until "
+              "`ninshubur explore resume`.")
+    print("second layer, if the service is installed: systemctl --user stop ninshubur-explorer.timer ninshubur-explorer.service")
+    return 0
+
+
+def cmd_resume(args, app) -> int:
+    from .killswitch import read_stop, resume
+    note = read_stop(app.home)
+    if note is None:
+        print("the explorer isn't stopped; nothing to do")
+        return 0
+    if args.dry_run:
+        print(_stopped_line(app).replace("starts it again", "would start it again"))
+        return 0
+    resume(app.home, now=app.now())
+    print(f"resumed; it was stopped by {note['by']}: {note['reason']}")
+    return 0
+
+
+def cmd_status(args, app) -> int:
+    """One screen: stopped or not, the sandbox, today's pages and bytes, the ladder, the handoff."""
+    from ..db import ledger_sum
+    from .frontier import Frontier
+    from .handoff import out_dir
+    from .killswitch import read_stop
+    from .ladder import Ladder
+    conn = store.connect(app.home)
+    try:
+        fr = Frontier(conn, app.policy, app.home, now=app.now)
+        note = read_stop(app.home)
+        print("state:    " + (_stopped_line(app) if note else "running (no STOP file)"))
+        why = _sandbox(app).unavailable()
+        print("sandbox:  " + (f"unavailable: {why}" if why else "bwrap present (`explore check` proves the fences)"))
+        used = ledger_sum(conn, "bytes", app.now() - 86400)  # the same rolling window the fetcher's budget uses
+        print(f"bytes:    {used:,.0f} of {fr.limits.daily_bytes:,} in the last 24 h")
+        print("ladder:   " + ", ".join(f"{k} {v}" for k, v in Ladder(fr).counts().items()))
+        d = out_dir(app.home)
+        files = sorted(d.glob("*.jsonl")) if d.is_dir() else []
+        lines = sum(f.read_bytes().count(b"\n") for f in files[-1:])
+        print(f"handoff:  {len(files)} files in {d}" + (f"; {lines} lines in {files[-1].name}" if files else ""))
         return 0
     finally:
         conn.close()
@@ -320,3 +381,11 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     ib = xs.add_parser("inbox", help="main Ninshubur reads the explorer's handoff files now (held, Tier 3)")
     ib.add_argument("--dry-run", action="store_true", help="check and count the lines; store nothing")
     ib.set_defaults(fn=cmd_inbox)
+    sp = xs.add_parser("stop", help="the kill switch: write the STOP file; the explorer halts at its next request")
+    sp.add_argument("--reason", default="stopped by hand", help="kept in the STOP file and the log")
+    sp.set_defaults(fn=cmd_stop)
+    rs = xs.add_parser("resume", help="remove the STOP file (shows why it was stopped)")
+    rs.add_argument("--dry-run", action="store_true", help="show the STOP note; remove nothing")
+    rs.set_defaults(fn=cmd_resume)
+    ss = xs.add_parser("status", help="stopped or running, the sandbox, today's bytes, the ladder, the handoff")
+    ss.set_defaults(fn=cmd_status)

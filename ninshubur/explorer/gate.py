@@ -49,7 +49,7 @@ class StopTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if self.stop_path.exists():
-            raise Stopped(f"{self.stop_path} exists: the explorer is stopped (remove the file to resume)", request=request)
+            raise Stopped(f"{self.stop_path} exists: the explorer is stopped (`ninshubur explore resume` starts it again)", request=request)
         return await self.inner.handle_async_request(request)
 
     async def aclose(self) -> None:

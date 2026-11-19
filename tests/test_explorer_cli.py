@@ -55,7 +55,7 @@ def test_step_dry_run_sends_nothing_and_stop_refuses(cli, home):
     assert code == 0 and "would fetch https://ex.org/a" in out and "nothing was sent" in out
     (home / "explorer" / "STOP").write_text("")
     code, out = cli("explore", "step")
-    assert code == 2 and "explorer is stopped" in out and "remove it to resume" in out
+    assert code == 2 and "explorer is stopped" in out and "explore resume" in out
 
 
 def test_frontier_lists_caps_and_stopped_sites(cli, home):
@@ -107,3 +107,27 @@ def test_inbox_dry_run_counts_and_the_real_read_stores_held(cli, home):
     assert code == 0 and "1 stored (held, Tier 3" in out
     code, out = cli("explore", "inbox")
     assert "0 lines" in out
+
+
+# -- lane E2: the kill switch and status ---------------------------------------------------------------------------
+def test_stop_resume_and_status_round_trip(cli, home):
+    from ninshubur.logs import read_jsonl
+    cli("explore", "offer", "https://ex.org/a")
+    code, out = cli("explore", "status")
+    assert code == 0 and "running (no STOP file)" in out and "candidate 1" in out and "in the last 24 h" in out
+    code, out = cli("explore", "stop", "--reason", "odd traffic")
+    assert code == 0 and "stopped: odd traffic" in out and "systemctl --user stop" in out
+    code, out = cli("explore", "stop", "--reason", "second")
+    assert "already stopped" in out and "odd traffic" in out
+    code, out = cli("explore", "run")
+    assert code == 2 and "by alex" in out and "odd traffic" in out
+    code, out = cli("explore", "status")
+    assert "stopped (by alex" in out
+    code, out = cli("explore", "resume", "--dry-run")
+    assert "would start it again" in out and (home / "explorer" / "STOP").exists()
+    code, out = cli("explore", "resume")
+    assert code == 0 and "resumed; it was stopped by alex: odd traffic" in out and not (home / "explorer" / "STOP").exists()
+    code, out = cli("explore", "resume")
+    assert "isn't stopped" in out
+    events = [e["event"] for e in read_jsonl(home / "explorer" / "logs" / "explorer.jsonl")]
+    assert events.count("stopped") == 1 and events.count("resumed") == 1
