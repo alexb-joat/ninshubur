@@ -9,6 +9,15 @@ from ninshubur.explorer.store import Candidate
 from tests.conftest import NOW, write_config, write_profiles
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """No CLI test may reach the network, even when a refusal it checks for regresses."""
+    async def refuse(self, *a, **k):
+        raise AssertionError("a CLI test tried to fetch")
+    monkeypatch.setattr("ninshubur.explorer.gate.ExplorerGate.fetch", refuse)
+    monkeypatch.setattr("ninshubur.explorer.gate.ExplorerGate.probe_soft404", refuse)
+
+
 @pytest.fixture
 def cli(home, capsys, monkeypatch):
     monkeypatch.setattr("ninshubur.__main__.time.time", lambda: NOW)
@@ -147,3 +156,22 @@ def test_run_refuses_when_tripped(cli, home):
     assert "3 of 3 attempts" in out
     code, out = cli("explore", "run")
     assert code == 2 and "tripwire: 3 attempts" in out and read_stop(home)["by"] == "tripwire"
+
+
+def test_run_refuses_over_the_disk_quota(cli, home):
+    (home / "policy.yaml").write_text("explorer:\n  disk_quota_bytes: 4000\n")  # a user policy may tighten it
+    cli("explore", "offer", "https://ex.org/a")
+    (home / "explorer" / "big.bin").write_bytes(b"x" * 5000)
+    code, out = cli("explore", "run")
+    assert code == 2 and "over disk_quota_bytes 4,000" in out
+    code, out = cli("explore", "status")
+    assert "of 4,000 bytes in" in out
+
+
+def test_the_explorers_own_commands_never_open_mains_database(cli, home):
+    """Its service can write only the explorer folder: run, check, status, stop and resume must not need ninshubur.db."""
+    for args in (("explore", "status"), ("explore", "stop"), ("explore", "resume"), ("explore", "run", "--dry-run")):
+        cli(*args)
+        assert not (home / "ninshubur.db").exists(), args
+    cli("explore", "inbox", "--dry-run")  # main's side of the handoff does open it
+    assert (home / "ninshubur.db").exists()

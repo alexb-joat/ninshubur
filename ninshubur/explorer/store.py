@@ -36,6 +36,21 @@ def explorer_home(home: Path) -> Path:
     return d
 
 
+def disk_use(home: Path, cap_files: int = 100_000) -> int:
+    """Bytes in the explorer's folder (symlinks not followed; at most ``cap_files`` entries are counted)."""
+    total, seen = 0, 0
+    for root, dirs, files in os.walk(explorer_home(home), followlinks=False):
+        for name in files:
+            seen += 1
+            if seen > cap_files:
+                return total
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                continue
+    return total
+
+
 def connect(home: Path) -> sqlite3.Connection:
     conn = db.connect(path=explorer_home(home) / DB_NAME)
     with conn:

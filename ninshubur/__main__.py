@@ -7,6 +7,7 @@ import json
 import random
 import sys
 import time
+from functools import cached_property
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -49,17 +50,9 @@ class App:
         self.cfg = load_config(self.home, policy=self.policy)
         self.profiles = load_profiles(self.home)
         check_registry()
-        self.conn = connect(self.home)
-        self.now = time.time
+        self._transport = transport
         # One clock for every component, so a test (or a replay) can pin it in one place.
-        self.fetcher = Fetcher(self.conn, self.policy, self.cfg, self.home, transport=transport, now=self.now)
-        self.ingestor = Ingestor(self.conn, self.policy, self.cfg, self.home, now=self.now)
-        self.scheduler = Scheduler(self.conn, self.policy, self.cfg, self.home, self.fetcher, self.ingestor, now=self.now,
-                                   rng=random.Random())
-        self.suggester = Suggester(self.conn, self.policy, self.cfg, self.profiles, now=self.now, home=self.home)
-        self.sinks = [IcsSink(self.conn, self.home, str(self.cfg.get("sinks", "ics", "path", default="feeds/timings.ics")),
-                              now=self.now)]
-        self.feedback = Feedback(self.conn, self.sinks, now=self.now)
+        self.now = time.time
         tz_name = str(self.cfg.get("timezone", default="UTC"))
         try:
             self.tz = ZoneInfo(tz_name)
@@ -67,6 +60,39 @@ class App:
             print(f"warning: time zone {tz_name!r} not found (on Windows: pip install tzdata); using UTC", file=sys.stderr)
             self.tz = ZoneInfo("UTC")
         self.verbose = verbose
+
+    # Main's database and what is built on it open on first use. ``_main`` opens it up front unless the command sets
+    # ``main_db=False`` (the explorer's run, check, status, stop, resume): those never open ninshubur.db, and the
+    # explorer's service can't write there.
+    @cached_property
+    def conn(self):
+        return connect(self.home)
+
+    @cached_property
+    def fetcher(self) -> Fetcher:
+        return Fetcher(self.conn, self.policy, self.cfg, self.home, transport=self._transport, now=self.now)
+
+    @cached_property
+    def ingestor(self) -> Ingestor:
+        return Ingestor(self.conn, self.policy, self.cfg, self.home, now=self.now)
+
+    @cached_property
+    def scheduler(self) -> Scheduler:
+        return Scheduler(self.conn, self.policy, self.cfg, self.home, self.fetcher, self.ingestor, now=self.now,
+                         rng=random.Random())
+
+    @cached_property
+    def suggester(self) -> Suggester:
+        return Suggester(self.conn, self.policy, self.cfg, self.profiles, now=self.now, home=self.home)
+
+    @cached_property
+    def sinks(self) -> list:
+        return [IcsSink(self.conn, self.home, str(self.cfg.get("sinks", "ics", "path", default="feeds/timings.ics")),
+                        now=self.now)]
+
+    @cached_property
+    def feedback(self) -> Feedback:
+        return Feedback(self.conn, self.sinks, now=self.now)
 
     def local(self, ts: float | None) -> str:
         if not ts:
@@ -859,17 +885,21 @@ def _main(argv: list[str] | None) -> int:
     args = build_parser().parse_args(argv)
     try:
         app = App(verbose=args.verbose)
+        if getattr(args, "main_db", True):  # opened up front, so a schema error refuses before any work
+            app.conn
     except (PolicyError, ConfigError, ProfileError, SchemaError) as e:
         print(f"refusing to run: {e}", file=sys.stderr)
         return 3
     try:
         return int(args.fn(args, app) or 0)
     finally:
-        try:
-            asyncio.run(app.fetcher.aclose())
-        except Exception:  # noqa: BLE001
-            pass
-        app.conn.close()
+        if "fetcher" in app.__dict__:
+            try:
+                asyncio.run(app.fetcher.aclose())
+            except Exception:  # noqa: BLE001
+                pass
+        if "conn" in app.__dict__:
+            app.conn.close()
 
 
 if __name__ == "__main__":

@@ -206,6 +206,11 @@ def cmd_run(args, app) -> int:
         if why:
             print(why + "; `ninshubur explore status` shows the count, `explore resume` starts again", file=sys.stderr)
             return 2
+        used, quota = store.disk_use(app.home), gate.frontier.limits.disk_quota_bytes
+        if used > quota:
+            print(f"explore run: the explorer folder holds {used:,} bytes, over disk_quota_bytes {quota:,} in policy.yaml; "
+                  "nothing is fetched (old handoff files are pruned to 14; look at explorer/logs)", file=sys.stderr)
+            return 2
         sb = _sandbox(app)
         why = sb.unavailable()
         if why:
@@ -317,6 +322,7 @@ def cmd_status(args, app) -> int:
         tc = tripwire.count(app.home, now=app.now(), window_s=fr.limits.tripwire_window_s)
         print("tripwire: " + (tc.error or f"{tc.n} of {fr.limits.tripwire_ssrf} attempts to reach denied addresses "
                                           f"since {app.local(tc.since)}"))
+        print(f"disk:     {store.disk_use(app.home):,} of {fr.limits.disk_quota_bytes:,} bytes in {app.home / 'explorer'}")
         print("ladder:   " + ", ".join(f"{k} {v}" for k, v in Ladder(fr).counts().items()))
         d = out_dir(app.home)
         files = sorted(d.glob("*.jsonl")) if d.is_dir() else []
@@ -378,11 +384,11 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     st.set_defaults(fn=cmd_step)
     # -- sandbox, ladder, handoff, kill switch (lane E2) ------------------------------------------
     ck = xs.add_parser("check", help="prove the parser sandbox has no home, network or secrets (with a control)")
-    ck.set_defaults(fn=cmd_check)
+    ck.set_defaults(fn=cmd_check, main_db=False)
     rn = xs.add_parser("run", help="one cycle: probe, fetch, parse in the sandbox, follow links, move sites on the ladder")
     rn.add_argument("--limit", type=int, default=10, help="pages at most, one per site (default 10)")
     rn.add_argument("--dry-run", action="store_true", help="list the pages it would fetch; send nothing")
-    rn.set_defaults(fn=cmd_run)
+    rn.set_defaults(fn=cmd_run, main_db=False)
     si = xs.add_parser("sites", help="the trial ladder: sites per rung, and each site's rung, clean pages and trial age")
     si.add_argument("--stage", choices=("candidate", "probed", "trial", "admitted", "stopped"))
     si.add_argument("--limit", type=int, default=20, help="sites to list (default 20)")
@@ -392,9 +398,9 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     ib.set_defaults(fn=cmd_inbox)
     sp = xs.add_parser("stop", help="the kill switch: write the STOP file; the explorer halts at its next request")
     sp.add_argument("--reason", default="stopped by hand", help="kept in the STOP file and the log")
-    sp.set_defaults(fn=cmd_stop)
+    sp.set_defaults(fn=cmd_stop, main_db=False)
     rs = xs.add_parser("resume", help="remove the STOP file (shows why it was stopped)")
     rs.add_argument("--dry-run", action="store_true", help="show the STOP note; remove nothing")
-    rs.set_defaults(fn=cmd_resume)
+    rs.set_defaults(fn=cmd_resume, main_db=False)
     ss = xs.add_parser("status", help="stopped or running, the sandbox, today's bytes, the ladder, the handoff")
-    ss.set_defaults(fn=cmd_status)
+    ss.set_defaults(fn=cmd_status, main_db=False)

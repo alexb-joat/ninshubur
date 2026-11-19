@@ -88,6 +88,7 @@ class Limits:
     parser_timeout_s: float = 20.0
     tripwire_ssrf: int = 3
     tripwire_window_s: int = 86400
+    disk_quota_bytes: int = 500_000_000
 
     @classmethod
     def from_policy(cls, policy: Policy) -> "Limits":
