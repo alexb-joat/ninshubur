@@ -111,7 +111,9 @@ class Scheduler:
         for src in self.cfg.sources.values():
             self.ingestor.ensure_source(src, self.adapter(src.adapter).spec)
             names.append(src.name)
-        for row in rows(self.conn, "SELECT name, health FROM sources"):
+        for row in rows(self.conn, "SELECT name, adapter, health FROM sources"):
+            if row["adapter"] == "explorer":  # the explorer's inbox source: never fetched, not in config by design
+                continue
             if row["name"] not in self.cfg.sources:
                 self.ingestor.set_enabled(row["name"], False, "removed from config")
                 if row["health"] in ("ok", "suspect"):  # a quarantine or a lapsed review stays on record
@@ -360,6 +362,16 @@ class Scheduler:
                                                                           "due sources wait for the network"})
         return False
 
+    def read_explorer_inbox(self):
+        """Store what the explorer handed off since the last tick (capped JSONL files only; held, Tier 3). A broken
+        or missing explorer never stops the tick: the reader skips what it can't use, and a failure is logged."""
+        from .explorer.handoff import read_inbox
+        try:
+            return read_inbox(self.conn, self.policy, self.cfg, self.home, now=self.now)
+        except Exception as e:  # noqa: BLE001 - the explorer's output must never take main down
+            self.ingestor.policy_log.write({"event": "explorer_inbox_error", "error": type(e).__name__, "detail": str(e)[:200]})
+            return None
+
     async def daemon(self, *, stop: asyncio.Event | None = None, tick_s: float | None = None) -> None:
         tick = float(tick_s or self.cfg.get("scheduler", "tick_s", default=30))
         stop = stop or asyncio.Event()
@@ -370,6 +382,7 @@ class Scheduler:
                 if not self.due() or await self.network_ready():
                     await self.run_once()
                 self.ingestor.decay()
+                self.read_explorer_inbox()
                 if self.after_tick:
                     self.after_tick()
             except Exception as e:  # noqa: BLE001 - a daemon must survive a bad tick

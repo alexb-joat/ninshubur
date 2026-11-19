@@ -27,6 +27,10 @@ base_value_usd:
   cfp_submit: 800
   tool_outage: 50
 
+# The explorer hands its finds to main Ninshubur only through capped files in ~/.ninshubur/explorer/out/; main
+# stores them held, Tier 3, "found by explorer". false: main stops reading them (the explorer keeps its own state).
+explorer: {read_inbox: true}
+
 sinks:
   ics: {path: feeds/timings.ics}
   trello: {enabled: false, key_env: TRELLO_KEY, token_env: TRELLO_TOKEN, list_id: ""}

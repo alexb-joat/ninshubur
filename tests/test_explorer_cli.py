@@ -93,3 +93,17 @@ def test_sites_counts_every_rung(cli, home):
     assert code == 0 and "candidate 2" in out and "admitted 0" in out and "ex.org" in out
     code, out = cli("explore", "sites", "--stage", "stopped")
     assert code == 0 and "ex.org" not in out
+
+
+def test_inbox_dry_run_counts_and_the_real_read_stores_held(cli, home):
+    from ninshubur.explorer.handoff import Writer
+    from ninshubur.logs import JsonlLog
+    Writer(home, JsonlLog(home / "x.jsonl"), now=lambda: NOW).write([
+        {"type": "event", "name": "PyDay", "url": "", "start": "2027-05-01", "end": "", "place": "", "org": "",
+         "site": "one.example", "page": "https://one.example/", "stage": "trial", "taint": []}])
+    code, out = cli("explore", "inbox", "--dry-run")
+    assert code == 0 and "1 would be stored" in out
+    code, out = cli("explore", "inbox")
+    assert code == 0 and "1 stored (held, Tier 3" in out
+    code, out = cli("explore", "inbox")
+    assert "0 lines" in out

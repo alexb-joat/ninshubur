@@ -213,7 +213,9 @@ def cmd_run(args, app) -> int:
                 print(f"would fetch {r['url'][:100]}{probe}")
             print(f"{len(batch)} pages planned; nothing was sent")
             return 0
-        rep = asyncio.run(run_cycle(gate, sb, args.limit))
+        from .handoff import Writer, out_dir
+        writer = Writer(app.home, gate.frontier.log, now=app.now)
+        rep = asyncio.run(run_cycle(gate, sb, args.limit, on_records=writer.write))
         for x in rep.lines:
             moved = f" ({x.moved})" if x.moved else ""
             stop = f"; site stopped: {x.stopped}" if x.stopped else ""
@@ -221,6 +223,9 @@ def cmd_run(args, app) -> int:
                   f"  records {x.records}  {x.url[:80]}{stop}")
         print(f"{len(rep.lines)} pages, {rep.probes} probes, {len(rep.records)} records"
               + (f"; halted: {rep.halted}" if rep.halted else ""))
+        if rep.records or writer.failed:
+            print(f"handoff: {writer.written} written to {out_dir(app.home)}, {writer.refused} not written"
+                  + (f" ({writer.failed})" if writer.failed else ""))
         return 2 if rep.halted else 0
     finally:
         asyncio.run(gate.aclose())
@@ -250,6 +255,22 @@ def cmd_sites(args, app) -> int:
         return 0
     finally:
         conn.close()
+
+
+def cmd_inbox(args, app) -> int:
+    """Main Ninshubur's side of the handoff: read the explorer's files now (the daemon does it every tick)."""
+    from .handoff import read_inbox
+    rep = read_inbox(app.conn, app.policy, app.cfg, app.home, now=app.now, dry_run=args.dry_run)
+    if not rep.enabled:
+        print("explorer inbox: off (config.yaml explorer.read_inbox: false); nothing read")
+        return 0
+    verb = "would be stored" if args.dry_run else "stored"
+    print(f"{rep.lines} lines from {rep.files} files: {rep.stored + rep.updated if not args.dry_run else rep.lines - rep.bad - rep.dropped_taint} "
+          f"{verb} (held, Tier 3; {rep.tainted} tainted), {rep.dropped_taint} dropped for taint, {rep.bad} refused"
+          + (" (" + ", ".join(f"{k} {v}" for k, v in sorted(rep.reasons.items())) + ")" if rep.reasons else ""))
+    for f in rep.skipped_files:
+        print(f"  skipped {f}")
+    return 0
 
 
 def add_commands(sub: argparse._SubParsersAction) -> None:
@@ -296,3 +317,6 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     si.add_argument("--stage", choices=("candidate", "probed", "trial", "admitted", "stopped"))
     si.add_argument("--limit", type=int, default=20, help="sites to list (default 20)")
     si.set_defaults(fn=cmd_sites)
+    ib = xs.add_parser("inbox", help="main Ninshubur reads the explorer's handoff files now (held, Tier 3)")
+    ib.add_argument("--dry-run", action="store_true", help="check and count the lines; store nothing")
+    ib.set_defaults(fn=cmd_inbox)
