@@ -115,8 +115,9 @@ class Doc:
 
 
 class _Parser(HTMLParser):
-    def __init__(self, max_nodes: int, max_depth: int):
+    def __init__(self, max_nodes: int, max_depth: int, keep_attrs: frozenset[str] = KEEP_ATTRS):
         super().__init__(convert_charrefs=True)
+        self.keep_attrs = keep_attrs
         self.root = Node("#document", {}, None, 0)
         self.doc = Doc(self.root)
         self.stack: list[Node] = [self.root]
@@ -131,9 +132,9 @@ class _Parser(HTMLParser):
     def _attrs(self, attrs) -> dict[str, str]:
         out: dict[str, str] = {}
         for k, v in attrs:
-            if k in KEEP_ATTRS and v is not None:
+            if k in self.keep_attrs and v is not None:
                 out[k] = v[:MAX_ATTR]
-            elif k in KEEP_ATTRS:
+            elif k in self.keep_attrs:
                 out[k] = ""
         return out
 
@@ -207,10 +208,13 @@ class _Parser(HTMLParser):
         self.doc.comments += 1
 
 
-def parse_html(body: bytes | str, *, max_nodes: int = 200_000, max_depth: int = 200) -> Doc:
+def parse_html(body: bytes | str, *, max_nodes: int = 200_000, max_depth: int = 200,
+               keep_attrs: frozenset[str] = KEEP_ATTRS) -> Doc:
+    """``keep_attrs`` names the attributes kept on each node (every other one is dropped at parse time); the
+    explorer adds the ones that hide a link (``hidden``, ``aria-hidden``, ``style``)."""
     if isinstance(body, bytes):
         body = body.decode("utf-8", errors="replace")
-    p = _Parser(max_nodes, max_depth)
+    p = _Parser(max_nodes, max_depth, keep_attrs)
     try:
         p.feed(body)
         p.close()

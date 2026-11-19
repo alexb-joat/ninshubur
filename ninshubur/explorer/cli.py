@@ -152,6 +152,45 @@ def cmd_reach(args, app) -> int:
     return 0
 
 
+# -- sandbox, ladder, handoff, kill switch (lane E2) ----------------------------------------------------------------
+def _sandbox(app):
+    from .frontier import Limits
+    from .sandbox import Sandbox, limits_from
+    return Sandbox(limits_from(Limits.from_policy(app.policy)))
+
+
+def cmd_check(args, app) -> int:
+    """Prove the parser sandbox's fences against a control (a plain child process running the same probe)."""
+    from pathlib import Path
+
+    from .sandbox import SandboxError
+    sb = _sandbox(app)
+    why = sb.unavailable()
+    if why:
+        print(f"explore check: {why}; the explorer won't parse (or fetch) until it can", file=sys.stderr)
+        return 2
+    home = Path.home()
+    paths = [app.home, home / ".ssh", home]
+    try:
+        r = sb.self_test(paths)
+    except SandboxError as e:
+        print(f"explore check: the sandbox didn't run: {e}", file=sys.stderr)
+        return 2
+    show = lambda p: "~" + str(p)[len(str(home)):] if str(p).startswith(str(home)) else str(p)  # noqa: E731
+    print(f"sandbox: {sb.bwrap}, python {sb.python}")
+    print(f"{'':<22} {'inside the sandbox':<28} plain child (control)")
+    for p in paths:
+        print(f"{show(p):<22} {r['inside']['paths'][str(p)]:<28} {r['control'].get('paths', {}).get(str(p), '?')}")
+    print(f"{'127.0.0.1 listener':<22} {r['inside']['loopback']:<28} {r['control'].get('loopback', '?')}")
+    print(f"{'route out':<22} {r['inside']['internet']:<28} {r['control'].get('internet', '?')}")
+    print(f"{'environment':<22} {', '.join(r['inside']['env']) or 'empty':<28} {len(r['control'].get('env', []))} variables")
+    if not r["control_ok"]:
+        print("verdict: inconclusive: the control couldn't reach the listener, so the probe proves nothing")
+        return 1
+    print("verdict: " + ("fenced: no home, no network, no secrets inside" if r["fenced"] else "NOT fenced; don't run the explorer"))
+    return 0 if r["fenced"] else 1
+
+
 def add_commands(sub: argparse._SubParsersAction) -> None:
     x = sub.add_parser("explore", help="the explorer: open-web discovery with its own database and fences")
     xs = x.add_subparsers(dest="xcmd", required=True)
@@ -185,3 +224,6 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     st.add_argument("--limit", type=int, default=5, help="requests at most (default 5)")
     st.add_argument("--dry-run", action="store_true", help="list the requests it would send; send none")
     st.set_defaults(fn=cmd_step)
+    # -- sandbox, ladder, handoff, kill switch (lane E2) ------------------------------------------
+    ck = xs.add_parser("check", help="prove the parser sandbox has no home, network or secrets (with a control)")
+    ck.set_defaults(fn=cmd_check)

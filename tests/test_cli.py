@@ -141,11 +141,15 @@ def test_fails_closed_on_bad_policy(cli, home):
 
 
 def test_package_has_no_subprocess_eval_pickle():
+    """One exception: explorer/sandbox.py starts bwrap (the parser sandbox) and, for `explore check`, one plain
+    Python probe; tests/test_explorer_sandbox.py pins down exactly what it may start."""
     import ninshubur
     root = Path(ninshubur.__file__).parent
     for py in root.rglob("*.py"):
         text = py.read_text(encoding="utf-8")
-        assert "subprocess" not in text and "pickle" not in text and "eval(" not in text, py
+        assert "pickle" not in text and "eval(" not in text, py
+        if py.relative_to(root).as_posix() != "explorer/sandbox.py":
+            assert "subprocess" not in text, py
 
 
 def test_export_euboulia_facts(cli, home):

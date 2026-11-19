@@ -67,6 +67,9 @@ class Limits:
     year_min: int = 1995
     years_ahead: int = 2
     content_types: tuple[str, ...] = ("text/html", "application/json")
+    parser_memory_mb: int = 1024
+    parser_cpu_s: int = 10
+    parser_timeout_s: float = 20.0
 
     @classmethod
     def from_policy(cls, policy: Policy) -> "Limits":

@@ -59,6 +59,10 @@ explorer:
   year_min: 1995            # a date in a URL outside year_min .. this year + years_ahead marks a walked calendar
   years_ahead: 2
   content_types: [text/html, application/json]
+  # The parser runs in a bubblewrap sandbox (no network, no home, cleared environment); these bound one page's cost.
+  parser_memory_mb: 1024    # address space
+  parser_cpu_s: 10
+  parser_timeout_s: 20      # wall clock; then the sandbox's whole process group is killed
 
 admission:
   min_field_validity: 0.95

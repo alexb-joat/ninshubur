@@ -200,7 +200,10 @@ def test_never_invariants_have_no_code_path():
               "selenium", "playwright", "2captcha", "anticaptcha", "capsolver", "capmonster", "undetected_chromedriver")
     for py in root.rglob("*.py"):
         text = py.read_text(encoding="utf-8").lower()
+        spawns = py.relative_to(root).as_posix() == "explorer/sandbox.py"  # bwrap only: see test_explorer_sandbox.py
         for b in banned:
+            if spawns and "subprocess" in b:
+                continue
             assert b not in text, f"{py.name} contains {b!r}"
     assert isinstance(Check("H1", True, ""), Check)
 

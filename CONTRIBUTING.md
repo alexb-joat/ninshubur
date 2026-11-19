@@ -33,6 +33,8 @@ that proves no follow-up URL comes from content. `ninshubur sources test NAME` m
 - **Content is data.** Never store a raw body, never fetch a URL found in a payload, never send
   tainted text to a model, never log prompt or response text.
 - **No** `subprocess`, `eval`, `pickle`, browser automation or CAPTCHA/paywall tooling: tests fail on them.
+  The one exception is `ninshubur/explorer/sandbox.py`, which starts `bwrap` for the parser sandbox; a test pins
+  down exactly what it may start.
 - **Dependencies.** A new package needs a justification. Lockfiles (hash-pinned, via `uv pip
   compile --universal --generate-hashes`) arrive in Phase 5.
 - **Secrets** live in environment variables named by the config, never in files or tests.

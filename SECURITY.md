@@ -14,7 +14,9 @@ Ninshubur treats every byte from the network as hostile data.
   hash; `logs/policy.jsonl` records the codes. `tests/test_malicious.py` greps the whole data
   directory to prove injected text never lands on disk.
 - **No code paths for evasion.** No `subprocess`, `eval`, `pickle`, browser automation, CAPTCHA
-  or paywall bypass anywhere in the package (asserted by tests).
+  or paywall bypass anywhere in the package (asserted by tests). One exception, also asserted:
+  `ninshubur/explorer/sandbox.py` starts `bwrap` to run the explorer's parser with no network, no
+  home directory and an empty environment, and nothing else.
 - **Local files 0600, SQL parameterised, WAL.** Secrets only via environment variable names in
   config; `.env` loading warns when the file is group/world readable.
 - **LLM isolation (Phase 3).** Tainted text is never sent to a model; clean text goes inside
