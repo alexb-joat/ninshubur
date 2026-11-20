@@ -485,3 +485,26 @@ def test_a_certificate_that_fails_at_robots_txt_reads_as_robots_unreachable(home
     line = e.cycle().lines[0]
     assert line.code == "probe_no_answer" and e.gate.probe_error == "robots_unreachable"
     assert [p for _, p, *_ in e.seen.calls] == ["/robots.txt"]
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_a_throttled_probe_is_no_answer_and_the_cycle_does_not_wait_for_it(home, policy, status):
+    """Second review, 20 Nov: a 429 to the probe passed as "not a soft-404", and the page fetch that followed slept
+    for the host's Retry-After inside the cycle, up to an hour, holding every other site in the batch."""
+    def busy(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        return httpx.Response(status, headers={"Retry-After": "3600"}, text="slow down")
+    e = Env(home, policy, {("busy.example", "*"): busy, ("ok.example", "*"): site({"/": html("Home")})})
+    e.fr.offer("https://busy.example/")
+    e.fr.offer("https://ok.example/")
+    t0 = e.clock.t
+    busy_line, ok_line = e.cycle().lines
+    assert busy_line.code == "probe_no_answer" and not busy_line.stopped and ok_line.code == "ok"
+    assert e.clock.t - t0 < 60  # no hour-long sleep
+    assert e.stage("busy.example") == "candidate" and e.stage("ok.example") == "trial"
+    assert ("busy.example", "/") not in [(h, p) for h, p, *_ in e.seen.calls]  # the page was not asked for
+    row = e.fr.conn.execute("SELECT soft404, probe_misses FROM explorer_sites WHERE site='busy.example'").fetchone()
+    assert tuple(row) == (None, 1)  # still unprobed: the next day's run asks again, three tries in all
+    ev = [x for x in read_jsonl(home / "explorer" / "logs" / "explorer.jsonl") if x["event"] == "probe_no_answer"]
+    assert ev[-1]["why"] == f"http_{status}"

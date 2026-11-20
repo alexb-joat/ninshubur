@@ -70,6 +70,9 @@ class Outcome:
     addrs: tuple[str, ...] = ()  # what the host resolved to when the fetcher pinned it (the ladder's network check)
 
 
+THROTTLED = (429, 503)
+
+
 def _error_code(f) -> str:
     """The code for a fetch that failed. A certificate error arrives as a ConnectError with a finding beside it: the
     finding is the cause, and the ladder stops a site for it, so it is the code."""
@@ -163,7 +166,8 @@ class ExplorerGate:
 
     async def probe_soft404(self, host: str) -> bool | None:
         """Ask for a random path nobody links to; 200 (or a redirect to the front page) stops the site. None when
-        nothing answered (stopped, refused, network error): the site stays unprobed and ``probe_error`` says why."""
+        nothing answered (stopped, refused, network error, or a 429/503 asking to come back later): the site stays
+        unprobed and ``probe_error`` says why."""
         url = f"https://{host}/ninshubur-probe-{secrets.token_hex(8)}"
         plan = FetchPlan(url=url, key=f"explore-probe:{host}", max_bytes=65_536, expected_content_type=self.expected,
                          purpose="soft-404 probe")
@@ -174,6 +178,11 @@ class ExplorerGate:
             if code in SSRF_CODES:
                 self._attempt(url, code, "connect", f.error_detail or "")
         if f.error == "Stopped" or self.stopped or f.status is None:
+            return None
+        if f.status in THROTTLED:
+            # "Come back later" says nothing about the random path, and the fetcher now holds the host for the
+            # Retry-After it was given (up to an hour): the page is not asked for in this run.
+            self.probe_error = f"http_{f.status}"
             return None
         return self.frontier.note_soft404(psl.registrable(host), f.status, f.headers.get("location", ""))
 
