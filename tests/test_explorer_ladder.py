@@ -162,6 +162,21 @@ def test_without_the_sandbox_the_cycle_halts_and_uses_nothing(home, policy):
     assert not any(h == "two.example" for h, *_ in e.seen.calls)
 
 
+def test_an_event_link_over_the_cap_costs_the_link_not_the_site(home, policy):
+    """Review finding 3: a JSON-LD url over 2,048 characters failed the output re-check for the whole page
+    (parser_output_invalid), and that stops a site for good."""
+    long = {"@type": "Event", "name": "Long link", "startDate": "2027-05-01", "url": "/e?utm=" + "x" * 3000}
+    short = {"@type": "Event", "name": "Short link", "startDate": "2027-05-02", "url": "/short"}
+    ld = "".join(f"<script type='application/ld+json'>{json.dumps(o)}</script>" for o in (long, short))
+    e = Env(home, policy, {("one.example", "*"): site({"/": {"body": f"<html><head>{ld}</head><body>x</body></html>",
+                                                             "headers": HTML}})})
+    e.fr.offer("https://one.example/")
+    got = []
+    rep = e.cycle(on_records=got.extend)
+    assert rep.lines[0].code == "ok" and e.stage("one.example") == "trial"
+    assert [(r["name"], r["url"]) for r in got] == [("Long link", ""), ("Short link", "https://one.example/short")]
+
+
 def queued(e) -> list[str]:
     return [r["url"] for r in e.fr.conn.execute("SELECT url FROM explorer_frontier WHERE status='queued' ORDER BY url")]
 

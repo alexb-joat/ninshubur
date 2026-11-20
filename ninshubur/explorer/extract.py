@@ -29,6 +29,7 @@ from ..parse.htmltree import KEEP_ATTRS, Doc, Node, parse_html
 VERSION = 1
 KEEP = KEEP_ATTRS | {"hidden", "aria-hidden", "style", "aria-label", "lang"}
 MAX_LINKS = 200
+MAX_URL = 2048
 MAX_RECORDS = 50
 MAX_ATTR_TEXTS = 40
 MAX_TEXT = 20_000
@@ -76,7 +77,7 @@ def links(doc: Doc, base: str) -> tuple[list[str], int]:
         if _SKIP_REL & set(node.attrs.get("rel", "").lower().split()):
             continue
         u = _link(base, href)
-        if u and u not in seen and len(u) <= 2048:
+        if u and u not in seen and len(u) <= MAX_URL:
             seen.add(u)
             out.append(u)
             if len(out) >= MAX_LINKS:
@@ -138,6 +139,8 @@ def _record(obj: dict, base: str) -> dict | None:
         return None
     url = obj.get("url")
     url = _link(base, url) if isinstance(url, str) else None
+    if url and len(url) > MAX_URL:
+        url = None  # a tracking link without end: the record goes on without it, as links() drops such a link
     return {"type": kind, "name": name, "url": url or "", "start": start, "end": end, "place": place, "org": org}
 
 
