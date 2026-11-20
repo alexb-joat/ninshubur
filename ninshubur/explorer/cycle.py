@@ -60,10 +60,18 @@ NO_SANDBOX = "the parser sandbox can't run; see `ninshubur explore check`"
 NO_BUDGET = "today's byte budget is used up (explorer: daily_bytes in policy.yaml); the queue waits for tomorrow"
 
 
-def _candidate_status(stage: str, stopped: str | None, by_ladder: bool) -> str:
+def _candidate_status(stage: str, stopped: str | None, by_frontier: bool) -> str:
+    """What a candidate's row says after its page. A site the frontier stopped (soft-404, no answer to the probe,
+    parked, near-duplicates, no yield) was not worth reading: ``rejected``. One stopped for what it sent or tried
+    (taint, an integrity or parser failure, a denied address) is ``quarantined``."""
     if stopped:
-        return "quarantined" if by_ladder else "rejected"
+        return "rejected" if by_frontier else "quarantined"
     return stage
+
+
+def _mark(fr, row: dict, status: str, reason: str) -> None:
+    if row.get("candidate_id"):
+        store.set_status(fr.conn, row["candidate_id"], status, reason, fr.now())
 
 
 async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
@@ -88,11 +96,15 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
                 if gate.probe_error == "byte_budget":
                     rep.halted = NO_BUDGET
                     break
-                rep.lines.append(Line(url, "probe_no_answer", stage="candidate",
-                                      stopped=fr.note_probe_miss(site, gate.probe_error)))
+                gone = fr.note_probe_miss(site, gate.probe_error)
+                rep.lines.append(Line(url, "probe_no_answer", stage="candidate", stopped=gone))
+                if gone:
+                    _mark(fr, row, "rejected", gone)
                 continue
             if soft:
-                rep.lines.append(Line(url, "soft_404", stage="candidate", stopped=ladder.site(site).get("status_reason")))
+                gone = ladder.site(site).get("status_reason") or "soft_404"
+                rep.lines.append(Line(url, "soft_404", stage="candidate", stopped=gone))
+                _mark(fr, row, "rejected", gone)
                 continue
             ladder.probed(site)
         out = await gate.fetch(url, record=False)
@@ -119,9 +131,10 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
         line = Line(url, code if not page or not page.taint else f"{code},taint_{page.taint}", out.status, out.bytes,
                     stage=step.after, moved=f"{step.before} -> {step.after}" if step.before != step.after else "",
                     stopped=step.stopped or stop, hidden_links=page.hidden_links if page else 0)
-        if row.get("candidate_id"):
-            store.set_status(fr.conn, row["candidate_id"], _candidate_status(step.after, line.stopped, bool(step.stopped)),
-                             line.stopped or step.reason or code, fr.now())
+        # after_fetch also reports a stop fr.record has just made, so "by the frontier" is the frontier's own answer,
+        # unless the ladder found a graver reason of its own
+        _mark(fr, row, _candidate_status(step.after, line.stopped, by_frontier=bool(stop) and not step.own),
+              line.stopped or step.reason or code)
         if page is not None and not line.stopped:
             _follow(fr, page, row, line, lim)
             if step.after in ("trial", "admitted") and page.records:
