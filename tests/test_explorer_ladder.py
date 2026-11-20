@@ -443,3 +443,45 @@ def test_a_probe_refused_for_its_address_is_reported_as_the_stop_it_is(home, pol
     assert tuple(got) == ("quarantined", "ssrf_connect: private_address")
     assert e.fr.conn.execute("SELECT probe_misses FROM explorer_sites WHERE site='inside.example'").fetchone()[0] == 0
     assert not e.seen.calls  # nothing was sent
+
+
+def bad_certificate(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate")
+
+
+def test_a_certificate_error_stops_the_site(home, policy):
+    """Second review, 20 Nov: the fetcher reports a bad certificate as a ConnectError with a cert_error finding, the
+    gate took the error's name, and the ladder's stop for cert_error never ran: the site stayed open."""
+    routes = {("later.example", "*"): site({"/": html("Home", links=["/a"])})}
+    e = Env(home, policy, routes)
+    e.fr.offer("https://later.example/")
+    e.cycle()
+    assert e.stage("later.example") == "trial"
+    routes[("later.example", "*")] = bad_certificate
+    e.clock.t += 3600  # the same day: robots.txt is still cached, so the page itself meets the certificate
+    line = e.cycle().lines[0]
+    assert line.code == "cert_error" and line.stopped == "cert_error: https://later.example/a"
+    assert e.stage("later.example") == "stopped: cert_error: https://later.example/a"
+
+
+def test_a_plain_connection_error_still_stops_nothing(home, policy):
+    def down(request):
+        raise httpx.ConnectError("[Errno 111] Connection refused")
+    routes = {("down.example", "*"): site({"/": html("Home", links=["/a"])})}
+    e = Env(home, policy, routes)
+    e.fr.offer("https://down.example/")
+    e.cycle()
+    routes[("down.example", "*")] = down
+    e.clock.t += 3600
+    line = e.cycle().lines[0]
+    assert line.code == "ConnectError" and not line.stopped and e.stage("down.example") == "trial"
+
+
+def test_a_certificate_that_fails_at_robots_txt_reads_as_robots_unreachable(home, policy):
+    """What USAGE says of a site whose certificate is bad from the first request: robots.txt can't be read, so
+    nothing else is asked, and the probe rule is what stops it."""
+    e = Env(home, policy, {("selfsigned.example", "*"): bad_certificate})
+    e.fr.offer("https://selfsigned.example/")
+    line = e.cycle().lines[0]
+    assert line.code == "probe_no_answer" and e.gate.probe_error == "robots_unreachable"
+    assert [p for _, p, *_ in e.seen.calls] == ["/robots.txt"]

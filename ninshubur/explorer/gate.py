@@ -70,6 +70,14 @@ class Outcome:
     addrs: tuple[str, ...] = ()  # what the host resolved to when the fetcher pinned it (the ladder's network check)
 
 
+def _error_code(f) -> str:
+    """The code for a fetch that failed. A certificate error arrives as a ConnectError with a finding beside it: the
+    finding is the cause, and the ladder stops a site for it, so it is the code."""
+    if any(x.code == "cert_error" for x in f.findings):
+        return "cert_error"
+    return "address_refused" if f.error == "AddressRefused" else f.error.removeprefix("refused:")
+
+
 class ExplorerGate:
     def __init__(self, conn: sqlite3.Connection, policy: Policy, cfg: Config, home: Path, *,
                  transport: httpx.AsyncBaseTransport | None = None,
@@ -121,7 +129,7 @@ class ExplorerGate:
         out = Outcome(url=url, status=f.status, code="ok", bytes=len(f.body), content_type=f.headers.get("content-type", ""),
                       final_url=f.final_url or url, addrs=self.resolved.get(host, ()))
         if f.error:
-            out.code = "address_refused" if f.error == "AddressRefused" else f.error.removeprefix("refused:")
+            out.code = _error_code(f)
             if f.error == "Stopped" or self.stopped:
                 out.code = "stopped"
                 return out  # left queued: nothing was asked, the next run picks it up
@@ -162,7 +170,7 @@ class ExplorerGate:
         f = await self.fetcher.fetch(plan, SOURCE, self.spec, extra_hosts=(host,))
         self.probe_error = ""
         if f.error and f.error != "Stopped":
-            code = self.probe_error = "address_refused" if f.error == "AddressRefused" else f.error.removeprefix("refused:")
+            code = self.probe_error = _error_code(f)
             if code in SSRF_CODES:
                 self._attempt(url, code, "connect", f.error_detail or "")
         if f.error == "Stopped" or self.stopped or f.status is None:
