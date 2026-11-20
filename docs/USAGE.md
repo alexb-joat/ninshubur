@@ -454,16 +454,16 @@ codes in its reason, as in `taint: high-severity content (prompt_injection) on h
 
 **The trial ladder.** A site moves candidate → probed (the random-path probe answered 404) → trial (one page a day
 until its first clean page, then 5) → admitted (20 a day) after 20 clean pages, or after 7 days with at least 3.
-Admitted is still the lowest trust: only you promote a site to a real source. An admitted site goes back to trial
-when its address moves network (another IPv4 /16 or IPv6 /32), its front page drifts more than 24 of 64 simhash bits
-from the one it was admitted with, or it hasn't had a clean page in 30 days. (The drift rule waits for a piece not
-built yet: the explorer reads no URL twice, so an admitted site's front page isn't read again.) High taint, a soft-404, an integrity
-failure (certificate error, decompression bomb, oversized body, invalid UTF-8) or a parser
-failure (timeout, memory, crash, bad output) stops it. A link that turns out to be a PDF, an image or a feed stops
-nothing: its body is never read, and it counts as a page that yielded nothing. (A certificate that fails while `robots.txt` is being read
-shows as `robots_unreachable` instead: nothing is fetched from the site, and the probe and no-yield rules stop it.) A site that doesn't answer the probe (it's down, its
-robots.txt says no, or it answers 429 or 503) is asked again once a day and stopped after three tries (`probe_tries`), so it can't hold up
-the queue.
+Admitted is still the lowest trust: only you promote a site to a real source. An admitted site goes back to trial when
+its address moves network (another IPv4 /16 or IPv6 /32), its front page drifts more than 24 of 64 simhash bits from
+the one it was admitted with, or it hasn't had a clean page in 30 days. (The drift rule waits for a piece not built
+yet: the explorer reads no URL twice, so an admitted site's front page isn't read again.) High taint, a soft-404, an
+integrity failure (certificate error, decompression bomb, oversized body, invalid UTF-8) or a parser failure (timeout,
+memory, crash, bad output) stops it. A link that turns out to be a PDF, an image or a feed stops nothing: its body is
+never read, and it counts as a page that yielded nothing. (A certificate that fails while `robots.txt` is being read
+shows as `robots_unreachable` instead: nothing is fetched from the site, and the probe and no-yield rules stop it.) A
+site that doesn't answer the probe (it's down, its robots.txt says no, or it answers 429 or 503) is asked again once a
+day and stopped after three tries (`probe_tries`), so it can't hold up the queue.
 
 **The hand-off is one-way.** Events and jobs from sites in trial or admitted go to
 `explorer/out/YYYY-MM-DD.jsonl` (4 KB a line, 2 MB a file, 14 files kept). The main daemon reads them each tick,
