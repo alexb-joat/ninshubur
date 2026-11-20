@@ -462,8 +462,9 @@ the queue.
 **The hand-off is one-way.** Events and jobs from sites in trial or admitted go to
 `explorer/out/YYYY-MM-DD.jsonl` (4 KB a line, 2 MB a file, 14 files kept). The main daemon reads them each tick,
 checks every line again, scans it again and stores what passes as **held** Tier 3 items of the source `explorer`,
-marked "found by explorer": a suggestion built on one is marked held too and never leaves this machine. Neither
-side opens the other's database. `explorer: {read_inbox: false}` in `config.yaml` stops reading.
+marked "found by explorer": a suggestion built on one is marked held too and never leaves this machine. Each batch
+it takes is one `explorer_inbox` line in `logs/policy.jsonl` (stored, updated, refused and why). Neither side opens
+the other's database. `explorer: {read_inbox: false}` in `config.yaml` stops reading.
 
 **Two switches stop it.** `explore stop` writes `explorer/STOP`: the gate checks it before every request, so a
 running cycle halts at its next one, and the systemd unit won't start while it exists. The second layer is

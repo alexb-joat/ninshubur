@@ -186,7 +186,27 @@ def test_symlinks_and_odd_names_in_the_folder_are_skipped(env, home, tmp_path):
     (d / "2026-11-18.jsonl").symlink_to(target)
     (d / "notes.jsonl").write_text(target.read_text())
     rep = read()
-    assert rep.stored == 0 and rep.skipped_files == ["2026-11-18.jsonl: can't open"]
+    assert rep.stored == 0 and rep.skipped_files == ["2026-11-18.jsonl: a symlink, never followed"]
+
+
+def test_a_fifo_in_the_folder_never_blocks_the_tick(env, home):
+    """Opening a FIFO for reading waits for a writer, so one planted under a hand-off name would have hung main's
+    tick. It is told from the listing and never opened."""
+    writer, read, conn = env
+    writer.write([rec()])
+    os.mkfifo(out_dir(home) / "2026-11-01.jsonl")
+
+    def hung(*_):
+        raise TimeoutError("the reader blocked on the FIFO")
+
+    before = signal.signal(signal.SIGALRM, hung)  # a blocked open is interrupted, so a regression fails instead of hanging
+    signal.alarm(10)
+    try:
+        rep = read()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, before)
+    assert rep.stored == 1 and rep.skipped_files == ["2026-11-01.jsonl: not a regular file"]
 
 
 def test_one_flag_stops_reading(env, home, policy):
@@ -220,7 +240,75 @@ def test_the_daemon_tick_survives_a_broken_inbox(home, policy, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("explorer folder is a mess")
 
-    monkeypatch.setattr("ninshubur.explorer.handoff.read_inbox", boom)
+    monkeypatch.setattr("ninshubur.explorer.handoff.Inbox.read", boom)
     assert s.read_explorer_inbox() is None
     assert read_jsonl(home / "logs" / "policy.jsonl")[-1]["event"] == "explorer_inbox_error"
     s.sync_sources()  # the explorer's source row is never disabled as "removed from config"
+
+
+# -- the reader the daemon keeps (review finding 10) ---------------------------------------------------------------------
+def scheduler(home, policy):
+    from ninshubur.fetch import Fetcher
+    from ninshubur.ingest import Ingestor
+    from ninshubur.schedule import Scheduler
+    write_config(home)
+    cfg = load_config(home, policy=policy)
+    conn = connect(home)
+    return Scheduler(conn, policy, cfg, home, Fetcher(conn, policy, cfg, home), Ingestor(conn, policy, cfg, home),
+                     now=lambda: NOW)
+
+
+def inbox_events(home) -> list[dict]:
+    return [e for e in read_jsonl(home / "logs" / "policy.jsonl") if e.get("event") == "explorer_inbox"]
+
+
+def test_a_tick_with_nothing_new_opens_no_file_and_builds_nothing(home, policy, monkeypatch):
+    """Every 30-second tick used to build an Ingestor and a log, create the table and open and fstat each of up to
+    14 files, news or not. Now the daemon keeps one reader, and an idle tick is one directory listing."""
+    s = scheduler(home, policy)
+    writer = Writer(home, JsonlLog(home / "explorer" / "logs" / "explorer.jsonl"), now=lambda: NOW)
+    writer.write([rec()])
+    for day in (1, 2, 3):
+        (out_dir(home) / time.strftime("%Y-%m-%d.jsonl", time.gmtime(NOW - day * 86400))).write_text("")
+    assert s.read_explorer_inbox().stored == 1
+    reader = s._inbox
+    assert reader.ingestor is s.ingestor  # the daemon's own, not a new one per tick
+
+    opened, real_open = [], os.open
+    monkeypatch.setattr(handoff.os, "open", lambda path, *a, **k: opened.append(Path(path).name) or real_open(path, *a, **k))
+    monkeypatch.setattr(handoff, "Ingestor", lambda *a, **k: pytest.fail("an Ingestor was built on a tick"))
+    statements = []
+    s.conn.set_trace_callback(statements.append)
+    for _ in range(3):
+        rep = s.read_explorer_inbox()
+        assert (rep.files, rep.lines) == (0, 0)
+    s.conn.set_trace_callback(None)
+    assert s._inbox is reader and opened == [] and statements == []
+
+    writer.write([rec("Second")])  # news: only the file that grew is opened
+    opened.clear()  # the writer's own open of it
+    assert s.read_explorer_inbox().stored == 1
+    assert [n for n in opened if handoff.FILE_NAME.match(n)] == [time.strftime("%Y-%m-%d.jsonl", time.gmtime(NOW))]
+
+
+def test_what_main_stores_is_logged_once_per_batch(home, policy):
+    """A stored hand-off used to leave no line in policy.jsonl unless something in it was refused."""
+    s = scheduler(home, policy)
+    writer = Writer(home, JsonlLog(home / "explorer" / "logs" / "explorer.jsonl"), now=lambda: NOW)
+    writer.write([rec(), rec("Backend engineer", type="hiring")])
+    s.read_explorer_inbox()
+    s.read_explorer_inbox()
+    [e] = inbox_events(home)
+    assert (e["files"], e["lines"], e["stored"], e["updated"], e["bad"]) == (1, 2, 2, 0, 0)
+
+
+def test_a_second_reader_never_makes_the_daemon_read_lines_twice(home, policy):
+    s = scheduler(home, policy)
+    writer = Writer(home, JsonlLog(home / "explorer" / "logs" / "explorer.jsonl"), now=lambda: NOW)
+    writer.write([rec()])
+    assert s.read_explorer_inbox().stored == 1
+    writer.write([rec("Second")])
+    assert read_inbox(s.conn, policy, s.cfg, home, now=lambda: NOW).stored == 1  # `explore inbox` beside the daemon
+    rep = s.read_explorer_inbox()  # its remembered offset is stale; the database's is asked before reading
+    assert (rep.lines, rep.stored, rep.updated) == (0, 0, 0)
+    assert rows(s.conn, "SELECT lines, stored FROM explorer_inbox") == [{"lines": 2, "stored": 2}]

@@ -62,6 +62,7 @@ class Scheduler:
         self.home = home
         self.fetcher = fetcher
         self.ingestor = ingestor
+        self._inbox = None  # the explorer hand-off's reader, made at the first tick (read_explorer_inbox)
         self.now = now
         self.rng = rng or random.Random()
         self.reachable = reachable
@@ -365,9 +366,11 @@ class Scheduler:
     def read_explorer_inbox(self):
         """Store what the explorer handed off since the last tick (capped JSONL files only; held, Tier 3). A broken
         or missing explorer never stops the tick: the reader skips what it can't use, and a failure is logged."""
-        from .explorer.handoff import read_inbox
+        from .explorer.handoff import Inbox
         try:
-            return read_inbox(self.conn, self.policy, self.cfg, self.home, now=self.now)
+            if self._inbox is None:  # one reader for the daemon's life: a tick with nothing new opens no file
+                self._inbox = Inbox(self.conn, self.policy, self.home, ingestor=self.ingestor, now=self.now)
+            return self._inbox.read(self.cfg)
         except Exception as e:  # noqa: BLE001 - the explorer's output must never take main down
             self.ingestor.policy_log.write({"event": "explorer_inbox_error", "error": type(e).__name__, "detail": str(e)[:200]})
             return None

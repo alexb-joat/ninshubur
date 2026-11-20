@@ -177,83 +177,127 @@ def _item(r: dict, codes: tuple[str, ...]) -> Item:
                 tainted=bool(codes), taint_codes=codes, taint_severity="medium" if codes else None)
 
 
+class Inbox:
+    """Main Ninshubur's reader, kept for the daemon's life. The table and the offsets are set up once, and a tick
+    with nothing new costs one directory listing: no file is opened, nothing is queried, nothing is built. A file is
+    opened only when it is longer than what was read of it, and its offset is asked of the database again then, so
+    a second reader (``explore inbox`` beside the daemon) can't make this one read lines twice."""
+
+    def __init__(self, conn: sqlite3.Connection, policy: Policy, home: Path, *, ingestor: Ingestor | None = None,
+                 now: Callable[[], float] = time.time):
+        self.conn, self.policy, self.home, self.now = conn, policy, home, now
+        self.ingestor = ingestor
+        self.log = JsonlLog(home / "logs" / "policy.jsonl")
+        self.offsets: dict[str, int] | None = None  # file name -> bytes read, as of this reader's last look
+
+    def _files(self) -> list[tuple[str, os.stat_result | None]]:
+        d = out_dir(self.home)
+        if not d.is_dir() or d.is_symlink():
+            return []
+        out = []
+        with os.scandir(d) as it:
+            for e in it:
+                if FILE_NAME.match(e.name):
+                    try:
+                        out.append((e.name, e.stat(follow_symlinks=False)))
+                    except OSError:
+                        out.append((e.name, None))
+        return sorted(out, key=lambda x: x[0])
+
+    def read(self, cfg: Config, *, dry_run: bool = False) -> InboxReport:
+        """Read what the explorer wrote since last time into main's database (``dry_run``: count, store nothing)."""
+        rep = InboxReport(enabled=cfg.get("explorer", "read_inbox", default=True) is not False)
+        if not rep.enabled:
+            return rep
+        try:
+            files = self._files()
+        except OSError:
+            return rep
+        if not files:
+            return rep
+        if self.offsets is None:
+            self.conn.execute(INBOX_SCHEMA)
+            self.offsets = {r["file"]: int(r["offset"]) for r in self.conn.execute("SELECT file, offset FROM explorer_inbox")}
+        ing = self.ingestor
+        source_ready = False
+        budget = READ_PER_CALL
+        d = out_dir(self.home)
+        for name, lst in files:
+            if lst is None:
+                rep.skipped_files.append(f"{name}: can't open")
+                continue
+            if not stat.S_ISREG(lst.st_mode):  # told from the listing: a FIFO is never opened (it would block the tick)
+                rep.skipped_files.append(f"{name}: " + ("a symlink, never followed" if stat.S_ISLNK(lst.st_mode)
+                                                        else "not a regular file"))
+                continue
+            if lst.st_size > MAX_FILE:
+                rep.skipped_files.append(f"{name}: over {MAX_FILE:,} bytes, read up to the cap")
+            if min(lst.st_size, MAX_FILE) <= self.offsets.get(name, 0) or budget <= 0:
+                continue
+            try:
+                fd = os.open(d / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            except OSError:
+                rep.skipped_files.append(f"{name}: can't open")
+                continue
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):  # swapped since the listing
+                    rep.skipped_files.append(f"{name}: not a regular file")
+                    continue
+                pos = one(self.conn, "SELECT offset FROM explorer_inbox WHERE file=?", (name,))
+                start = self.offsets[name] = int(pos["offset"]) if pos else 0
+                end = min(st.st_size, MAX_FILE)
+                if start >= end:
+                    continue
+                chunk = os.pread(fd, min(end - start, budget), start)
+            finally:
+                os.close(fd)
+            cut = chunk.rfind(b"\n") + 1  # only whole lines; a torn tail waits (or is ended by the writer's next line)
+            if cut == 0:
+                continue
+            rep.files += 1
+            budget -= cut
+            bad_before, n_stored = rep.bad, 0
+            for raw in chunk[:cut].split(b"\n")[:-1]:
+                if not raw.strip():
+                    continue
+                rep.lines += 1
+                r, why = check_line(raw)
+                if r is None:
+                    rep.refuse(why)
+                    continue
+                findings = [f for k in ("name", "place", "org") for f in detectors.scan_text(r[k])]
+                if detectors.worst(findings) == "high":
+                    rep.dropped_taint += 1
+                    continue
+                codes = tuple(dict.fromkeys([*r["taint"], *detectors.codes(findings)]))
+                rep.tainted += int(bool(codes))
+                if dry_run:
+                    n_stored += 1
+                    continue
+                if not source_ready:
+                    ing = ing or Ingestor(self.conn, self.policy, cfg, self.home, now=self.now)
+                    ing.ensure_source(SOURCE, SPEC)
+                    source_ready = True
+                created = ing._store_item(_item(r, codes), SOURCE, float(r["found_at"]), held=True)
+                rep.stored += int(created)
+                rep.updated += int(not created)
+                n_stored += 1
+            if not dry_run:
+                with self.conn:
+                    self.conn.execute("""INSERT INTO explorer_inbox(file, offset, lines, stored, bad, at) VALUES (?,?,?,?,?,?)
+                                         ON CONFLICT(file) DO UPDATE SET offset=excluded.offset, lines=lines+excluded.lines,
+                                           stored=stored+excluded.stored, bad=bad+excluded.bad, at=excluded.at""",
+                                      (name, start + cut, chunk[:cut].count(b"\n"), n_stored, rep.bad - bad_before, self.now()))
+                self.offsets[name] = start + cut
+        if rep.lines and not dry_run:  # once per batch the explorer handed off, not per tick: what main took and what it refused
+            self.log.write({"event": "explorer_inbox", "files": rep.files, "lines": rep.lines, "stored": rep.stored,
+                            "updated": rep.updated, "tainted": rep.tainted, "bad": rep.bad,
+                            "dropped_taint": rep.dropped_taint, "reasons": rep.reasons})
+        return rep
+
+
 def read_inbox(conn: sqlite3.Connection, policy: Policy, cfg: Config, home: Path, *,
                now: Callable[[], float] = time.time, dry_run: bool = False) -> InboxReport:
-    """Read what the explorer wrote since last time into main's database (``dry_run``: count, store nothing)."""
-    rep = InboxReport(enabled=cfg.get("explorer", "read_inbox", default=True) is not False)
-    if not rep.enabled:
-        return rep
-    d = out_dir(home)
-    try:
-        if not d.is_dir() or d.is_symlink():
-            return rep
-        names = sorted(p.name for p in d.iterdir() if FILE_NAME.match(p.name))
-    except OSError:
-        return rep
-    conn.execute(INBOX_SCHEMA)
-    ing = Ingestor(conn, policy, cfg, home, now=now)
-    source_ready = False
-    budget = READ_PER_CALL
-    log = JsonlLog(home / "logs" / "policy.jsonl")
-    for name in names:
-        path = d / name
-        try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        except OSError:
-            rep.skipped_files.append(f"{name}: can't open")
-            continue
-        try:
-            st = os.fstat(fd)
-            if not stat.S_ISREG(st.st_mode):
-                rep.skipped_files.append(f"{name}: not a regular file")
-                continue
-            pos = one(conn, "SELECT offset FROM explorer_inbox WHERE file=?", (name,))
-            start = int(pos["offset"]) if pos else 0
-            end = min(st.st_size, MAX_FILE)
-            if st.st_size > MAX_FILE:
-                rep.skipped_files.append(f"{name}: over {MAX_FILE:,} bytes, read up to the cap")
-            if start >= end or budget <= 0:
-                continue
-            chunk = os.pread(fd, min(end - start, budget), start)
-        finally:
-            os.close(fd)
-        cut = chunk.rfind(b"\n") + 1  # only whole lines; a torn tail waits (or is ended by the writer's next line)
-        if cut == 0:
-            continue
-        rep.files += 1
-        budget -= cut
-        bad_before, n_stored = rep.bad, 0
-        for raw in chunk[:cut].split(b"\n")[:-1]:
-            if not raw.strip():
-                continue
-            rep.lines += 1
-            r, why = check_line(raw)
-            if r is None:
-                rep.refuse(why)
-                continue
-            findings = [f for k in ("name", "place", "org") for f in detectors.scan_text(r[k])]
-            if detectors.worst(findings) == "high":
-                rep.dropped_taint += 1
-                continue
-            codes = tuple(dict.fromkeys([*r["taint"], *detectors.codes(findings)]))
-            rep.tainted += int(bool(codes))
-            if dry_run:
-                n_stored += 1
-                continue
-            if not source_ready:
-                ing.ensure_source(SOURCE, SPEC)
-                source_ready = True
-            created = ing._store_item(_item(r, codes), SOURCE, float(r["found_at"]), held=True)
-            rep.stored += int(created)
-            rep.updated += int(not created)
-            n_stored += 1
-        if not dry_run:
-            with conn:
-                conn.execute("""INSERT INTO explorer_inbox(file, offset, lines, stored, bad, at) VALUES (?,?,?,?,?,?)
-                                ON CONFLICT(file) DO UPDATE SET offset=excluded.offset, lines=lines+excluded.lines,
-                                  stored=stored+excluded.stored, bad=bad+excluded.bad, at=excluded.at""",
-                             (name, start + cut, chunk[:cut].count(b"\n"), n_stored, rep.bad - bad_before, now()))
-    if (rep.bad or rep.dropped_taint) and not dry_run:
-        log.write({"event": "explorer_inbox", "lines": rep.lines, "stored": rep.stored, "bad": rep.bad,
-                   "dropped_taint": rep.dropped_taint, "reasons": rep.reasons})
-    return rep
+    """One read with a reader of its own (the ``explore inbox`` command); the daemon keeps an ``Inbox``."""
+    return Inbox(conn, policy, home, now=now).read(cfg, dry_run=dry_run)
