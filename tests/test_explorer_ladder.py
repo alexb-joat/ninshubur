@@ -426,3 +426,20 @@ def test_one_cycle_through_the_real_sandbox(home, policy):
     got = []
     rep = e.cycle(sandbox=Sandbox(), on_records=got.extend)
     assert rep.lines[0].code == "ok" and [r["name"] for r in got] == ["Real"]
+
+
+def test_a_probe_refused_for_its_address_is_reported_as_the_stop_it_is(home, policy):
+    """Second review, 20 Nov: a new site whose name resolves to a private address is stopped by the gate on its first
+    request, the probe. The cycle called that "no answer": no stop on the line, and the candidate stayed a candidate,
+    which `explore queue` never offers again."""
+    e = Env(home, policy, {("inside.example", "*"): site({"/": html("Home")})}, resolve=lambda h: ["10.0.0.5"])
+    store.add_candidates(e.fr.conn, [store.Candidate("https://inside.example/", "logged_link", "test")], NOW)
+    cid = e.fr.conn.execute("SELECT id FROM explorer_candidates").fetchone()[0]
+    e.fr.offer("https://inside.example/", candidate_id=cid)
+    line = e.cycle().lines[0]
+    assert line.code == "private_address" and line.stopped == "ssrf_connect: private_address"
+    assert e.stage("inside.example") == "stopped: ssrf_connect: private_address"
+    got = e.fr.conn.execute("SELECT status, status_reason FROM explorer_candidates WHERE id=?", (cid,)).fetchone()
+    assert tuple(got) == ("quarantined", "ssrf_connect: private_address")
+    assert e.fr.conn.execute("SELECT probe_misses FROM explorer_sites WHERE site='inside.example'").fetchone()[0] == 0
+    assert not e.seen.calls  # nothing was sent

@@ -97,6 +97,12 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
                 if gate.probe_error == "byte_budget":
                     rep.halted = NO_BUDGET
                     break
+                now = ladder.site(site)
+                if now.get("status", "open") != "open":  # the gate stopped it: the probe would have reached a denied address
+                    gone = now.get("status_reason") or "stopped"
+                    rep.lines.append(Line(url, gate.probe_error or "probe_no_answer", stage="candidate", stopped=gone))
+                    _mark(fr, row, "quarantined", gone)
+                    continue
                 gone = fr.note_probe_miss(site, gate.probe_error)
                 rep.lines.append(Line(url, "probe_no_answer", stage="candidate", stopped=gone))
                 if gone:
