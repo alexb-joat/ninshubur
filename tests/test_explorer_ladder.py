@@ -185,6 +185,41 @@ def test_a_soft404_site_is_stopped_before_its_page_is_asked_for(home, policy):
     assert not any(p == "/real" for _, p, *_ in e.seen.calls)
 
 
+def refuses_robots(request: httpx.Request) -> httpx.Response:
+    """A site that answers nothing but a robots.txt that says no."""
+    if request.url.path == "/robots.txt":
+        return httpx.Response(200, headers={"Content-Type": "text/plain"}, text="User-agent: *\nDisallow: /\n")
+    return httpx.Response(500, text="never asked")
+
+
+def test_sites_that_never_answer_the_probe_do_not_hold_up_the_queue(home, policy):
+    """Review finding 1: ten such sites at the front of the queue came back every run, and nothing behind them was
+    ever fetched. Now a try without an answer is the site's page for the day, and the third stops the site."""
+    routes = {(f"dead{i}.example", "*"): refuses_robots for i in range(3)}
+    e = Env(home, policy, {**routes, ("live.example", "*"): site({"/": html("Live")})})
+    for i in range(3):
+        e.fr.offer(f"https://dead{i}.example/")
+    e.clock.t += 1
+    e.fr.offer("https://live.example/")
+
+    first = e.cycle(limit=3)
+    assert [x.code for x in first.lines] == ["probe_no_answer"] * 3 and not any(x.stopped for x in first.lines)
+    second = e.cycle(limit=3)  # the same day: the dead sites have had their try, so the live one gets its turn
+    assert [(x.url, x.code) for x in second.lines] == [("https://live.example/", "ok")]
+    assert e.stage("live.example") == "trial"
+
+    e.clock.t += 86400
+    assert all(x.code == "probe_no_answer" and not x.stopped for x in e.cycle(limit=3).lines)
+    e.clock.t += 86400
+    third = e.cycle(limit=3)
+    assert all(x.stopped and x.stopped.startswith("probe_no_answer: 3 probes") for x in third.lines)
+    assert e.stage("dead0.example") == "stopped: probe_no_answer: 3 probes without an answer (last: robots_disallow)"
+    assert e.fr.next_batch(10) == []  # their URLs are dropped; nothing waits at the front any more
+    assert not any(p == "/" for h, p, *_ in e.seen.calls if h.startswith("dead"))  # and their pages were never asked for
+    events = [x for x in read_jsonl(home / "explorer" / "logs" / "explorer.jsonl") if x.get("event") == "probe_no_answer"]
+    assert len(events) == 9 and events[-1]["tries"] == 3 and events[-1]["why"] == "robots_disallow"
+
+
 def test_links_stop_after_max_hops(home, policy):
     pages = {"/": html("H0", links=["/a"]), "/a": html("H1 deeper", links=["/b"]), "/b": html("H2 deepest", links=["/c"])}
     e = Env(home, policy, {("one.example", "*"): site(pages)}, trial_pages_per_day=10, max_hops=2)

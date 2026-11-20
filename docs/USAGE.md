@@ -453,7 +453,9 @@ Admitted is still the lowest trust: only you promote a site to a real source. An
 when its address moves network (another IPv4 /16 or IPv6 /32), its front page drifts more than 24 of 64 simhash bits
 from the one it was admitted with, or it hasn't had a clean page in 30 days. High taint, a soft-404, an integrity
 failure (certificate error, wrong content type, decompression bomb, oversized body, invalid UTF-8) or a parser
-failure (timeout, memory, crash, bad output) stops it.
+failure (timeout, memory, crash, bad output) stops it. A site that doesn't answer the probe (it's down, or its
+robots.txt says no) is asked again once a day and stopped after three tries (`probe_tries`), so it can't hold up
+the queue.
 
 **The hand-off is one-way.** Events and jobs from sites in trial or admitted go to
 `explorer/out/YYYY-MM-DD.jsonl` (4 KB a line, 2 MB a file, 14 files kept). The main daemon reads them each tick,

@@ -56,6 +56,7 @@ explorer:
   near_duplicate_hamming: 3 # simhash bits apart that still count as "the same page" (64-bit, k=3: Manku et al., WWW 2007)
   near_duplicate_share: 0.6 # of the last 10 pages on a site; above it the site is stopped (generated mazes)
   no_yield_pages: 30        # pages fetched with nothing useful found; then the site is stopped
+  probe_tries: 3            # soft-404 probes without an answer (site down, robots.txt says no), one a day; then stopped
   year_min: 1995            # a date in a URL outside year_min .. this year + years_ahead marks a walked calendar
   years_ahead: 2
   content_types: [text/html, application/json]

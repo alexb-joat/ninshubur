@@ -90,6 +90,7 @@ MERGE_RULES: dict[tuple[str, ...], str] = {
     ("explorer", "parser_timeout_s"): "min",
     ("explorer", "tripwire_ssrf"): "min",
     ("explorer", "tripwire_window_s"): "max",
+    ("explorer", "probe_tries"): "min",
     ("explorer", "disk_quota_bytes"): "min",
     ("admission", "min_field_validity"): "max",
     ("reputation", "suspect_below"): "max",

@@ -2,7 +2,8 @@
 
 For each URL the frontier releases (at most one per site, within the site's day cap for its rung):
 
-1. a site never probed gets the random-path soft-404 probe first (one request); no answer leaves it for later;
+1. a site never probed gets the random-path soft-404 probe first (one request); no answer uses up the site's page
+   for today, and ``probe_tries`` tries without an answer stop it, so a dead site never holds up the queue;
 2. the gate fetches the page (STOP file, DNS pin, deadline, caps, robots: all in the gate and the shared fetcher);
 3. the body goes to the bwrap parser and its answer is re-checked and taint-scanned (``sandbox.py``); the body stays
    in memory and is never written anywhere;
@@ -79,7 +80,8 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
                 if gate.stopped:
                     rep.halted = f"the STOP file exists ({gate.stop_path})"
                     break
-                rep.lines.append(Line(url, "probe_no_answer", stage="candidate"))
+                rep.lines.append(Line(url, "probe_no_answer", stage="candidate",
+                                      stopped=fr.note_probe_miss(site, gate.probe_error)))
                 continue
             if soft:
                 rep.lines.append(Line(url, "soft_404", stage="candidate", stopped=ladder.site(site).get("status_reason")))

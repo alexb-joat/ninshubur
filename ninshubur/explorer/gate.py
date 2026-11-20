@@ -79,6 +79,7 @@ class ExplorerGate:
         self.home = explorer_home(home)
         self.app_home = home
         self.tripped: str | None = None  # set when this gate's attempts wrote the STOP file
+        self.probe_error = ""  # why the last soft-404 probe got no answer ("robots_disallow", "ConnectTimeout", ...)
         self.stop_path = self.home / "STOP"
         self.frontier = Frontier(conn, policy, home, now=now)
         lim = self.frontier.limits
@@ -154,13 +155,14 @@ class ExplorerGate:
 
     async def probe_soft404(self, host: str) -> bool | None:
         """Ask for a random path nobody links to; 200 (or a redirect to the front page) stops the site. None when
-        nothing answered (stopped, refused, network error): the site stays unprobed."""
+        nothing answered (stopped, refused, network error): the site stays unprobed and ``probe_error`` says why."""
         url = f"https://{host}/ninshubur-probe-{secrets.token_hex(8)}"
         plan = FetchPlan(url=url, key=f"explore-probe:{host}", max_bytes=65_536, expected_content_type=self.expected,
                          purpose="soft-404 probe")
         f = await self.fetcher.fetch(plan, SOURCE, self.spec, extra_hosts=(host,))
+        self.probe_error = ""
         if f.error and f.error != "Stopped":
-            code = "address_refused" if f.error == "AddressRefused" else f.error.removeprefix("refused:")
+            code = self.probe_error = "address_refused" if f.error == "AddressRefused" else f.error.removeprefix("refused:")
             if code in SSRF_CODES:
                 self._attempt(url, code, "connect", f.error_detail or "")
         if f.error == "Stopped" or self.stopped or f.status is None:

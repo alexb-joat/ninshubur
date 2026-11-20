@@ -34,7 +34,7 @@ SCHEMA = [
         site TEXT PRIMARY KEY, hosts TEXT NOT NULL DEFAULT '[]', first_seen REAL NOT NULL,
         pages_total INTEGER NOT NULL DEFAULT 0, day TEXT, pages_day INTEGER NOT NULL DEFAULT 0,
         useful_total INTEGER NOT NULL DEFAULT 0, since_useful INTEGER NOT NULL DEFAULT 0,
-        recent TEXT NOT NULL DEFAULT '[]', soft404 INTEGER, parked TEXT,
+        recent TEXT NOT NULL DEFAULT '[]', soft404 INTEGER, parked TEXT, probe_misses INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'open', status_reason TEXT, status_at REAL,
         stage TEXT NOT NULL DEFAULT 'candidate', stage_at REAL, trial_started REAL,
         clean_fetches INTEGER NOT NULL DEFAULT 0, last_clean REAL, fingerprint TEXT, nets TEXT NOT NULL DEFAULT '[]')""",
@@ -47,10 +47,10 @@ SCHEMA = [
         PRIMARY KEY(site, shape))""",
 ]
 
-# Ladder columns added in session E2; a database made by E1 gets them on first open.
+# Columns added after E1 (the ladder's, then the probe count); an older database gets them on first open.
 SITE_COLUMNS = {"stage": "TEXT NOT NULL DEFAULT 'candidate'", "stage_at": "REAL", "trial_started": "REAL",
                 "clean_fetches": "INTEGER NOT NULL DEFAULT 0", "last_clean": "REAL", "fingerprint": "TEXT",
-                "nets": "TEXT NOT NULL DEFAULT '[]'"}
+                "nets": "TEXT NOT NULL DEFAULT '[]'", "probe_misses": "INTEGER NOT NULL DEFAULT 0"}
 
 # Refusal codes that name an attempt to reach this machine or its network rather than a public page.
 SSRF_CODES = frozenset({"url_ip_literal", "url_port", "url_numeric_host", "url_userinfo", "url_single_label",
@@ -88,6 +88,7 @@ class Limits:
     parser_timeout_s: float = 20.0
     tripwire_ssrf: int = 3
     tripwire_window_s: int = 86400
+    probe_tries: int = 3
     disk_quota_bytes: int = 500_000_000
 
     @classmethod
@@ -276,6 +277,25 @@ class Frontier:
         if soft:
             self.stop_site(site, f"soft_404: a random path answered {status}")
         return soft
+
+    def note_probe_miss(self, site: str, why: str = "") -> str | None:
+        """The random-path probe for ``site`` got no answer: the site is down, or its robots.txt refuses the path.
+
+        The try uses up the site's page for today, so the next batch goes on to other sites instead of asking this
+        one again every run, and after ``probe_tries`` tries without an answer the site is stopped. Returns the
+        stop reason, if it was."""
+        today = time.strftime("%Y-%m-%d", time.gmtime(self.now()))
+        n = int(self._site(site)["probe_misses"]) + 1
+        with self.conn:
+            self.conn.execute("""UPDATE explorer_sites SET probe_misses=?,
+                                   pages_day=CASE WHEN day IS ? THEN pages_day+1 ELSE 1 END, day=? WHERE site=?""",
+                              (n, today, today, site))
+        self.log.write({"event": "probe_no_answer", "site": site, "why": why[:120], "tries": n})
+        if n < self.limits.probe_tries:
+            return None
+        reason = f"probe_no_answer: {n} probes without an answer (last: {why[:80] or 'nothing came back'})"
+        self.stop_site(site, reason)
+        return reason
 
     def stop_site(self, site: str, reason: str) -> None:
         """Stop ``site`` (created if it has no row yet, so a stop is never lost) and drop its queued URLs."""
