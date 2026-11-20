@@ -292,6 +292,7 @@ class Page:
     records: list[dict]
     taint: str | None = None
     taint_codes: tuple[str, ...] = ()
+    taint_worst: tuple[str, ...] = ()  # the codes at the severity ``taint`` names: what a stop is for
     limited: bool = False
     useful: bool = False
     texts_scanned: int = 0
@@ -324,5 +325,6 @@ def read_page(o: dict) -> Page:
     useful = any(r["start"] or r["url"] for r in records)
     return Page(title=sanitize_str(o["title"], 300) or "", description=sanitize_str(o["description"], 500) or "",
                 lang=sanitize_str(o["lang"], 20) or "", links=list(o["links"]), hidden_links=o["hidden_links"],
-                records=records, taint=taint, taint_codes=detectors.codes(findings), limited=o["limited"],
+                records=records, taint=taint, taint_codes=detectors.codes(findings),
+                taint_worst=detectors.codes(f for f in findings if f.severity == taint), limited=o["limited"],
                 useful=useful, texts_scanned=len(texts))

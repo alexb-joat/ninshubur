@@ -42,6 +42,7 @@ class Line:
     hidden_links: int = 0
     records: int = 0
     stopped: str | None = None
+    taint_codes: tuple[str, ...] = ()   # the detectors the page tripped, those of its worst severity first
 
 
 @dataclass
@@ -128,11 +129,16 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
         stop = fr.record(url, status=out.status, body=out.body, outcome=code, useful=bool(page and page.useful),
                          fingerprint=fp)
         clean = code == "ok" and page is not None and page.taint is None and not page.limited
+        worst = page.taint_worst if page and page.taint else ()
+        tainted = (*worst, *(c for c in page.taint_codes if c not in worst)) if worst else ()
+        if tainted:  # the page's text is never stored: the codes are the only record of what a detector saw
+            fr.log.write({"event": "page_taint", "url": url[:300], "site": site, "severity": page.taint,
+                          "codes": list(worst), "also": list(tainted[len(worst):])})
         step = ladder.after_fetch(site, url, code=code, clean=clean, taint=page.taint if page else None,
-                                  fingerprint=fp, addrs=out.addrs)
+                                  taint_codes=worst, fingerprint=fp, addrs=out.addrs)
         line = Line(url, code if not page or not page.taint else f"{code},taint_{page.taint}", out.status, out.bytes,
                     stage=step.after, moved=f"{step.before} -> {step.after}" if step.before != step.after else "",
-                    stopped=step.stopped or stop, hidden_links=page.hidden_links if page else 0)
+                    stopped=step.stopped or stop, hidden_links=page.hidden_links if page else 0, taint_codes=tainted)
         # after_fetch also reports a stop fr.record has just made, so "by the frontier" is the frontier's own answer,
         # unless the ladder found a graver reason of its own
         _mark(fr, row, _candidate_status(step.after, line.stopped, by_frontier=bool(stop) and not step.own),

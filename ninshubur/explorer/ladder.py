@@ -51,6 +51,14 @@ def is_front_page(url: str) -> bool:
     return p.path in ("", "/") and not p.query
 
 
+def taint_reason(codes: tuple[str, ...], url: str) -> str:
+    """Why a high-taint page stopped its site, with the high-severity detectors' codes. They come first: the page's
+    text is never stored, so they are all that is left to explain the stop, and the stored reason is cut at 200
+    characters."""
+    named = ", ".join(codes[:6]) + (f", +{len(codes) - 6} more" if len(codes) > 6 else "")
+    return f"taint: high-severity content ({named or 'no detector named'}) on {url[:120]}"
+
+
 @dataclass
 class Step:
     """What one fetch did to its site's rung. ``stopped`` is the stop reason when the site was stopped, ``own`` whether
@@ -91,15 +99,18 @@ class Ladder:
         return Step(site, before, before, reason, stopped=reason, own=True)
 
     def after_fetch(self, site: str, url: str, *, code: str, clean: bool, taint: str | None,
-                    fingerprint: int | None = None, addrs: tuple[str, ...] = ()) -> Step:
+                    taint_codes: tuple[str, ...] = (), fingerprint: int | None = None,
+                    addrs: tuple[str, ...] = ()) -> Step:
         """Move ``site`` on the ladder after a fetch of ``url``. ``code`` is the gate's (or the parser's) outcome,
-        ``clean`` whether the page counts as a clean fetch, ``fingerprint`` the page's simhash when it was read."""
+        ``clean`` whether the page counts as a clean fetch, ``taint_codes`` the detectors that gave ``taint`` its
+        severity (a lesser finding on the same page is not what stops a site),
+        ``fingerprint`` the page's simhash when it was read."""
         s = self.site(site)
         stage = s.get("stage", "candidate")
         # Asked first, also of a site the frontier stopped on this very page (no yield, say): the graver reason is
         # the one that stays on record.
         if taint == "high":
-            return self.stop(site, stage, f"taint: a page carried high-severity content ({url[:120]})")
+            return self.stop(site, stage, taint_reason(taint_codes, url))
         hit = next((c for c in code.split(",") if c in INTEGRITY), None) or (code if code in PARSER_STOPS else None)
         if hit:
             return self.stop(site, stage, f"{hit}: {url[:120]}")

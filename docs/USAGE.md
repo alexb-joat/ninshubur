@@ -447,7 +447,10 @@ no network, no home folder, an empty environment, read-only system files, 1 GB o
 wall clock per page. Without `bwrap` the explorer fetches nothing: an unparsed page is never used. Its output is
 checked again outside (exact keys, types, sizes) and scanned for injection; a page with any taint offers no links
 (a page with a `curl ... | sh` install line counts, so the explorer finds fewer sites through such pages), and one
-with high taint hands nothing on.
+with high taint hands nothing on. The page's text is never kept, so the detectors it tripped are what is recorded:
+`explore run` prints them, each such page is a `page_taint` line in `explorer/logs/explorer.jsonl` (URL, severity,
+the codes at that severity, lesser ones under `also`), and a site stopped for high taint carries the high-severity
+codes in its reason, as in `taint: high-severity content (prompt_injection) on https://…`.
 
 **The trial ladder.** A site moves candidate → probed (the random-path probe answered 404) → trial (one page a day
 until its first clean page, then 5) → admitted (20 a day) after 20 clean pages, or after 7 days with at least 3.

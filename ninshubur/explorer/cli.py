@@ -153,6 +153,16 @@ def cmd_reach(args, app) -> int:
 
 
 # -- sandbox, ladder, handoff, kill switch (lane E2) ----------------------------------------------------------------
+def run_line(x) -> str:
+    """One page of `explore run`. A stop reason names its own detectors; a page with lesser taint, which stops
+    nothing but offers no links, gets them here."""
+    moved = f" ({x.moved})" if x.moved else ""
+    stop = (f"; site stopped: {x.stopped}" if x.stopped else
+            f"; taint: {', '.join(x.taint_codes)}" if x.taint_codes else "")
+    return (f"{x.code:<24} {x.status or '-':<4} {x.bytes:>9,} B  {x.stage}{moved}  links {x.links_queued}/{x.links_offered}"
+            f"  records {x.records}  {x.url[:80]}{stop}")
+
+
 def _sandbox(app):
     from .frontier import Limits
     from .sandbox import Sandbox, limits_from
@@ -227,10 +237,7 @@ def cmd_run(args, app) -> int:
         writer = Writer(app.home, gate.frontier.log, now=app.now)
         rep = asyncio.run(run_cycle(gate, sb, args.limit, on_records=writer.write))
         for x in rep.lines:
-            moved = f" ({x.moved})" if x.moved else ""
-            stop = f"; site stopped: {x.stopped}" if x.stopped else ""
-            print(f"{x.code:<24} {x.status or '-':<4} {x.bytes:>9,} B  {x.stage}{moved}  links {x.links_queued}/{x.links_offered}"
-                  f"  records {x.records}  {x.url[:80]}{stop}")
+            print(run_line(x))
         print(f"{len(rep.lines)} pages, {rep.probes} probes, {len(rep.records)} records"
               + (f"; halted: {rep.halted}" if rep.halted else ""))
         if rep.records or writer.failed:
