@@ -248,3 +248,24 @@ def test_the_explorer_keeps_its_own_logs_ledger_and_database(home, policy):
     assert (home / "explorer" / "logs" / "fetch.jsonl").exists() and not (home / "logs" / "fetch.jsonl").exists()
     assert not (home / "ninshubur.db").exists()
     assert gate.fetcher.daily_bytes <= 50_000_000
+
+
+def test_a_redirect_target_is_one_hop_further_and_refused_past_max_hops(home, policy):
+    """Second review, 20 Nov: every redirect target was queued at depth 1, whatever the depth of the page that
+    redirected, so a chain of off-site redirects walked on for ever despite ``max_hops: 2``."""
+    routes = {("site.example", "/robots.txt"): NO_ROBOTS}
+    for path, to in (("/near", "https://a.example/"), ("/far", "https://b.example/"), ("/far-in", "https://127.0.0.1/")):
+        routes[("site.example", path)] = {"status": 302, "body": "", "headers": {"Location": to}}
+    gate, seen, _ = make(home, policy, routes)
+    depth_of = lambda u: gate.frontier.conn.execute("SELECT depth FROM explorer_frontier WHERE url=?", (u,)).fetchone()  # noqa: E731
+    assert gate.frontier.offer("https://site.example/near", depth=1).queued
+    assert run(gate.fetch("https://site.example/near")).code == "redirect_offered"
+    assert depth_of("https://a.example/")[0] == 2
+    assert gate.frontier.offer("https://site.example/far", depth=2).queued
+    assert run(gate.fetch("https://site.example/far")).code == "redirect_refused:max_hops"
+    assert depth_of("https://b.example/") is None
+    assert not any(e["event"] == "ssrf_attempt" for e in log(home))  # too far is no attack
+    # an internal target is still what it is, however deep the page that points at it
+    assert gate.frontier.offer("https://site.example/far-in", depth=2).queued
+    assert run(gate.fetch("https://site.example/far-in")).code == "redirect_refused:url_ip_literal"
+    assert [e["via"] for e in log(home) if e["event"] == "ssrf_attempt"] == ["redirect_target", "redirect"]

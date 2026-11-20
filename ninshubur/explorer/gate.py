@@ -140,7 +140,9 @@ class ExplorerGate:
             out.code = ",".join(x.code for x in f.findings)
             if any(x.code == "off_host_redirect" for x in f.findings) and f.headers.get("location"):
                 target = urljoin(f.final_url or url, f.headers["location"])
-                o = self.frontier.offer(target, depth=1, found_from=url, via="redirect_target")  # logged, not counted: _attempt below counts it once
+                # One hop on from the page that redirects, never back to 1: a chain of redirects can't walk
+                # further from a candidate than links can. Logged, not counted: _attempt below counts it once.
+                o = self.frontier.offer(target, depth=self.frontier.depth(url) + 1, found_from=url, via="redirect_target")
                 out.offered.append(target)
                 out.code = "redirect_offered" if o.queued else f"redirect_refused:{o.code}"
                 if o.code in SSRF_CODES:

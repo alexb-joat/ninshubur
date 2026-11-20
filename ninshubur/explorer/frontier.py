@@ -162,6 +162,8 @@ class Frontier:
         if one(self.conn, "SELECT 1 AS x FROM explorer_frontier WHERE url=?", (url,)):
             return Offer(False, "already_known", url, site)
         lim = self.limits
+        if depth > lim.max_hops:  # asked here as well as by the callers: a redirect target is a hop like any link
+            return refuse(url, site, "max_hops", f"{depth} hops from a candidate")
         year_max = time.gmtime(self.now()).tm_year + lim.years_ahead
         code = traps.url_trap(url, max_len=lim.max_url_len, max_depth=lim.max_depth, max_query_params=lim.max_query_params,
                               year_min=lim.year_min, year_max=year_max)
@@ -222,6 +224,11 @@ class Frontier:
                 AND (s.day IS NOT ? OR s.pages_day < CASE s.stage WHEN 'admitted' THEN ? WHEN 'trial' THEN ? ELSE 1 END))
             WHERE k = 1 ORDER BY added_at, url LIMIT ?""",
                     (today, lim.pages_per_site_day, lim.trial_pages_per_day, max(n, 0)))
+
+    def depth(self, url: str) -> int:
+        """How many hops from a candidate ``url`` was found at (0 for a URL the frontier doesn't hold)."""
+        r = one(self.conn, "SELECT depth FROM explorer_frontier WHERE url=?", (url,))
+        return int(r["depth"]) if r else 0
 
     def record(self, url: str, *, status: int | None, body: bytes = b"", outcome: str = "",
                useful: bool | None = None, fingerprint: int | None = None) -> str | None:
