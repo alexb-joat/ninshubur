@@ -529,3 +529,24 @@ def test_a_link_that_is_no_page_stops_nothing_and_counts_as_no_yield(home, polic
     e.fr.offer("https://doc.example/")
     line = e.cycle().lines[0]
     assert line.code == "content_type_mismatch" and not line.stopped and e.stage("doc.example") == "probed"
+
+
+def test_another_hosts_front_page_is_not_the_sites_front_page(home, policy):
+    """Second review, 20 Nov: the drift check compared the admitted front page with ``/`` on any host of the site, so
+    reading blog.one.example sent one.example back to trial for "front page changed sharply"."""
+    pages = {"/": html("Conference about distributed systems and databases " * 3, links=["https://blog.one.example/"])}
+    blog = {"/": html("Cheap pills casino bonus crypto giveaway win now " * 3)}
+    e = Env(home, policy, {("one.example", "*"): site(pages), ("blog.one.example", "*"): site(blog)}, trial_pages_per_day=10)
+    e.fr.offer("https://one.example/")
+    e.cycle()
+    fp = e.ladder.site("one.example")["fingerprint"]
+    admitted(e)
+    e.fr.conn.execute("UPDATE explorer_sites SET fingerprint=? WHERE site='one.example'", (fp,))
+    e.fr.conn.commit()
+    e.clock.t += 86400
+    line = e.cycle().lines[0]
+    assert line.url == "https://blog.one.example/" and line.code == "ok"
+    assert e.stage("one.example") == "admitted" and e.ladder.site("one.example")["fingerprint"] == fp
+    from ninshubur.explorer.ladder import is_front_page
+    assert is_front_page("https://www.one.example/", "one.example") and is_front_page("https://one.example", "one.example")
+    assert not is_front_page("https://one.example/?page=2", "one.example")

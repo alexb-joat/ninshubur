@@ -11,8 +11,9 @@
   least ``trial_min_clean``.
 - **admitted**: still the lowest trust (Tier 3, held, "found by explorer"); only Alex promotes a site to a real
   source. Back to trial when the site looks like it changed hands: its address moves to a network it was never seen
-  on during the trial (IPv4 /16, IPv6 /32: wide, because CDNs rotate addresses), or a front-page fetch is more than
-  ``content_shift_bits`` simhash bits from the one it was admitted with; and when it has had no clean page for
+  on during the trial (IPv4 /16, IPv6 /32: wide, because CDNs rotate addresses), or a fetch of its own front page is
+  more than ``content_shift_bits`` simhash bits from the one it was admitted with (dormant for now: the frontier
+  reads no URL twice, so the front page isn't read again after the trial); and when it has had no clean page for
   ``admitted_stale_days`` (trust decays without fresh clean fetches).
 
 What stops a site at any rung (the frontier's ``stop_site``; nothing of it is fetched again): high taint, an
@@ -49,9 +50,11 @@ def network(addr: str) -> str | None:
     return str(ipaddress.ip_network(f"{ip}/{16 if ip.version == 4 else 32}", strict=False))
 
 
-def is_front_page(url: str) -> bool:
+def is_front_page(url: str, site: str) -> bool:
+    """The site's own front page: ``/`` on the registrable domain or its www twin. Another host's ``/``
+    (blog.example.org) is a different page, and comparing fingerprints across the two says nothing."""
     p = urlsplit(url)
-    return p.path in ("", "/") and not p.query
+    return p.path in ("", "/") and not p.query and (p.hostname or "").lower() in (site, f"www.{site}")
 
 
 def taint_reason(codes: tuple[str, ...], url: str) -> str:
@@ -124,7 +127,7 @@ class Ladder:
         seen = sorted({n for n in map(network, addrs) if n})
         if stage == "admitted":
             moved = [n for n in seen if n not in nets]
-            shift = (fingerprint is not None and s.get("fingerprint") and is_front_page(url)
+            shift = (fingerprint is not None and s.get("fingerprint") and is_front_page(url, site)
                      and traps.hamming(fingerprint, int(s["fingerprint"], 16)) > self.lim.content_shift_bits)
             stale = s.get("last_clean") and now - float(s["last_clean"]) > self.lim.admitted_stale_days * DAY
             why = (f"address moved to {moved[0]}, a network not seen in its trial" if moved and nets else
@@ -138,7 +141,7 @@ class Ladder:
             return Step(site, stage, stage)
         n = int(s.get("clean_fetches") or 0) + 1
         fp = s.get("fingerprint")
-        if fingerprint is not None and is_front_page(url) and (stage != "admitted" or not fp):
+        if fingerprint is not None and is_front_page(url, site) and (stage != "admitted" or not fp):
             fp = format(fingerprint, "016x")  # the front page as it looked during the trial
         cols = {"clean_fetches": n, "last_clean": now, "fingerprint": fp}
         if stage in ("candidate", "probed"):
