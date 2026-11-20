@@ -33,7 +33,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import detectors
+from ..policy import check_url
 from ..schemas import sanitize_str
+from .frontier import to_https
 
 INSIDE = "/opt/ninshubur"
 BOOT = (f"import sys; sys.path.insert(0, {INSIDE!r}); "
@@ -296,6 +298,14 @@ class Page:
     notes: list[str] = field(default_factory=list)
 
 
+def record_url(url: str) -> str:
+    """A record's link in the form main Ninshubur accepts: https, as the frontier asks for every link, and empty when
+    the URL policy refuses it even so (an address, a punycode host, a login in the URL). The record then goes on
+    with its page's URL instead of being dropped whole at the hand-off."""
+    url = to_https(url)
+    return "" if check_url(url) else url
+
+
 def read_page(o: dict) -> Page:
     """Scan every text the sandbox returned (title, description, visible text, alt/title/aria-label/meta texts,
     record fields) for taint on the raw string, then sanitise what is kept. The visible text is not kept."""
@@ -309,6 +319,7 @@ def read_page(o: dict) -> Page:
         for r in o["records"]:
             clean = {k: (sanitize_str(v, RECORD_CAPS.get(k, 200)) or "") for k, v in r.items()}
             if clean["name"]:
+                clean["url"] = record_url(clean["url"]) if clean["url"] else ""
                 records.append(clean)
     useful = any(r["start"] or r["url"] for r in records)
     return Page(title=sanitize_str(o["title"], 300) or "", description=sanitize_str(o["description"], 500) or "",

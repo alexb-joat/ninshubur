@@ -120,7 +120,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE explorer_sites ADD COLUMN {col} {decl}")
 
 
-def _https(url: str) -> str:
+def to_https(url: str) -> str:
     """Links on the open web are often written http://; the explorer only ever asks over https (and the fetcher
     refuses anything else), so the https form is what gets offered. A site without TLS simply fails to connect."""
     try:
@@ -150,7 +150,7 @@ class Frontier:
         """Queue ``url`` or say why not. With ``dry_run`` the verdict is the same but nothing is written or logged."""
         refuse = (lambda u, site, code, detail="": Offer(False, code, str(u), site)) if dry_run else (  # noqa: E731
             lambda u, site, code, detail="": self._refuse(u, site, code, found_from, detail, via))
-        url = _https(url.strip()) if isinstance(url, str) else url
+        url = to_https(url.strip()) if isinstance(url, str) else url
         code = check_url(url)
         if code:
             return refuse(url, "", code)
