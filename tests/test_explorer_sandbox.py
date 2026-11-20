@@ -63,6 +63,20 @@ def test_event_and_job_records_keep_declared_fields_and_never_a_person():
     assert "Jane" not in json.dumps(o) and "Ann Roe" not in json.dumps(o)
 
 
+@pytest.mark.parametrize("person", ["http://schema.org/Person", "https://schema.org/Person", "schema:Person",
+                                    ["Thing", "http://schema.org/Person"]])
+def test_a_person_typed_by_iri_or_prefix_is_still_a_person(person):
+    """Second review, 20 Nov: events were matched by the end of the type's name, a Person only by the exact word, so
+    an organiser typed ``http://schema.org/Person`` went into the record's org field by name."""
+    event = {"@type": "http://schema.org/Event", "name": "Meetup", "startDate": "2027-03-01",
+             "organizer": {"@type": person, "name": "Jane Doe"}}
+    job = {"@type": "schema:JobPosting", "title": "Backend engineer", "hiringOrganization": {"@type": person, "name": "Jane Doe"}}
+    alone = {"@type": person, "name": "Jane Doe", "worksFor": {"@type": "Event", "name": "hidden in a person"}}
+    o = extract(page(ld([event, job, alone])), BASE, "text/html")
+    assert sorted((r["type"], r["name"], r["org"]) for r in o["records"]) == [("event", "Meetup", ""), ("hiring", "Backend engineer", "")]
+    assert "Jane" not in json.dumps(o)
+
+
 def test_attribute_texts_are_collected_for_the_taint_scan():
     o = extract(page("<meta name='description' content='d'><meta property='og:title' content='og'>",
                      "<img alt='alt text'><a href='/x' title='tip' aria-label='label'>x</a>"), BASE, "text/html")

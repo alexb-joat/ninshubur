@@ -86,8 +86,11 @@ def links(doc: Doc, base: str) -> tuple[list[str], int]:
 
 
 def _types(obj: dict) -> set[str]:
+    """The object's types by their bare names: ``http://schema.org/Person`` and ``schema:Person`` are ``Person``,
+    so a type written as an IRI or with a prefix is the same type to every check below, the Person one first."""
     t = obj.get("@type")
-    return {t} if isinstance(t, str) else {x for x in t if isinstance(x, str)} if isinstance(t, list) else set()
+    names = [t] if isinstance(t, str) else [x for x in t if isinstance(x, str)] if isinstance(t, list) else []
+    return {re.split(r"[/#:]", x.strip())[-1] for x in names}
 
 
 def _is_person(v) -> bool:
