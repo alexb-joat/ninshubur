@@ -149,7 +149,9 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
 
 
 def _follow(fr, page: Page, row: dict, line: Line, lim) -> None:
-    if page.taint == "high" or row["depth"] + 1 > lim.max_hops:
+    """Offer the page's links to the frontier, unless anything on the page tripped a taint detector: text flagged as
+    a possible injection, at any severity, doesn't get to steer where the explorer goes next."""
+    if page.taint is not None or row["depth"] + 1 > lim.max_hops:
         return
     for link in page.links[: lim.links_per_page]:
         o = fr.offer(link, depth=row["depth"] + 1, found_from=row["url"])

