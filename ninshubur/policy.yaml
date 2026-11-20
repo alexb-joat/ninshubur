@@ -65,7 +65,7 @@ explorer:
   parser_cpu_s: 10
   parser_timeout_s: 20      # wall clock; then the sandbox's whole process group is killed
   tripwire_ssrf: 3          # attempts to reach a denied address (connect, redirect) that stop the explorer
-  tripwire_window_s: 86400  # ... counted over this window, from the last `explore resume` at most
+  tripwire_window_s: 86400  # ... counted over this window, from the last `explore resume` or tripwire stop at most
   disk_quota_bytes: 500000000  # the explorer folder (its database, logs, handoff); over it, `explore run` refuses
 
 admission:

@@ -7,9 +7,11 @@ merely *mentions* (``http://localhost:8000`` in a tutorial) are refused by the f
 ``ssrf_attempt`` with ``via: "link"``, but they don't count here: nothing was asked for, and counting them would
 let any blog post pause the explorer.
 
-The count covers events since the later of ``tripwire_window_s`` ago and the last ``resume``, so resuming starts
-from zero. When it reaches ``tripwire_ssrf`` the tripwire writes the STOP file (``by: "tripwire"``). It fails
-closed: a log that exists but can't be read refuses the run.
+The count covers events since the latest of ``tripwire_window_s`` ago, the last ``resume`` and the tripwire's own
+last stop, so starting again starts from zero, whether by ``explore resume`` or by deleting the STOP file by hand
+(the kill switch allows both): the attempts that tripped it once don't trip it again. When the count reaches
+``tripwire_ssrf`` the tripwire writes the STOP file (``by: "tripwire"``). It fails closed: a log that exists but
+can't be read refuses the run.
 """
 from __future__ import annotations
 
@@ -38,7 +40,8 @@ def log_path(home: Path) -> Path:
 
 
 def count(home: Path, *, now: float, window_s: float) -> Count:
-    """Strong ``ssrf_attempt`` events since the later of ``now - window_s`` and the last ``resumed``."""
+    """Strong ``ssrf_attempt`` events since the latest of ``now - window_s``, the last ``resumed`` and the tripwire's
+    last ``stopped``."""
     path = log_path(home)
     since = now - window_s
     try:
@@ -65,6 +68,8 @@ def count(home: Path, *, now: float, window_s: float) -> Count:
             continue
         if e.get("event") == "resumed" and e["at"] > since:
             since, hits = e["at"], [h for h in hits if h["at"] >= e["at"]]
+        elif e.get("event") == "stopped" and e.get("by") == "tripwire":
+            since, hits = max(since, e["at"]), []  # these attempts have had their stop; the log's order says which
         elif e.get("event") == "ssrf_attempt" and e.get("via") in STRONG and e["at"] >= since:
             hits.append(e)
     return Count(n=len(hits), since=since, last=hits[-3:])

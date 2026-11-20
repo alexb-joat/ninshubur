@@ -470,7 +470,7 @@ running cycle halts at its next one, and the systemd unit won't start while it e
 **The tripwire.** A request that would reach a private or reserved address (a site resolving to one, a redirect
 pointing at one) stops that site and counts; three in 24 hours write the STOP file (`by: tripwire`). Links a page
 only mentions (`http://localhost:8000` in a tutorial) are refused and logged but don't count. `explore resume`
-starts the count again from zero. `explore run` also refuses when the explorer folder is over 500 MB
+starts the count again from zero, and so does deleting the STOP file by hand after a tripwire stop. `explore run` also refuses when the explorer folder is over 500 MB
 (`disk_quota_bytes`).
 
 **The service** (`install-explorer.sh`) runs one cycle an hour, writes only `~/.ninshubur/explorer/`, has no

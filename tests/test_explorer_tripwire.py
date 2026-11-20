@@ -54,6 +54,36 @@ def test_the_window_and_resume_reset_the_count(home, policy):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_deleting_the_stop_file_by_hand_does_not_trip_again(home, policy):
+    """Review finding 6: only `explore resume` reset the count, so after `rm STOP` (which the kill switch allows) the
+    next run saw the same three attempts, wrote STOP again and stayed stuck for up to 24 h."""
+    gate, _, clock = make(home, policy, {("inside-a.example", "*"): page("x"), ("inside-b.example", "*"): page("x"),
+                                         ("inside-c.example", "*"): page("x"), ("inside-d.example", "*"): page("x")},
+                          resolve=private)
+    lim = gate.frontier.limits
+    for h in "abc":
+        fetch(gate, f"https://inside-{h}.example/")
+    assert gate.stopped and read_stop(home)["by"] == "tripwire"
+    gate.stop_path.unlink()  # by hand, no `explore resume`
+    clock.t += 60
+    assert check(home, lim, now=clock.t) is None and not gate.stopped
+    assert count(home, now=clock.t, window_s=lim.tripwire_window_s).n == 0
+    fetch(gate, "https://inside-d.example/")  # a new attempt counts from the stop: one of three
+    assert count(home, now=clock.t, window_s=lim.tripwire_window_s).n == 1 and not gate.stopped
+
+
+def test_a_stop_by_alex_does_not_reset_the_count(home, policy):
+    from ninshubur.explorer.killswitch import stop
+    gate, _, clock = make(home, policy, {("inside-a.example", "*"): page("x"), ("inside-b.example", "*"): page("x")},
+                          resolve=private)
+    lim = gate.frontier.limits
+    fetch(gate, "https://inside-a.example/")
+    fetch(gate, "https://inside-b.example/")
+    stop(home, "lunch", now=clock.t)
+    gate.stop_path.unlink()
+    assert count(home, now=clock.t, window_s=lim.tripwire_window_s).n == 2
+
+
 def test_an_unreadable_log_fails_closed(home):
     p = log_path(home)
     p.parent.mkdir(parents=True)
