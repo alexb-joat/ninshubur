@@ -272,6 +272,18 @@ def test_links_are_followed_only_from_a_page_with_no_taint_at_all(home, policy):
     assert queued(e) == ["https://clean.example/a"]
 
 
+def test_a_page_is_hashed_once_and_the_frontier_and_ladder_share_it(home, policy, monkeypatch):
+    """Review finding 9: the cycle hashed every body a second time for the ladder after the frontier had hashed it."""
+    from ninshubur.explorer import traps
+    real, calls = traps.simhash, []
+    monkeypatch.setattr(traps, "simhash", lambda body: calls.append(len(body)) or real(body))
+    e = Env(home, policy, {("one.example", "*"): site({"/": html("Home")})})
+    e.fr.offer("https://one.example/")
+    assert e.cycle().lines[0].code == "ok" and len(calls) == 1
+    s = e.ladder.site("one.example")
+    assert json.loads(s["recent"]) == [s["fingerprint"]]  # the same hash in the near-duplicate window and on the ladder
+
+
 def refuses_robots(request: httpx.Request) -> httpx.Response:
     """A site that answers nothing but a robots.txt that says no."""
     if request.url.path == "/robots.txt":

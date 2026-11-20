@@ -124,10 +124,12 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
             rep.lines.append(Line(url, code, out.status, out.bytes, stage=ladder.site(site).get("stage", "candidate")))
             rep.halted = NO_SANDBOX
             break
-        stop = fr.record(url, status=out.status, body=out.body, outcome=code, useful=bool(page and page.useful))
+        fp = traps.simhash(out.body) if out.body else None  # once: the frontier's near-duplicate window and the ladder share it
+        stop = fr.record(url, status=out.status, body=out.body, outcome=code, useful=bool(page and page.useful),
+                         fingerprint=fp)
         clean = code == "ok" and page is not None and page.taint is None and not page.limited
         step = ladder.after_fetch(site, url, code=code, clean=clean, taint=page.taint if page else None,
-                                  fingerprint=traps.simhash(out.body) if out.body else None, addrs=out.addrs)
+                                  fingerprint=fp, addrs=out.addrs)
         line = Line(url, code if not page or not page.taint else f"{code},taint_{page.taint}", out.status, out.bytes,
                     stage=step.after, moved=f"{step.before} -> {step.after}" if step.before != step.after else "",
                     stopped=step.stopped or stop, hidden_links=page.hidden_links if page else 0)

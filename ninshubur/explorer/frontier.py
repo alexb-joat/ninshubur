@@ -224,8 +224,9 @@ class Frontier:
                     (today, lim.pages_per_site_day, lim.trial_pages_per_day, max(n, 0)))
 
     def record(self, url: str, *, status: int | None, body: bytes = b"", outcome: str = "",
-               useful: bool | None = None) -> str | None:
+               useful: bool | None = None, fingerprint: int | None = None) -> str | None:
         """Note what a fetch of ``url`` brought back. Returns the reason the site was stopped, if it was.
+        ``fingerprint`` is the body's simhash when the caller has it already (the cycle hashes a page once).
 
         ``useful`` comes from the parser (session E2); until something says a page was useful it counts as not
         useful, so a site that never yields stops after ``no_yield_pages`` pages."""
@@ -239,7 +240,8 @@ class Frontier:
         stop: str | None = None
         parked = None
         if status == 200 and body:
-            recent = (recent + [format(traps.simhash(body), "016x")])[-RECENT_WINDOW:]
+            fp = fingerprint if fingerprint is not None else traps.simhash(body)
+            recent = (recent + [format(fp, "016x")])[-RECENT_WINDOW:]
             parked = traps.parked(body)
             stop = self._dup_stop(recent) or (f"parked: {parked}" if parked else None)
         since = 0 if useful else s["since_useful"] + 1
