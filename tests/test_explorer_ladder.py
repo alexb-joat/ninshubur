@@ -508,3 +508,24 @@ def test_a_throttled_probe_is_no_answer_and_the_cycle_does_not_wait_for_it(home,
     assert tuple(row) == (None, 1)  # still unprobed: the next day's run asks again, three tries in all
     ev = [x for x in read_jsonl(home / "explorer" / "logs" / "explorer.jsonl") if x["event"] == "probe_no_answer"]
     assert ev[-1]["why"] == f"http_{status}"
+
+
+def test_a_link_that_is_no_page_stops_nothing_and_counts_as_no_yield(home, policy):
+    """Second review, 20 Nov: any followed link that answered with another content type (a PDF, llms.txt, a feed)
+    stopped its whole site for good as an integrity failure. The live queue held one such link to a site in trial."""
+    pdf = {"status": 200, "headers": {"Content-Type": "application/pdf"}, "body": "%PDF-1.7 never read"}
+    pages = {"/": html("Home", links=["/programme.pdf"]), "/programme.pdf": pdf}
+    e = Env(home, policy, {("one.example", "*"): site(pages), ("doc.example", "*"): site({"/": pdf})})
+    e.fr.offer("https://one.example/")
+    e.cycle()
+    assert e.stage("one.example") == "trial"
+    e.clock.t += 3600
+    line = e.cycle().lines[0]
+    assert line.url.endswith("/programme.pdf") and line.code == "content_type_mismatch" and not line.stopped
+    assert e.stage("one.example") == "trial" and line.bytes == 0
+    row = e.fr.conn.execute("SELECT clean_fetches, since_useful FROM explorer_sites WHERE site='one.example'").fetchone()
+    assert tuple(row) == (1, 2)  # no clean page gained, one more page without yield
+    # a candidate whose own URL is a document: read nothing, moved nowhere, left to the no-yield rule
+    e.fr.offer("https://doc.example/")
+    line = e.cycle().lines[0]
+    assert line.code == "content_type_mismatch" and not line.stopped and e.stage("doc.example") == "probed"

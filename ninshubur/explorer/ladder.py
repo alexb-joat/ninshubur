@@ -16,9 +16,10 @@
   ``admitted_stale_days`` (trust decays without fresh clean fetches).
 
 What stops a site at any rung (the frontier's ``stop_site``; nothing of it is fetched again): high taint, an
-integrity finding (bad certificate, wrong content type, decompression bomb, oversize), a page that broke the parser
+integrity finding (bad certificate, decompression bomb, oversize, invalid UTF-8), a page that broke the parser
 (timeout, memory, crash, nonsense output), and the frontier's own stops (soft-404, parked, near-duplicates, no
-yield). A certificate-issuer change is not checked yet: the fetcher doesn't expose the peer certificate.
+yield). A URL that answers with another content type (a PDF, an image) stops nothing: its body is never read and it
+counts as a page without yield. A certificate-issuer change is not checked yet: the fetcher doesn't expose the peer certificate.
 """
 from __future__ import annotations
 
@@ -32,7 +33,9 @@ from . import traps
 from .frontier import Frontier
 
 STAGES = ("candidate", "probed", "trial", "admitted")
-INTEGRITY = frozenset({"cert_error", "content_type_mismatch", "decompression_bomb", "body_too_large", "invalid_utf8"})
+# Not content_type_mismatch: a link to a PDF, an image or a feed is an ordinary thing on a site. The fetcher reads no
+# byte of such a body, the URL counts as a page without yield, and the frontier's no-yield rule bounds the waste.
+INTEGRITY = frozenset({"cert_error", "decompression_bomb", "body_too_large", "invalid_utf8"})
 PARSER_STOPS = frozenset({"parser_timeout", "parser_memory", "parser_killed", "parser_crashed", "parser_output_too_large",
                           "parser_output_invalid"})
 DAY = 86400.0
