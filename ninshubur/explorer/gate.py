@@ -20,14 +20,14 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
 from ..adapters.base import AdapterSpec, FetchPlan
 from ..config import Config, SourceConfig
 from ..fetch import Fetcher, resolve_host
-from ..policy import Policy, host_of
+from ..policy import Policy, host_of, is_ip_literal
 from . import psl, tripwire
 from .frontier import SSRF_CODES, Frontier
 from .store import explorer_home
@@ -71,6 +71,21 @@ class Outcome:
 
 
 THROTTLED = (429, 503)
+
+
+def redirect_counts(target: str, code: str) -> bool:
+    """Whether a refused redirect target stops its site and counts toward the tripwire. One that names a denied
+    address does, and so does one on a port the explorer never asks for (SSH, Redis, an admin port). A target of
+    another scheme (``ftp:``, an app link) is no place on a network unless its host is an IP address or
+    localhost: it is refused and logged, and its site goes on."""
+    if code != "url_scheme":
+        return code in SSRF_CODES
+    try:
+        host = (urlsplit(target).hostname or "").lower()
+    except ValueError:
+        return False
+    return bool(host) and (host == "localhost" or host.endswith(".localhost") or is_ip_literal(host)
+                           or not host.rsplit(".", 1)[-1][:1].isalpha())  # 2130706433, 127.1: addresses in disguise
 
 
 def _error_code(f) -> str:
@@ -145,7 +160,7 @@ class ExplorerGate:
                 o = self.frontier.offer(target, depth=self.frontier.depth(url) + 1, found_from=url, via="redirect_target")
                 out.offered.append(target)
                 out.code = "redirect_offered" if o.queued else f"redirect_refused:{o.code}"
-                if o.code in SSRF_CODES:
+                if redirect_counts(target, o.code):
                     self._attempt(url, o.code, "redirect", f"redirects to {target[:200]}")
         elif f.status == 200:
             out.body = f.body

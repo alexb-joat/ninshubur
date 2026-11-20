@@ -269,3 +269,21 @@ def test_a_redirect_target_is_one_hop_further_and_refused_past_max_hops(home, po
     assert gate.frontier.offer("https://site.example/far-in", depth=2).queued
     assert run(gate.fetch("https://site.example/far-in")).code == "redirect_refused:url_ip_literal"
     assert [e["via"] for e in log(home) if e["event"] == "ssrf_attempt"] == ["redirect_target", "redirect"]
+
+
+@pytest.mark.parametrize("target, counted", [
+    ("tg://resolve?domain=someone", False), ("ftp://files.example.org/x", False), ("intent://scan/#Intent;end", False),
+    ("gopher://127.0.0.1:70/_x", True), ("ftp://localhost/", True), ("ftp://2130706433/", True),
+    ("https://ex.example:8443/", True)])
+def test_a_redirect_to_another_scheme_counts_only_when_it_names_an_address(home, policy, target, counted):
+    """Second review, 20 Nov: a page that redirected to an app link or an FTP server was stopped as an attempt "to
+    reach a denied address" and counted; three such in a day would have written the STOP file. (``mailto:`` never
+    gets this far: httpx can't build a request from it, and the fetch ends as InvalidURL.)"""
+    routes = {("site.example", "/robots.txt"): NO_ROBOTS,
+              ("site.example", "/go"): {"status": 302, "body": "", "headers": {"Location": target}}}
+    gate, seen, _ = make(home, policy, routes)
+    out = fetch(gate, "https://site.example/go")
+    assert out.code.startswith("redirect_refused:") and [c[1] for c in seen.calls] == ["/robots.txt", "/go"]
+    strong = [e for e in log(home) if e["event"] == "ssrf_attempt" and e["via"] == "redirect"]
+    status = gate.frontier.conn.execute("SELECT status FROM explorer_sites WHERE site='site.example'").fetchone()[0]
+    assert (len(strong), status) == ((1, "stopped") if counted else (0, "open"))

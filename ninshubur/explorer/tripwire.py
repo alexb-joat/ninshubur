@@ -2,7 +2,9 @@
 
 An *attempt* is a request the explorer was about to make that would have reached this machine or its network:
 a site whose name resolves to a private or reserved address (refused at connect time, ``via: "connect"``), or a
-redirect that points at one (``via: "redirect"``). Each attempt also stops the site that made it. Links a page
+redirect that points at one, or at a port other than 443 (``via: "redirect"``). Each attempt also stops the site that
+made it. A redirect to another scheme (``ftp:``, an app link) is refused without counting, unless it names an IP
+address or localhost. Links a page
 merely *mentions* (``http://localhost:8000`` in a tutorial) are refused by the frontier and logged as
 ``ssrf_attempt`` with ``via: "link"``, but they don't count here: nothing was asked for, and counting them would
 let any blog post pause the explorer.
