@@ -40,6 +40,7 @@ MAX_FILE = 2_000_000
 KEEP_DAYS = 14
 READ_PER_CALL = 4_000_000
 FILE_NAME = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
+MAX_TIME = 4_102_444_800  # 2100-01-01: no hand-off line is from later
 KEYS = frozenset({"v", "id", "type", "name", "url", "start", "end", "place", "org", "site", "page", "stage", "taint",
                   "found_at"})
 CAPS = {"id": 24, "name": 200, "url": 2048, "start": 40, "end": 40, "place": 160, "org": 160, "site": 253, "page": 2048}
@@ -153,7 +154,9 @@ def check_line(raw: bytes) -> tuple[dict | None, str]:
         return None, "bad_field"
     if not isinstance(r["taint"], list) or len(r["taint"]) > 20 or not all(_str(c, 40) for c in r["taint"]):
         return None, "bad_taint"
-    if type(r["found_at"]) not in (int, float):
+    # a time: json.loads also hands over NaN, Infinity and integers of thousands of digits, and float() of such an
+    # integer raises, which would stop the reader at this line on every tick
+    if type(r["found_at"]) not in (int, float) or not 0 <= r["found_at"] < MAX_TIME:
         return None, "bad_time"
     if check_url(r["page"]) or (r["url"] and check_url(r["url"])):
         return None, "bad_url"

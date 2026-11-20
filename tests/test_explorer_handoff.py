@@ -74,6 +74,11 @@ def test_records_arrive_held_tier3_found_by_explorer_and_only_once(env):
     (json.dumps({**rec(url="https://127.0.0.1/"), "v": 1, "id": "x", "found_at": NOW}).encode(), "bad_url"),
     (json.dumps({**rec(page="https://elsewhere.example/"), "v": 1, "id": "x", "found_at": NOW}).encode(), "site_mismatch"),
     (json.dumps({**rec(taint=[1]), "v": 1, "id": "x", "found_at": NOW}).encode(), "bad_taint"),
+    (json.dumps({**rec(), "v": 1, "id": "x", "found_at": 10 ** 3000}).encode(), "bad_time"),  # float() of it raises
+    (json.dumps({**rec(), "v": 1, "id": "x", "found_at": float("nan")}).encode(), "bad_time"),
+    (json.dumps({**rec(), "v": 1, "id": "x", "found_at": float("inf")}).encode(), "bad_time"),
+    (json.dumps({**rec(), "v": 1, "id": "x", "found_at": -1}).encode(), "bad_time"),
+    (json.dumps({**rec(), "v": 1, "id": "x", "found_at": True}).encode(), "bad_time"),
     (b"{" + b" " * 5000 + b"}", "line_too_long"),
 ])
 def test_every_line_is_checked_again_and_bad_ones_are_never_stored(env, home, line, why):
