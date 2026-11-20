@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # Install (or remove with --remove) a hardened systemd *user* timer that runs one explorer cycle,
-# `ninshubur explore run`, every hour. --print shows both units and installs nothing.
-# Usage: deploy/linux/install-explorer.sh [--print | --remove]   (run from the repo root with the venv created)
+# `ninshubur explore run`, every hour. --print shows both units and installs nothing. --check runs
+# `ninshubur explore check` under the service's own limits and installs nothing; installing does that check first.
+# Usage: deploy/linux/install-explorer.sh [--print | --check | --remove]   (run from the repo root with the venv created)
 #
 # The explorer is separate from the main daemon (deploy/linux/install.sh): its own service, its own limits, and it
 # can write only its own folder ($NINSHUBUR_HOME/explorer). Two ways to stop it:
@@ -11,7 +12,7 @@ set -eu
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 HOME_DIR="${NINSHUBUR_HOME:-$HOME/.ninshubur}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PY="$ROOT/.venv/bin/python"
+PY="${NINSHUBUR_PYTHON:-$ROOT/.venv/bin/python}"
 LIMIT="${NINSHUBUR_EXPLORE_LIMIT:-10}"
 
 service() {
@@ -77,6 +78,19 @@ WantedBy=timers.target
 EOF
 }
 
+# `explore check` as the timer will run it: a transient unit with every [Service] line above except the ones that
+# say what to run. A sandbox that works in a login shell can still fail under the unit's syscall filter, address
+# families or /proc settings, and then every hourly cycle would halt.
+check_in_unit() {
+  set --
+  while IFS= read -r line; do
+    set -- "$@" -p "$line"
+  done <<LINES
+$(service | sed -n '/^\[Service\]/,$p' | grep -E '^[A-Za-z]+=' | grep -vE '^(Type|ExecStart|TimeoutStartSec)=')
+LINES
+  systemd-run --user --wait --collect --quiet --pipe "$@" "$PY" -m ninshubur explore check
+}
+
 case "${1:-}" in
   --print)
     echo "# $UNIT_DIR/ninshubur-explorer.service"; service
@@ -89,15 +103,23 @@ case "${1:-}" in
     systemctl --user daemon-reload
     echo "removed the explorer's service and timer from $UNIT_DIR"
     exit 0 ;;
-  "") ;;
-  *) echo "usage: $0 [--print | --remove]" >&2; exit 2 ;;
+  --check | "") ;;
+  *) echo "usage: $0 [--print | --check | --remove]" >&2; exit 2 ;;
 esac
 
 [ -x "$PY" ] || { echo "no venv at $ROOT/.venv; create it and pip install -e . first" >&2; exit 1; }
 command -v bwrap >/dev/null || { echo "bwrap not found: install bubblewrap first (the explorer never parses without it)" >&2; exit 1; }
-"$PY" -m ninshubur explore check >/dev/null || { echo "\`ninshubur explore check\` failed: the sandbox isn't fenced here; not installing" >&2; exit 1; }
-mkdir -p "$UNIT_DIR" "$HOME_DIR/explorer" "$HOME_DIR/logs" "$HOME_DIR/feeds"  # the unit can write only explorer/
+mkdir -p "$HOME_DIR/explorer" "$HOME_DIR/logs" "$HOME_DIR/feeds"  # the unit can write only explorer/
 chmod 700 "$HOME_DIR" "$HOME_DIR/explorer"
+if [ "${1:-}" = "--check" ]; then
+  check_in_unit || { echo "\`ninshubur explore check\` failed under the service's limits (see above)" >&2; exit 1; }
+  echo "the sandbox is fenced under the service's limits; nothing was installed"
+  exit 0
+fi
+check_in_unit >/dev/null || {
+  echo "\`ninshubur explore check\` failed under the service's limits: the timer's cycles would halt; not installing." >&2
+  echo "$0 --check shows the check's own output" >&2; exit 1; }
+mkdir -p "$UNIT_DIR"
 service > "$UNIT_DIR/ninshubur-explorer.service"
 timer > "$UNIT_DIR/ninshubur-explorer.timer"
 systemctl --user daemon-reload

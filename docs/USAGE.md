@@ -439,6 +439,7 @@ ninshubur explore status                   # stopped or running, sandbox, bytes,
 ninshubur explore stop --reason "odd"      # the kill switch; `explore resume` undoes it and says why it was set
 ninshubur explore inbox --dry-run          # what main Ninshubur would take from the hand-off
 deploy/linux/install-explorer.sh --print   # the hourly systemd timer; drop --print to install, --remove to undo
+deploy/linux/install-explorer.sh --check   # `explore check` under the timer's own limits; installs nothing
 ```
 
 **The parser runs in bubblewrap** (`bwrap`, install it from your distribution: `apt install bubblewrap`). Inside:
@@ -475,7 +476,8 @@ starts the count again from zero, and so does deleting the STOP file by hand aft
 
 **The service** (`install-explorer.sh`) runs one cycle an hour, writes only `~/.ninshubur/explorer/`, has no
 capabilities and is capped at 1.5 GB, half a CPU and 64 tasks. It allows the namespaces, netlink and mount calls
-`bwrap` needs, and nothing else beyond the main unit's set.
+`bwrap` needs, and nothing else beyond the main unit's set. Before it installs, the script runs `explore check`
+inside a transient unit with those same limits, and installs nothing if the sandbox isn't fenced there.
 
 ## 7. Tuning before real work starts
 
