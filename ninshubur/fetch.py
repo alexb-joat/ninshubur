@@ -390,7 +390,9 @@ class Fetcher:
                 async with self.gate.slot(host, spec.min_delay_s, crawl_delay):
                     resp, body, raw_bytes, err = await self._request(plan.method, url, headers, plan.body, max_bytes,
                                                                      expected=expected)
-            except (httpx.HTTPError, OSError) as e:  # network/TLS errors
+            # network/TLS errors; InvalidURL is no HTTPError: httpx raises it for a Location it can parse but not
+            # build a request from (mailto:, an app link), and a header must never end the caller's run
+            except (httpx.HTTPError, httpx.InvalidURL, OSError) as e:
                 result.error = type(e).__name__
                 result.error_detail = root_cause(e)
                 if isinstance(e, httpx.ConnectError) and "certificate" in str(e).lower():
@@ -595,7 +597,7 @@ class Fetcher:
             try:
                 async with self.gate.slot(host_of(url), spec.min_delay_s, None):
                     resp, raw, _, finding = await self._request("GET", url, {}, None, ROBOTS_CAP, truncate=True)
-            except (httpx.HTTPError, OSError):
+            except (httpx.HTTPError, httpx.InvalidURL, OSError):
                 return "", None
             if resp.status_code in REDIRECT_CODES:
                 target = urljoin(url, resp.headers.get("location", ""))

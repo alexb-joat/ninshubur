@@ -789,3 +789,24 @@ def test_a_cached_redirect_from_an_older_version_is_asked_again_soon(home, polic
     assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).error == "refused:robots_unreachable"
     clock.t += 601
     assert run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC)).ok
+
+
+@pytest.mark.parametrize("location", ["mailto:team@example.org", "tel:+15550100", "javascript:void(0)"])
+def test_a_location_httpx_cannot_build_a_request_from_ends_the_fetch_not_the_run(home, policy, location):
+    """Found 20 Nov: httpx raises InvalidURL, which is no HTTPError, for a Location like ``mailto:...``. It went
+    through the fetcher uncaught, so one such header ended the whole run, and the explorer, which leaves an
+    unrecorded URL queued, would have met it again on every run."""
+    routes = {(HOST, "/robots.txt"): {"status": 404, "body": ""},
+              (HOST, "/go"): {"status": 302, "headers": {"Location": location}, "body": ""}}
+    f, conn, seen, _ = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/go", key="k"), SRC, SPEC))
+    assert r.error == "InvalidURL" and not r.ok and r.body == b""
+    assert [c[1] for c in seen.calls] == ["/robots.txt", "/go"]
+
+
+def test_such_a_location_on_robots_txt_leaves_it_unreadable(home, policy):
+    routes = {(HOST, "/robots.txt"): {"status": 301, "headers": {"Location": "mailto:team@example.org"}, "body": ""},
+              (HOST, "/go"): {"body": {"never": True}}}
+    f, conn, seen, _ = make(home, policy, routes)
+    r = run(f.fetch(FetchPlan(url=f"https://{HOST}/go", key="k"), SRC, SPEC))
+    assert r.error == "refused:robots_unreachable" and [c[1] for c in seen.calls] == ["/robots.txt"]
