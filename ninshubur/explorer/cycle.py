@@ -13,7 +13,7 @@ For each URL the frontier releases (at most one per site, within the site's day 
 6. records (events, jobs) from sites in trial or admitted go to ``on_records`` (the one-way handoff).
 
 The cycle halts at once when the STOP file appears, the sandbox can't run (fail closed: an unparsed page is never
-used) or the day's byte budget is used up. Those are the explorer's own stops, not the page's: the URL stays queued
+used) or the 24-hour byte budget is used up. Those are the explorer's own stops, not the page's: the URL stays queued
 and nothing is counted against its site.
 """
 from __future__ import annotations
@@ -57,7 +57,7 @@ class CycleReport:
 
 
 NO_SANDBOX = "the parser sandbox can't run; see `ninshubur explore check`"
-NO_BUDGET = "today's byte budget is used up (explorer: daily_bytes in policy.yaml); the queue waits for tomorrow"
+NO_BUDGET = "the byte budget for 24 hours is used up (explorer: daily_bytes in policy.yaml); the queue waits"
 
 
 def _candidate_status(stage: str, stopped: str | None, by_frontier: bool) -> str:
