@@ -12,8 +12,9 @@ For each URL the frontier releases (at most one per site, within the site's day 
    candidate: text from a page can only *propose* a URL, the frontier decides;
 6. records (events, jobs) from sites in trial or admitted go to ``on_records`` (the one-way handoff).
 
-The cycle halts at once when the STOP file appears or the sandbox can't run (fail closed: an unparsed page is
-never used).
+The cycle halts at once when the STOP file appears, the sandbox can't run (fail closed: an unparsed page is never
+used) or the day's byte budget is used up. Those are the explorer's own stops, not the page's: the URL stays queued
+and nothing is counted against its site.
 """
 from __future__ import annotations
 
@@ -55,6 +56,10 @@ class CycleReport:
         return self.probes + sum(1 for x in self.lines if x.code not in ("probe_no_answer", "soft_404"))
 
 
+NO_SANDBOX = "the parser sandbox can't run; see `ninshubur explore check`"
+NO_BUDGET = "today's byte budget is used up (explorer: daily_bytes in policy.yaml); the queue waits for tomorrow"
+
+
 def _candidate_status(stage: str, stopped: str | None, by_ladder: bool) -> str:
     if stopped:
         return "quarantined" if by_ladder else "rejected"
@@ -80,6 +85,9 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
                 if gate.stopped:
                     rep.halted = f"the STOP file exists ({gate.stop_path})"
                     break
+                if gate.probe_error == "byte_budget":
+                    rep.halted = NO_BUDGET
+                    break
                 rep.lines.append(Line(url, "probe_no_answer", stage="candidate",
                                       stopped=fr.note_probe_miss(site, gate.probe_error)))
                 continue
@@ -91,12 +99,19 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
         if out.code == "stopped":
             rep.halted = f"the STOP file exists ({gate.stop_path})"
             break
+        if out.code == "byte_budget":
+            rep.halted = NO_BUDGET
+            break
         code, page = out.code, None
         if out.body:
             try:
                 page = read_page(sandbox.parse(out.body, out.final_url or url, out.content_type))
             except SandboxError as e:
                 code = e.code
+        if code == "sandbox_unavailable":  # ours, not the page's: nothing is recorded, so the page is read once it works
+            rep.lines.append(Line(url, code, out.status, out.bytes, stage=ladder.site(site).get("stage", "candidate")))
+            rep.halted = NO_SANDBOX
+            break
         stop = fr.record(url, status=out.status, body=out.body, outcome=code, useful=bool(page and page.useful))
         clean = code == "ok" and page is not None and page.taint is None and not page.limited
         step = ladder.after_fetch(site, url, code=code, clean=clean, taint=page.taint if page else None,
@@ -107,10 +122,6 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
         if row.get("candidate_id"):
             store.set_status(fr.conn, row["candidate_id"], _candidate_status(step.after, line.stopped, bool(step.stopped)),
                              line.stopped or step.reason or code, fr.now())
-        if code == "sandbox_unavailable":
-            rep.lines.append(line)
-            rep.halted = "the parser sandbox can't run; see `ninshubur explore check`"
-            break
         if page is not None and not line.stopped:
             _follow(fr, page, row, line, lim)
             if step.after in ("trial", "admitted") and page.records:

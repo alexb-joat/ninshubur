@@ -162,6 +162,43 @@ def test_without_the_sandbox_the_cycle_halts_and_uses_nothing(home, policy):
     assert not any(h == "two.example" for h, *_ in e.seen.calls)
 
 
+def queued(e) -> list[str]:
+    return [r["url"] for r in e.fr.conn.execute("SELECT url FROM explorer_frontier WHERE status='queued' ORDER BY url")]
+
+
+def test_a_broken_sandbox_uses_up_no_page(home, policy):
+    """Review finding 2: the URL was marked fetched and counted toward no_yield before the halt, so every hourly run
+    with a broken sandbox lost one page for good, and enough of them stopped a healthy site."""
+    e = Env(home, policy, {("one.example", "*"): site({"/": html("Home", events=["E"])})}, no_yield_pages=1)
+    e.fr.offer("https://one.example/")
+    for _ in range(2):
+        rep = e.cycle(sandbox=InProcess(fail="sandbox_unavailable"))
+        assert rep.halted and "sandbox" in rep.halted and rep.lines[0].code == "sandbox_unavailable"
+        s = e.ladder.site("one.example")
+        assert (s["status"], s["stage"], s["pages_total"], s["pages_day"], s["since_useful"]) == ("open", "probed", 0, 0, 0)
+        assert queued(e) == ["https://one.example/"]
+    got = []
+    rep = e.cycle(on_records=got.extend)  # the sandbox works again: the same page is read, and its event arrives
+    assert rep.lines[0].code == "ok" and e.stage("one.example") == "trial" and [r["name"] for r in got] == ["E"]
+
+
+def test_a_spent_byte_budget_halts_the_cycle_and_uses_up_no_page(home, policy):
+    """The same class: with the day's bytes used up the fetcher refuses, and each refused URL was marked failed."""
+    e = Env(home, policy, {("one.example", "*"): site({"/": html("One")}), ("two.example", "*"): site({"/": html("Two")})})
+    e.fr.offer("https://one.example/")
+    e.fr.offer("https://two.example/")
+    assert e.cycle(limit=1).lines[0].code == "ok"
+    e.gate.fetcher.daily_bytes = 1
+    rep = e.cycle()
+    assert rep.halted and "byte budget" in rep.halted and rep.lines == []
+    s = e.ladder.site("two.example")
+    assert (s["status"], s["pages_day"], s["probe_misses"]) == ("open", 0, 0) and queued(e) == ["https://two.example/"]
+    e.ladder.probed("two.example")
+    e.fr.conn.execute("UPDATE explorer_sites SET soft404=0 WHERE site='two.example'")  # past the probe: the page fetch is refused
+    rep = e.cycle()
+    assert rep.halted and "byte budget" in rep.halted and rep.lines == [] and queued(e) == ["https://two.example/"]
+
+
 def test_the_stop_file_halts_a_cycle_between_pages(home, policy):
     e = Env(home, policy, {("one.example", "*"): site({"/": html("One")}), ("two.example", "*"): site({"/": html("Two")})})
     e.fr.offer("https://one.example/")
