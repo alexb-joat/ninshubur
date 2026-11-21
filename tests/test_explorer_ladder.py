@@ -12,8 +12,8 @@ import pytest
 
 from ninshubur.config import load_config
 from ninshubur.explorer import store
-from ninshubur.explorer.cli import run_line
-from ninshubur.explorer.cycle import run_cycle
+from ninshubur.explorer.cli import run_exit, run_line
+from ninshubur.explorer.cycle import NO_BUDGET, OFFLINE, CycleReport, run_cycle
 from ninshubur.explorer.extract import extract
 from ninshubur.explorer.frontier import Limits
 from ninshubur.explorer.gate import ExplorerGate
@@ -82,8 +82,8 @@ class Env:
         self.ladder = Ladder(self.fr)
         self.home = home
 
-    def cycle(self, limit=10, sandbox=None, on_records=None):
-        return asyncio.run(run_cycle(self.gate, sandbox or InProcess(), limit, on_records=on_records))
+    def cycle(self, limit=10, sandbox=None, on_records=None, online=None):
+        return asyncio.run(run_cycle(self.gate, sandbox or InProcess(), limit, on_records=on_records, online=online))
 
     def stage(self, s: str) -> str:
         r = self.ladder.site(s)
@@ -550,3 +550,40 @@ def test_another_hosts_front_page_is_not_the_sites_front_page(home, policy):
     from ninshubur.explorer.ladder import is_front_page
     assert is_front_page("https://www.one.example/", "one.example") and is_front_page("https://one.example", "one.example")
     assert not is_front_page("https://one.example/?page=2", "one.example")
+
+
+def no_network(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution")
+
+
+def test_an_offline_machine_costs_no_site_anything(home, policy):
+    """Found on the timer's first night, 21 Nov: three runs fired as the laptop woke, before Wi-Fi was back. Every
+    probe read "robots_unreachable", 27 sites lost one of their three probe tries and four queued URLs were marked
+    failed, all for this machine's own missing network."""
+    routes = {("new.example", "*"): site({"/": html("Home")}), ("known.example", "*"): site({"/": html("Home", links=["/a"])})}
+    e = Env(home, policy, routes)
+    e.fr.offer("https://known.example/")
+    e.cycle()
+    assert e.stage("known.example") == "trial"
+    before = tuple(e.fr.conn.execute("SELECT pages_total, since_useful FROM explorer_sites WHERE site='known.example'").fetchone())
+    e.fr.offer("https://new.example/")
+    routes[("new.example", "*")] = routes[("known.example", "*")] = no_network
+    e.clock.t += 3600
+    asked = []
+    rep = e.cycle(online=lambda: asked.append(1) or False)
+    assert rep.halted == OFFLINE and rep.lines == [] and asked == [1]  # the first request without an answer ends it
+    queued = {u for (u,) in e.fr.conn.execute("SELECT url FROM explorer_frontier WHERE status='queued'")}
+    assert queued == {"https://known.example/a", "https://new.example/"}
+    assert e.fr.conn.execute("SELECT probe_misses FROM explorer_sites WHERE site='new.example'").fetchone()[0] == 0
+    assert tuple(e.fr.conn.execute("SELECT pages_total, since_useful FROM explorer_sites WHERE site='known.example'").fetchone()) == before
+    assert [x["event"] for x in read_jsonl(home / "explorer" / "logs" / "explorer.jsonl")][-1] == "offline"
+    assert run_exit(rep) == 0 and run_exit(CycleReport(halted=NO_BUDGET)) == 2 and run_exit(CycleReport()) == 0
+
+
+def test_a_site_that_does_not_answer_while_online_is_still_counted(home, policy):
+    e = Env(home, policy, {("down.example", "*"): no_network, ("up.example", "*"): site({"/": html("Home")})})
+    e.fr.offer("https://down.example/")
+    e.fr.offer("https://up.example/")
+    down, up = e.cycle(online=lambda: True).lines
+    assert down.code == "probe_no_answer" and up.code == "ok"
+    assert e.fr.conn.execute("SELECT probe_misses FROM explorer_sites WHERE site='down.example'").fetchone()[0] == 1

@@ -153,6 +153,22 @@ def cmd_reach(args, app) -> int:
 
 
 # -- sandbox, ladder, handoff, kill switch (lane E2) ----------------------------------------------------------------
+def _online(app):
+    """The cycle's network check: whether a fixed host of an enabled source resolves and has a route, which is what
+    the daemon asks before its own fetches (nothing is sent). None, so no check, when no source has a fixed host."""
+    from ..adapters.base import get_adapter
+    from ..fetch import reachable
+    hosts = sorted({h for s in app.cfg.sources.values() if s.enabled for h in get_adapter(s.adapter).spec.hosts})
+    return (lambda: any(reachable(h) for h in hosts)) if hosts else None
+
+
+def run_exit(rep) -> int:
+    """`explore run`'s exit code: 2 when the cycle was halted, except for a machine that is offline. Waiting for the
+    network is no failure, and a laptop's timer would otherwise show a failed unit after every wake."""
+    from .cycle import OFFLINE
+    return 2 if rep.halted and rep.halted != OFFLINE else 0
+
+
 def run_line(x) -> str:
     """One page of `explore run`. A stop reason names its own detectors; a page with lesser taint, which stops
     nothing but offers no links, gets them here."""
@@ -235,7 +251,7 @@ def cmd_run(args, app) -> int:
             return 0
         from .handoff import Writer, out_dir
         writer = Writer(app.home, gate.frontier.log, now=app.now)
-        rep = asyncio.run(run_cycle(gate, sb, args.limit, on_records=writer.write))
+        rep = asyncio.run(run_cycle(gate, sb, args.limit, on_records=writer.write, online=_online(app)))
         for x in rep.lines:
             print(run_line(x))
         print(f"{len(rep.lines)} pages, {rep.probes} probes, {len(rep.records)} records"
@@ -243,7 +259,7 @@ def cmd_run(args, app) -> int:
         if rep.records or writer.failed:
             print(f"handoff: {writer.written} written to {out_dir(app.home)}, {writer.refused} not written"
                   + (f" ({writer.failed})" if writer.failed else ""))
-        return 2 if rep.halted else 0
+        return run_exit(rep)
     finally:
         asyncio.run(gate.aclose())
         conn.close()

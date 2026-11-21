@@ -13,7 +13,7 @@ For each URL the frontier releases (at most one per site, within the site's day 
 6. records (events, jobs) from sites in trial or admitted go to ``on_records`` (the one-way handoff).
 
 The cycle halts at once when the STOP file appears, the sandbox can't run (fail closed: an unparsed page is never
-used) or the 24-hour byte budget is used up. Those are the explorer's own stops, not the page's: the URL stays queued
+used), the 24-hour byte budget is used up, or a request gets no answer while this machine is offline. Those are the explorer's own stops, not the page's: the URL stays queued
 and nothing is counted against its site.
 """
 from __future__ import annotations
@@ -58,6 +58,8 @@ class CycleReport:
 
 
 NO_SANDBOX = "the parser sandbox can't run; see `ninshubur explore check`"
+OFFLINE = ("this machine is offline (no fixed host of an enabled source resolves with a route); nothing was counted "
+           "against any site and the queue waits")
 NO_BUDGET = "the byte budget for 24 hours is used up (explorer: daily_bytes in policy.yaml); the queue waits"
 
 
@@ -70,13 +72,23 @@ def _candidate_status(stage: str, stopped: str | None, by_frontier: bool) -> str
     return stage
 
 
+def _offline(fr) -> str:
+    fr.log.write({"event": "offline", "detail": "no fixed host of an enabled source is reachable; the cycle ended, "
+                                                "nothing was counted against any site"})
+    return OFFLINE
+
+
 def _mark(fr, row: dict, status: str, reason: str) -> None:
     if row.get("candidate_id"):
         store.set_status(fr.conn, row["candidate_id"], status, reason, fr.now())
 
 
 async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
-                    on_records: Callable[[list[dict]], None] | None = None) -> CycleReport:
+                    on_records: Callable[[list[dict]], None] | None = None,
+                    online: Callable[[], bool] | None = None) -> CycleReport:
+    """``online`` says whether this machine has a network. It is asked only when a request got no answer at all,
+    before that is held against the site: a laptop's timer fires the moment it wakes, before Wi-Fi is back, and
+    every probe of such a run would otherwise cost its site one of three tries."""
     fr = gate.frontier
     ladder = Ladder(fr)
     lim = fr.limits
@@ -96,6 +108,9 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
                     break
                 if gate.probe_error == "byte_budget":
                     rep.halted = NO_BUDGET
+                    break
+                if online and not online():  # nothing answered: is it the site, or this machine's network?
+                    rep.halted = _offline(fr)
                     break
                 now = ladder.site(site)
                 if now.get("status", "open") != "open":  # the gate stopped it: the probe would have reached a denied address
@@ -120,6 +135,9 @@ async def run_cycle(gate: ExplorerGate, sandbox: Sandbox, limit: int, *,
             break
         if out.code == "byte_budget":
             rep.halted = NO_BUDGET
+            break
+        if out.status is None and online and not online():  # as for the probe; the URL stays queued
+            rep.halted = _offline(fr)
             break
         code, page = out.code, None
         if out.body:

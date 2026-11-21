@@ -465,6 +465,11 @@ shows as `robots_unreachable` instead: nothing is fetched from the site, and the
 site that doesn't answer the probe (it's down, its robots.txt says no, or it answers 429 or 503) is asked again once a
 day and stopped after three tries (`probe_tries`), so it can't hold up the queue.
 
+**Offline.** A laptop's timer fires the moment it wakes, often before the network is back. When a request gets no
+answer, `explore run` first asks whether this machine is online (a fixed host of an enabled source resolves and has a
+route; nothing is sent). If not, the cycle ends there: nothing is counted against any site, the queue stays as it
+was, the log gets an `offline` line and the exit code is 0.
+
 **The hand-off is one-way.** Events and jobs from sites in trial or admitted go to
 `explorer/out/YYYY-MM-DD.jsonl` (4 KB a line, 2 MB a file, 14 files kept). The main daemon reads them each tick,
 checks every line again, scans it again and stores what passes as **held** Tier 3 items of the source `explorer`,
