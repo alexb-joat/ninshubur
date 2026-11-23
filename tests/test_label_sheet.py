@@ -143,7 +143,37 @@ def test_cli_writes_the_sheet_and_refuses_what_it_cannot_draw(cli, home):  # noq
     assert code == 2 and "exists and may hold labels" in out
     code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--force", "--sample", "1")
     assert code == 0 and len(parse(path.read_text(encoding="utf-8"))) == 1
+    code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--seed", "8", "--exclude", str(path))
+    assert code == 2 and "nothing is left to draw" in out  # the replay has one company, and it is on the seed-7 sheet
+    other = home / "other.csv"
+    other.write_text("row,subject_key\n1,company:not-in-the-replay\n", encoding="utf-8")
+    code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--seed", "8", "--exclude", str(other))
+    assert code == 0 and "left out 0 subject(s) already on other.csv" in out, out
+    code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--seed", "9", "--exclude", str(home / "nope.csv"))
+    assert code == 2 and "cannot read it" in out
 
+
+
+def test_a_second_sheet_leaves_out_every_subject_on_the_first(home):
+    prof = PROFILE
+    subjects = population()
+    first, _ = L.write(subjects, prof, home, sample=10, seed=7, now=NOW)
+    seen = {r["subject_key"] for r in parse(first.read_text(encoding="utf-8"))}
+    second, sheet = L.write(subjects, prof, home, sample=10, seed=8, now=NOW, exclude=[first])
+    keys = {r["subject_key"] for r in parse(second.read_text(encoding="utf-8"))}
+    assert keys and not keys & seen and len(keys) == 10
+    meta = json.loads(L.meta_path(second).read_text(encoding="utf-8"))
+    assert meta["population"] == len(subjects) - len(seen) == sheet.population
+    assert meta["excluded"] == [{"sheet": first.name, "sha256": meta["excluded"][0]["sha256"], "subjects": 10, "in_population": 10}]
+    assert json.loads(L.meta_path(first).read_text(encoding="utf-8"))["excluded"] == []
+    with pytest.raises(L.LabelSheetError, match="--exclude .*cannot read it"):
+        L.write(subjects, prof, home, sample=5, seed=9, now=NOW, exclude=[home / "missing.csv"])
+    (home / "notes.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    with pytest.raises(L.LabelSheetError, match="no subject_key column"):
+        L.write(subjects, prof, home, sample=5, seed=9, now=NOW, exclude=[home / "notes.csv"])
+    everyone, _ = L.write(subjects, prof, home, sample=len(subjects), seed=10, now=NOW)
+    with pytest.raises(L.LabelSheetError, match="nothing is left to draw"):
+        L.write(subjects, prof, home, sample=5, seed=11, now=NOW, exclude=[everyone])
 
 # --- reading a filled sheet ----------------------------------------------------------------------
 def fill(path, labels: dict[int, str], *, libreoffice: bool = False, edit=None) -> None:

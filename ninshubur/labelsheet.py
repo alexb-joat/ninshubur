@@ -49,6 +49,7 @@ class Sheet:
     population: int
     seed: int
     asked: int
+    excluded: tuple[dict, ...] = ()          # sheets whose subjects were left out before the draw
 
 
 def _rank(seed: int, what: str, key: str) -> str:
@@ -101,6 +102,31 @@ def draw(subjects: list[Subject], sample: int, seed: int) -> Sheet:
                  seed=seed, asked=sample)
 
 
+def sheet_keys(path: Path) -> set[str]:
+    """The subject keys on an existing sheet (any copy: as drawn, filled or frozen)."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError as e:
+        raise LabelSheetError(f"--exclude {path}: cannot read it ({e.strerror or e})") from None
+    reader = csv.DictReader(io.StringIO(text))
+    if "subject_key" not in (reader.fieldnames or []):
+        raise LabelSheetError(f"--exclude {path}: no subject_key column, so it is not a label sheet")
+    return {r["subject_key"] for r in reader if r.get("subject_key")}
+
+
+def leave_out(subjects: list[Subject], sheets: list[Path]) -> tuple[list[Subject], tuple[dict, ...]]:
+    """Drop every subject already on one of ``sheets``, so a new sheet is blind to the person who labelled
+    those. Matched on the subject key alone: a company seen once is not new because its evidence changed."""
+    seen: set[str] = set()
+    record = []
+    for path in sheets:
+        keys = sheet_keys(path)
+        record.append({"sheet": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()[:16],
+                       "subjects": len(keys), "in_population": sum(1 for s in subjects if s.key in keys)})
+        seen |= keys
+    return [s for s in subjects if s.key not in seen], tuple(record)
+
+
 def render_csv(sheet: Sheet) -> str:
     buf = io.StringIO()
     w = _writer(buf, COLUMNS)
@@ -121,6 +147,7 @@ def render_meta(sheet: Sheet, profile: Profile, now: float) -> str:
         "labels": list(q.labels), "positive": q.positive, "prompt_hash": prompt_hash(q), "max_lines": MAX_LINES,
         "columns": COLUMNS,
         "strata": [{"stratum": k, "population": pop, "sampled": got} for k, (pop, got) in sheet.strata.items()],
+        "excluded": list(sheet.excluded),
         "rows": [{"row": i, "subject_key": s.key, "stratum": stratum, "evidence_hash": s.evidence_hash,
                   "item_ids": list(s.item_ids), "total": s.total} for i, (s, stratum) in enumerate(sheet.rows, 1)],
     }, indent=2, ensure_ascii=False) + "\n"
@@ -135,9 +162,10 @@ def meta_path(path: Path) -> Path:
 
 
 def write(subjects: list[Subject], profile: Profile, home: Path, *, sample: int, seed: int, now: float,
-          out: Path | None = None, force: bool = False) -> tuple[Path, Sheet]:
+          out: Path | None = None, force: bool = False, exclude: list[Path] | None = None) -> tuple[Path, Sheet]:
     """Draw the sample and write the sheet and its meta file. An existing sheet is never overwritten
-    unless ``force``: it may hold hours of labelling."""
+    unless ``force``: it may hold hours of labelling. ``exclude`` names earlier sheets whose subjects are
+    left out first (the population, strata and meta then count only what was left)."""
     if profile.qualify is None:
         raise LabelSheetError(f"profile {profile.name} has no qualify: block; the sheet needs its question and labels")
     if not subjects:
@@ -145,7 +173,15 @@ def write(subjects: list[Subject], profile: Profile, home: Path, *, sample: int,
     path = out or default_path(home, profile.name, seed)
     if path.exists() and not force:
         raise LabelSheetError(f"{path} exists and may hold labels; choose another file with -o, or pass --force to replace it")
+    excluded: tuple[dict, ...] = ()
+    if exclude:
+        subjects, excluded = leave_out(subjects, exclude)
+        if not subjects:
+            raise LabelSheetError("every subject with evidence is already on the --exclude sheet(s); nothing is left to draw")
     sheet = draw(subjects, sample, seed)
+    if excluded:
+        sheet = Sheet(rows=sheet.rows, strata=sheet.strata, population=sheet.population, seed=sheet.seed,
+                      asked=sheet.asked, excluded=excluded)
     write_private(path, render_csv(sheet))
     write_private(meta_path(path), render_meta(sheet, profile, now))
     return path, sheet

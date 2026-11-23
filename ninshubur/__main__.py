@@ -808,7 +808,8 @@ def cmd_export(args, app: App) -> int:
         try:
             path, sheet = write_label_sheet(qualify_subjects(app, profile) if profile.qualify else [], profile, app.home,
                                             sample=args.sample, seed=args.seed, now=app.now(),
-                                            out=Path(args.output) if args.output else None, force=args.force)
+                                            out=Path(args.output) if args.output else None, force=args.force,
+                                            exclude=[Path(x) for x in args.exclude])
         except LabelSheetError as e:
             print(e, file=sys.stderr)
             return 2
@@ -816,6 +817,8 @@ def cmd_export(args, app: App) -> int:
         print(f"written {path}")
         print(f"  {len(sheet.rows)} row(s) drawn from {sheet.population} with seed {sheet.seed}, over {len(sheet.strata)} strata "
               f"(counts in {label_meta_path(path).name}); no model output is in the sheet")
+        for x in sheet.excluded:
+            print(f"  left out {x['in_population']} subject(s) already on {x['sheet']}")
         if len(sheet.rows) < sheet.asked:
             print(f"  note: {sheet.asked} were asked for, but only {sheet.population} have evidence")
         print(f"  question: {q.question}")
@@ -960,6 +963,8 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--sample", type=int, default=100, metavar="N", help="label-sheet: how many rows to draw (default 100)")
     ex.add_argument("--seed", type=int, default=7, help="label-sheet: the same seed draws the same rows (default 7)")
     ex.add_argument("--force", action="store_true", help="label-sheet: replace an existing sheet (its labels are lost)")
+    ex.add_argument("--exclude", action="append", default=[], metavar="SHEET",
+                    help="label-sheet: leave out every subject already on this earlier sheet (repeatable)")
     ex.add_argument("--event", help="prospects: one event (item id or uid)")
     ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
     ex.add_argument("--profile")

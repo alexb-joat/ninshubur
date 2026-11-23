@@ -373,6 +373,9 @@ holds the web address of the page behind each line, if you need the whole postin
 - **Repeatable.** The same seed draws the same rows on any machine. If more rows are asked for
   than there are companies with evidence, all are taken and the command says so.
 - **Safe.** An existing sheet is never replaced unless you pass `--force`; `-o` writes elsewhere.
+- **New rows only.** `--exclude feeds/label-sheet-acme-seed7.csv` (repeatable) leaves out every company
+  already on that sheet, so a second sheet tests a prompt on companies you haven't judged yet. The
+  meta file names the sheets left out, with a hash of each.
 
 The meta file records the question, the labels, the seed and, per row, the group, a hash of the
 evidence, the item ids and the line total, so a later comparison can prove the model was asked on
