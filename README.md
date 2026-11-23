@@ -13,7 +13,7 @@
 ![platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-555)
 ![dependencies](https://img.shields.io/badge/runtime%20dependencies-2-5fd6ae)
 ![network](https://img.shields.io/badge/fetches-admitted%20sources%20only-5fd6ae)
-[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 [Quick start](#quick-start) &nbsp;·&nbsp; [How a team uses it](#how-a-team-uses-it) &nbsp;·&nbsp; [Layout](#layout) &nbsp;·&nbsp; [What it will not do](#what-it-will-not-do) &nbsp;·&nbsp; [Operator guide](docs/USAGE.md)
 
@@ -115,4 +115,8 @@ X / Reddit HTML, no fetching of URLs found in content, no person data outside th
 professional whitelist, no cloud model for anything containing person data. These are tested
 invariants, not configuration.
 
-License: MIT.
+License: [GNU AGPL-3.0-or-later](LICENSE). Copyright (C) 2026 Alex Bubnov.
+
+Ninshubur can run as a service, so the AGPL's network clause applies: a modified version offered to others over a network must ship its modified source under the same licence. The currently-public commits remain under their original MIT terms.
+
+**Name:** "Ninshubur" is the project name, not part of the code licence. A fork must use a different name and must not imply endorsement by or affiliation with this project.
