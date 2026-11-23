@@ -257,3 +257,22 @@ def test_cli_asks_on_the_sheet_as_drawn_and_on_a_second_prompt(cli, home):  # no
     code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--meta", str(other))
     assert code == 2 and "drawn for profile 'other'" in out
     assert len(cli.server.requests) == n
+
+
+def test_the_sheet_links_each_line_to_its_page_and_only_to_web_pages(home):
+    groups = {"company:x": [
+        {"id": 1, "kind": "hiring", "source": "board", "title": "Python engineer", "text": "", "attrs": "{}", "published_at": NOW,
+         "first_seen_at": NOW, "url": "https://jobs.example/1", "tainted": 0, "held": 0, "person_data": 0},
+        {"id": 2, "kind": "hiring", "source": "board", "title": "Data engineer", "text": "", "attrs": "{}", "published_at": NOW - 1,
+         "first_seen_at": NOW - 1, "url": "javascript:alert(1)", "tainted": 0, "held": 0, "person_data": 0},
+        {"id": 3, "kind": "hiring", "source": "board", "title": "ML engineer", "text": "", "attrs": "{}", "published_at": NOW - 2,
+         "first_seen_at": NOW - 2, "url": "=HYPERLINK(\"https://x\")", "tainted": 0, "held": 0, "person_data": 0}]}
+    (s,) = Q.build_subjects(groups, {"company:x": "X"}, PROFILE)
+    assert s.urls == ("https://jobs.example/1", "", "")
+    before = Q.Subject(key=s.key, name=s.name, lines=s.lines, item_ids=s.item_ids, total=s.total)
+    assert s.evidence_hash == before.evidence_hash  # links are not evidence
+    path, _ = L.write([s], PROFILE, home, sample=1, seed=7, now=NOW)
+    row = parse(path.read_text(encoding="utf-8"))[0]
+    assert row["links"] == "[1] https://jobs.example/1"
+    fill(path, {1: "fit"})
+    assert L.read_sheet(path).rows[0].label == "fit"

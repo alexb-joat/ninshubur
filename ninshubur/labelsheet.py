@@ -1,8 +1,9 @@
 """Label sheet: a blind, stratified sample of subjects for a person to label by hand.
 
 Blind. A row holds what a model would be shown (the name and the numbered evidence lines from
-``analyze/qualify.py``) and two empty cells, ``label`` and ``note``. Nothing a model said is read, so a
-stored answer cannot leak into the sheet.
+``analyze/qualify.py``), the address of the page behind each line (``links``, http(s) only, so a person can
+open the posting) and two empty cells, ``label`` and ``note``. Nothing a model said is read, so a stored
+answer cannot leak into the sheet.
 
 Stratified. Each subject falls in one stratum, known without any model: the sources its evidence came
 from, and whether it has few, some or many evidence lines (thirds of the population). The sample is
@@ -33,7 +34,7 @@ from .export import _cell, _writer
 from .logs import write_private
 from .profiles import Profile
 
-COLUMNS = ["row", "subject_key", "name", "lines", "evidence", "label", "note"]
+COLUMNS = ["row", "subject_key", "name", "lines", "evidence", "links", "label", "note"]
 BANDS = ("few", "some", "many")
 
 
@@ -105,7 +106,8 @@ def render_csv(sheet: Sheet) -> str:
     w = _writer(buf, COLUMNS)
     for i, (s, _stratum) in enumerate(sheet.rows, 1):
         evidence = "\n".join(f"[{n}] {line}" for n, line in enumerate(s.lines, 1))
-        w.writerow([_cell(v) for v in (i, s.key, s.name, len(s.lines), evidence, "", "")])
+        links = "\n".join(f"[{n}] {u}" for n, u in enumerate(s.urls, 1) if u)
+        w.writerow([_cell(v) for v in (i, s.key, s.name, len(s.lines), evidence, links, "", "")])
     return "﻿" + buf.getvalue()
 
 
