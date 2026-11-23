@@ -752,6 +752,45 @@ def cmd_qualify(args, app: App) -> int:
     return 0
 
 
+def cmd_evaluate(args, app: App) -> int:
+    """Score stored answers and filled sheet copies against a person's labels. Sends nothing."""
+    from . import evaluate as ev
+    try:
+        sheet = read_label_sheet(Path(args.sheet), meta=_sheet_meta(args.meta))
+        raters = []
+        pairs = ev.stored_pairs(app.conn, sheet)
+        if args.model:
+            pairs = [p for p in pairs if p[0] in args.model]
+            absent = [m for m in args.model if m not in {p[0] for p in pairs}]
+            if absent:
+                print(f"no stored answers on this sheet's evidence for {', '.join(absent)}; ask with "
+                      f"`ninshubur qualify --profile {sheet.meta['profile']} --from-sheet {args.sheet} --model M`", file=sys.stderr)
+                return 2
+        if args.prompt_hash:
+            pairs = [p for p in pairs if p[1].startswith(tuple(args.prompt_hash))]
+        raters += [ev.stored_rater(app.conn, sheet, m, h) for m, h in pairs]
+        for spec in args.rater or []:
+            path, _, name = spec.partition("=")
+            raters.append(ev.sheet_rater(Path(path), sheet, name or None))
+        if not raters:
+            print("nothing to score: no stored answers on this sheet's evidence and no --rater file; ask with "
+                  f"`ninshubur qualify --profile {sheet.meta['profile']} --from-sheet {args.sheet}`", file=sys.stderr)
+            return 2
+        rep = ev.evaluate(sheet, raters, reps=args.reps, seed=args.seed, now=app.now())
+    except (LabelSheetError, ValueError) as e:
+        print(f"cannot evaluate: {e}", file=sys.stderr)
+        return 2
+    md = ev.render_markdown(rep)
+    print(ev.to_json(rep) if args.json else md, end="")
+    if not args.no_save:
+        md_path, json_path = (Path(args.output).with_suffix(".md"), Path(args.output).with_suffix(".json")) if args.output \
+            else ev.report_paths(app.home, rep)
+        write_private(md_path, md)
+        write_private(json_path, ev.to_json(rep))
+        print(f"report written: {md_path} and {json_path.name} (readable by you only)", file=sys.stderr)
+    return 0
+
+
 def cmd_export(args, app: App) -> int:
     if args.what == "euboulia-facts":
         path = export_provider_facts(app.conn, app.home, app.now(), out=Path(args.output) if args.output else None)
@@ -903,6 +942,18 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
     add_explore_commands(sub)
+    evp = sub.add_parser("evaluate", help="score stored qualify answers (and filled sheet copies) against a labelled sheet")
+    evp.add_argument("--sheet", required=True, help="the labelled sheet (its meta file beside it, or --meta)")
+    evp.add_argument("--meta", metavar="FILE", help="the sheet's meta file, when it is not beside the sheet as <sheet>.meta.json")
+    evp.add_argument("--model", action="append", metavar="M", help="score only this model's stored answers (repeatable; default: all)")
+    evp.add_argument("--prompt-hash", action="append", metavar="H", help="score only answers to this prompt (a prefix is enough)")
+    evp.add_argument("--rater", action="append", metavar="CSV[=NAME]", help="also score a filled copy of the sheet (repeatable)")
+    evp.add_argument("--reps", type=int, default=10_000, help="bootstrap resamples (default 10000)")
+    evp.add_argument("--seed", type=int, default=7, help="bootstrap seed (default 7)")
+    evp.add_argument("-o", "--output", metavar="FILE", help="report path (.md and .json are written; default: feeds/eval-<profile>-seed<N>-<date>)")
+    evp.add_argument("--no-save", action="store_true", help="print the report only; write nothing")
+    evp.add_argument("--json", action="store_true", help="print the JSON report instead of the markdown")
+    evp.set_defaults(fn=cmd_evaluate)
     ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv) or "
                                        "euboulia-facts (json) to feeds/")
     ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts"])
