@@ -215,3 +215,45 @@ def test_a_second_raters_copy_is_read_against_the_first_meta(home):
     meta = json.loads(L.meta_path(path).read_text(encoding="utf-8"))
     got = L.read_sheet(copy, meta=meta)
     assert [r.label for r in got.rows] == ["fit", "fit", "no_fit", "fit"] and got.rows[0].extra == {"reason": "because"}
+
+
+def test_cli_asks_on_the_sheet_as_drawn_and_on_a_second_prompt(cli, home):  # noqa: F811
+    from ninshubur.db import connect, rows
+    assert cli("run", "--replay", str(SAMPLES))[0] == 0
+    assert cli("export", "label-sheet", "--profile", "agency-eu", "--sample", "3", "--seed", "7")[0] == 0
+    path = home / "feeds" / "label-sheet-agency-eu-seed7.csv"
+    fill(path, {1: "fit", 2: "no_fit", 3: "unsure"}, libreoffice=True)
+    meta = json.loads(L.meta_path(path).read_text(encoding="utf-8"))
+    n = len(meta["rows"])
+    assert n >= 1
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path))
+    assert code == 0 and "evidence exactly as drawn" in out and "is the one the sheet was drawn with" in out
+    assert len(cli.server.requests) == n
+    sent = json.loads(cli.server.requests[0].content)["messages"][1]["content"]
+    first = L.read_sheet(path).rows[0].subject
+    assert all(line in sent or any(line in json.loads(r.content)["messages"][1]["content"] for r in cli.server.requests)
+               for line in first.lines)
+    conn = connect(home)
+    got = {(r["subject_key"], r["evidence_hash"]) for r in rows(conn, "SELECT subject_key, evidence_hash FROM qualifications")}
+    assert got == {(r["subject_key"], r["evidence_hash"]) for r in meta["rows"]}
+
+    second = home / "p1.yaml"
+    second.write_text("qualify:\n  question: Would this company buy the service within a month?\n  labels: [fit, no_fit, unsure]\n",
+                      encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--qualify-file", str(second), "--dry-run")
+    assert code == 0 and "differs from the sheet's" in out and f"to ask: {n}" in out and len(cli.server.requests) == n
+
+    second.write_text("question: Would this company buy?\nlabels: [yes, no]\n", encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--qualify-file", str(second))
+    assert code == 2 and "must keep the same answers" in out
+    second.write_text("question: Would this company buy?\nlabel: [fit]\n", encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--qualify-file", str(second))
+    assert code == 2 and "unknown key(s) label" in out
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(home / "nope.csv"))
+    assert code == 2 and "cannot read" in out
+    meta["profile"] = "other"
+    other = home / "other-meta.json"
+    other.write_text(json.dumps(meta), encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--meta", str(other))
+    assert code == 2 and "drawn for profile 'other'" in out
+    assert len(cli.server.requests) == n

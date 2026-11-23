@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import random
 import sys
@@ -28,11 +29,11 @@ from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
 from .home import data_home, ensure_home
 from .ingest import Ingestor
-from .labelsheet import LabelSheetError, meta_path as label_meta_path, write as write_label_sheet
+from .labelsheet import LabelSheetError, meta_path as label_meta_path, read_sheet as read_label_sheet, write as write_label_sheet
 from .llm import LLMClient, LLMError
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
-from .profiles import PROFILE_KEYS, ProfileError, load_profiles
+from .profiles import PROFILE_KEYS, ProfileError, load_profiles, load_qualify_file
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
@@ -624,6 +625,28 @@ def _print_qualification(r: dict) -> None:
     print(f"  {head:<22} {r['name'][:32]:<32} lines {cited:<10} {r['reason'] or ''}{note}")
 
 
+def _sheet_meta(path: str | None) -> dict | None:
+    """The meta file given with --meta, or None to use the one beside the sheet."""
+    if not path:
+        return None
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ValueError(f"cannot read --meta {path}: {e.strerror or e}") from None
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--meta {path} is not valid JSON ({e})") from None
+
+
+def _sheet_mismatch(sheet, profile) -> str | None:
+    """Why this profile's question cannot be asked on this sheet, or None."""
+    if sheet.meta.get("profile") != profile.name:
+        return f"it was drawn for profile {sheet.meta.get('profile')!r}, not {profile.name!r}"
+    if tuple(profile.qualify.labels) != sheet.labels:
+        return (f"the question's answers ({', '.join(profile.qualify.labels)}) differ from the sheet's ({', '.join(sheet.labels)}); "
+                "a second prompt must keep the same answers so it can be scored against the same labels")
+    return None
+
+
 def cmd_qualify(args, app: App) -> int:
     profile = app.profiles.get(args.profile)
     if profile is None:
@@ -649,7 +672,29 @@ def cmd_qualify(args, app: App) -> int:
         print(f"{len(found)} stored answer(s): " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
         return 0
 
-    subjects = qualify_subjects(app, profile)
+    if args.qualify_file:
+        try:
+            profile = dataclasses.replace(profile, qualify=load_qualify_file(Path(args.qualify_file), profile.name))
+        except ProfileError as e:
+            print(f"cannot use {args.qualify_file}: {e}", file=sys.stderr)
+            return 2
+    if args.from_sheet:
+        try:
+            sheet = read_label_sheet(Path(args.from_sheet), meta=_sheet_meta(args.meta))
+        except (LabelSheetError, ValueError) as e:
+            print(f"cannot ask on {args.from_sheet}: {e}", file=sys.stderr)
+            return 2
+        problem = _sheet_mismatch(sheet, profile)
+        if problem:
+            print(f"cannot ask on {Path(args.from_sheet).name}: {problem}", file=sys.stderr)
+            return 2
+        subjects = [r.subject for r in sheet.rows]
+        same = qualifier.prompt_hash(profile.qualify) == sheet.meta.get("prompt_hash")
+        print(f"from sheet {sheet.path.name} (sha256 {sheet.sha256[:16]}): {len(subjects)} subject(s), evidence exactly as drawn; "
+              f"prompt {qualifier.prompt_hash(profile.qualify)} "
+              + ("is the one the sheet was drawn with" if same else f"differs from the sheet's {sheet.meta.get('prompt_hash')}"))
+    else:
+        subjects = qualify_subjects(app, profile)
     try:
         plan = qualifier.plan(app.conn, app.cfg, profile, subjects, slot_name=args.slot, model=args.model,
                               again=args.again, limit=args.limit)
@@ -835,6 +880,11 @@ def build_parser() -> argparse.ArgumentParser:
     ql.add_argument("--limit", type=int, metavar="N", help="ask at most N subjects (in key order)")
     ql.add_argument("--again", action="store_true", help="also ask subjects whose last good answer is still current")
     ql.add_argument("--show", action="store_true", help="list the stored answers and send nothing")
+    ql.add_argument("--from-sheet", metavar="SHEET", help="ask on a label sheet's subjects and evidence exactly as drawn, "
+                    "not on the stored evidence of today (for `ninshubur evaluate`)")
+    ql.add_argument("--meta", metavar="FILE", help="the sheet's meta file, when it is not beside the sheet as <sheet>.meta.json")
+    ql.add_argument("--qualify-file", metavar="FILE", help="ask a qualify: block from this YAML file instead of the profile's "
+                    "(a second prompt to compare; it must keep the same answers)")
     ql.add_argument("--json", action="store_true")
     ql.set_defaults(fn=cmd_qualify)
     sh = sub.add_parser("show")

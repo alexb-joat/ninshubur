@@ -132,6 +132,23 @@ def profiles_path(home: Path | None = None) -> Path | None:
     return None
 
 
+def load_qualify_file(path: Path, profile: str) -> Qualify:
+    """A ``qualify:`` block kept in its own YAML file (a second prompt to compare against the profile's), validated
+    exactly like the profile's own. The file holds either the block's keys or one ``qualify:`` key around them."""
+    try:
+        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ProfileError(f"cannot read {path}: {e.strerror or e}") from None
+    except yaml.YAMLError as e:
+        raise ProfileError(f"{path} is not valid YAML ({e})") from None
+    if isinstance(raw, dict) and set(raw) == {"qualify"}:
+        raw = raw["qualify"]
+    q = _qualify(profile, raw)
+    if q is None:
+        raise ProfileError(f"{path} is empty; it needs a qualify: block with a question")
+    return q
+
+
 def load_profiles(home: Path | None = None, path: Path | None = None) -> dict[str, Profile]:
     path = path or profiles_path(home)
     if path is None:
