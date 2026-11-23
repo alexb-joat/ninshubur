@@ -143,3 +143,75 @@ def test_cli_writes_the_sheet_and_refuses_what_it_cannot_draw(cli, home):  # noq
     assert code == 2 and "exists and may hold labels" in out
     code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--force", "--sample", "1")
     assert code == 0 and len(parse(path.read_text(encoding="utf-8"))) == 1
+
+
+# --- reading a filled sheet ----------------------------------------------------------------------
+def fill(path, labels: dict[int, str], *, libreoffice: bool = False, edit=None) -> None:
+    """Fill the label column the way a person would; ``libreoffice`` re-saves it with a BOM, CRLF and an empty column."""
+    text = path.read_text(encoding="utf-8-sig")
+    recs = list(csv.DictReader(io.StringIO(text)))
+    for r in recs:
+        r["label"] = labels.get(int(r["row"]), "")
+        if edit:
+            edit(r)
+    buf = io.StringIO()
+    cols = list(recs[0].keys()) + ([""] if libreoffice else [])
+    w = csv.DictWriter(buf, cols, lineterminator="\r\n" if libreoffice else "\n")
+    w.writeheader()
+    for r in recs:
+        w.writerow({**r, **({"": ""} if libreoffice else {})})
+    path.write_text(("﻿" if libreoffice else "") + buf.getvalue(), encoding="utf-8")
+
+
+def test_a_filled_sheet_reads_back_with_its_subjects(home):
+    path, sheet = L.write(population(), PROFILE, home, sample=6, seed=7, now=NOW)
+    fill(path, {1: "fit", 2: "NO_FIT ", 3: "fit"}, libreoffice=True)
+    got = L.read_sheet(path)
+    assert [r.row for r in got.rows] == list(range(1, 7))
+    assert [r.label for r in got.rows[:4]] == ["fit", "no_fit", "fit", None] and got.unlabelled() == [4, 5, 6]
+    for r, (s, stratum) in zip(got.rows, sheet.rows):
+        assert r.subject.key == s.key and r.subject.lines == s.lines and r.subject.evidence_hash == s.evidence_hash
+        assert r.subject.total == s.total and r.stratum == stratum and r.subject.item_ids == s.item_ids
+    assert got.labels == ("fit", "no_fit") and got.positive == "fit" and len(got.sha256) == 64
+
+
+def test_a_guarded_name_reads_back_as_drawn(home):
+    s = Q.Subject(key="company:x", name="=HYPERLINK(1)", lines=("@risk line",), item_ids=(1,), total=1, sources=("board",))
+    path, _ = L.write([s], PROFILE, home, sample=1, seed=7, now=NOW)
+    fill(path, {1: "fit"})
+    assert L.read_sheet(path).rows[0].subject.name == "=HYPERLINK(1)"
+
+
+@pytest.mark.parametrize("edit, match", [
+    (lambda r: r.update(evidence=r["evidence"] + " (checked)") if r["row"] == "2" else None, r"row 2 .*differs from what was drawn"),
+    (lambda r: r.update(name="Someone else") if r["row"] == "3" else None, r"row 3 .*differs from what was drawn"),
+    (lambda r: r.update(label="maybe") if r["row"] == "1" else None, r"row 1 .*'maybe' is not one of fit, no_fit"),
+    (lambda r: r.update(evidence="1. renumbered") if r["row"] == "1" else None, r"row 1: evidence line 1 does not start with '\[1\]'"),
+    (lambda r: r.update(subject_key="company:zzz") if r["row"] == "4" else None, r"row 4: subject 'company:zzz'"),
+])
+def test_an_edited_sheet_is_refused_with_the_row(home, edit, match):
+    path, _ = L.write(population(), PROFILE, home, sample=5, seed=7, now=NOW)
+    fill(path, {1: "fit"}, edit=edit)
+    with pytest.raises(L.LabelSheetError, match=match):
+        L.read_sheet(path)
+
+
+def test_deleted_or_missing_pieces_are_refused(home):
+    path, _ = L.write(population(), PROFILE, home, sample=5, seed=7, now=NOW)
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    path.write_text("".join(lines[:1] + lines[2:]), encoding="utf-8")
+    with pytest.raises(L.LabelSheetError, match=r"row\(s\) 1 are missing"):
+        L.read_sheet(path)
+    L.meta_path(path).unlink()
+    with pytest.raises(L.LabelSheetError, match="meta.json is missing"):
+        L.read_sheet(path)
+
+
+def test_a_second_raters_copy_is_read_against_the_first_meta(home):
+    path, _ = L.write(population(), PROFILE, home, sample=4, seed=7, now=NOW)
+    copy = home / "feeds" / "rater.csv"
+    copy.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    fill(copy, {1: "fit", 2: "fit", 3: "no_fit", 4: "fit"}, edit=lambda r: r.update(reason="because"))
+    meta = json.loads(L.meta_path(path).read_text(encoding="utf-8"))
+    got = L.read_sheet(copy, meta=meta)
+    assert [r.label for r in got.rows] == ["fit", "fit", "no_fit", "fit"] and got.rows[0].extra == {"reason": "because"}
