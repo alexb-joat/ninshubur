@@ -38,7 +38,7 @@ fetch:
     max_per_document: 4
     path_terms: [speaker, sponsor, exhibitor, partner, lineup, agenda]
     max_query_len: 200
-  # Documented invariants. There is no code path for any of these; tests assert it.
+  # Documented invariants. No code path implements any of these; tests/test_invariants.py locks this list and asserts no bypass/evasion tooling is imported.
   never: [login, captcha_bypass, paywall_bypass, proxies, fingerprint_evasion]
 
 # Fences for the explorer (ninshubur/explorer): open-web discovery, kept apart from the sources above. A "site" is a
