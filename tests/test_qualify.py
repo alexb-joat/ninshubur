@@ -342,7 +342,7 @@ def test_an_older_database_gains_the_two_tables_on_connect(home):
     conn = connect(home)
     names = {r["name"] for r in rows(conn, "SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"llm_runs", "qualifications"} <= names
-    assert one(conn, "SELECT value FROM meta WHERE key='schema_version'")["value"] == "4"
+    assert one(conn, "SELECT value FROM meta WHERE key='schema_version'")["value"] == "5"
 
 
 # -- command line -----------------------------------------------------------------------------------

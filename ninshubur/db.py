@@ -131,6 +131,9 @@ SCHEMA: list[str] = [
         latency_ms INTEGER, created_at REAL NOT NULL, UNIQUE(run_id, subject_key))""",
     """CREATE INDEX IF NOT EXISTS qualifications_asked
         ON qualifications(profile, model, prompt_hash, subject_key, evidence_hash)""",
+    # The do-not-collect list written by ``ninshubur forget``: salted hashes of forgotten names, domains and keys
+    # (erase.py). No name is stored; ingest skips an entity whose hash is here.
+    """CREATE TABLE IF NOT EXISTS forgotten (mark TEXT PRIMARY KEY, type TEXT NOT NULL, at REAL NOT NULL)""",
 ]
 
 # (table, statement) pairs applied once each, in order, after SCHEMA. Add to the end only.
@@ -141,7 +144,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     ("entities", "ALTER TABLE entities ADD COLUMN role TEXT"),
 ]
 
-SCHEMA_VERSION = 4  # 3: company_aliases; 4: llm_runs, qualifications
+SCHEMA_VERSION = 5  # 3: company_aliases; 4: llm_runs, qualifications; 5: forgotten
 
 
 def db_path(home: Path | None = None) -> Path:
@@ -169,6 +172,7 @@ def connect(home: Path | None = None, path: Path | None = None) -> sqlite3.Conne
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA secure_delete=ON")  # a deleted row is overwritten with zeros, not left in a free page
     migrate(conn)
     for suffix in ("", "-wal", "-shm"):
         p = Path(str(path) + suffix)

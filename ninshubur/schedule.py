@@ -375,6 +375,11 @@ class Scheduler:
             self.ingestor.policy_log.write({"event": "explorer_inbox_error", "error": type(e).__name__, "detail": str(e)[:200]})
             return None
 
+    def retention_sweep(self) -> dict | None:
+        """Policy ``retention``, enforced once per ``sweep_every_s`` (an hour): see erase.sweep. None when not due."""
+        from .erase import sweep_if_due
+        return sweep_if_due(self.conn, self.policy, self.now(), self.ingestor.policy_log)
+
     async def daemon(self, *, stop: asyncio.Event | None = None, tick_s: float | None = None) -> None:
         tick = float(tick_s or self.cfg.get("scheduler", "tick_s", default=30))
         stop = stop or asyncio.Event()
@@ -386,6 +391,7 @@ class Scheduler:
                     await self.run_once()
                 self.ingestor.decay()
                 self.read_explorer_inbox()
+                self.retention_sweep()
                 if self.after_tick:
                     self.after_tick()
             except Exception as e:  # noqa: BLE001 - a daemon must survive a bad tick

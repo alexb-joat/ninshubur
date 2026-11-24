@@ -169,6 +169,9 @@ def cmd_run(args, app: App) -> int:
         print(f"{r.source:<20} fetched {r.fetched} changed {r.changed} unchanged {r.unchanged} refused {r.refused} errors {r.errors} "
               f"| stored {r.stored} dropped {r.dropped} held {r.held} | health {r.health} | next {app.local(r.next_due_at)}"
               + (f" | {r.note}" if r.note else ""))
+    swept = app.scheduler.retention_sweep()
+    if swept and any(swept.values()):
+        print("retention sweep: removed " + ", ".join(f"{v} {k}" for k, v in swept.items() if v))
     built = app.suggester.build_all()
     for s in app.sinks:
         s.write_all()
@@ -344,6 +347,85 @@ def cmd_status(args, app: App) -> int:
     print(f"items held {s['items_held']}, tainted {s['items_tainted']}; quarantine rows (7 d) {s['quarantine_7d']}; "
           f"new candidates {s['candidates_new']}")
     print("suggestions: " + (", ".join(f"{k} {v}" for k, v in sorted(s["suggestions"].items())) or "none"))
+    from .erase import Forgotten, last_sweep
+    at, rep = last_sweep(app.conn)
+    listed = Forgotten(app.conn).counts()
+    removed = ", ".join(f"{v} {k}" for k, v in rep.items() if v) or "nothing to remove"
+    print("retention: " + (f"last sweep {app.local(at)} ({removed})" if at else "no sweep yet (runs with `ninshubur run`, hourly)")
+          + f"; forgotten list: {listed.get('person', 0)} person, {listed.get('company', 0)} company mark(s)")
+    return 0
+
+
+def cmd_forget(args, app: App) -> int:
+    """Erase one person or company: preview, confirm, delete, list the name as not to be collected again."""
+    from . import erase
+    log = app.ingestor.policy_log
+    if args.lift:
+        n = erase.lift(app.conn, args.type, args.name, log)
+        print(f"{args.name!r} is off the forgotten list ({n} mark(s) removed). Nothing is restored; the next crawl may collect it again."
+              if n else f"{args.name!r} is not on the forgotten list; nothing changed")
+        return 0 if n else 1
+    from .companies import Resolver
+    resolver = Resolver.load(app.cfg, app.profiles, app.home) if args.type == "company" else None
+    t = erase.find(app.conn, args.type, args.name, resolver)
+    if not t.query:
+        print("forget needs a name", file=sys.stderr)
+        return 2
+    files = erase.exported_mentions(app.home, t.names)
+    if t.stored:
+        print(f"forget {t.etype} {t.query!r} would remove:")
+        for e in t.entities[:20]:
+            about = ", ".join(str(x) for x in (e.get("title"), e.get("company") or e.get("domain"), e.get("role")) if x)
+            print(f"  {e['type']} record: {e['name']}" + (f" ({about})" if about else "") + f", from {e['source']}")
+        if len(t.entities) > 20:
+            print(f"  ... and {len(t.entities) - 20} more records")
+        if t.links:
+            print(f"  {t.links} link(s) between those records and crawled pages")
+        if t.item_ids:
+            print(f"  {len(t.item_ids)} hiring posting(s) from {', '.join(t.sources)}, with their dates, changes and signals")
+        for n, what in ((t.signals, "signal(s)"), (t.aliases, "alias row(s)"), (t.qualifications, "stored qualify answer(s)")):
+            if n:
+                print(f"  {n} {what}")
+        if t.suggestions:
+            print(f"  {len(t.suggestions)} suggestion(s) about it: emptied and marked redacted")
+        if t.texts:
+            print(f"  the name in {t.texts} suggestion, feedback or qualify text(s): replaced with {erase.REMOVED}")
+    else:
+        print(f"nothing stored matches {t.etype} {t.query!r}" + (" (it is already on the forgotten list)" if t.already_forgotten else ""))
+    print(f"  the name goes on the forgotten list as a salted hash, so a later crawl does not store it again"
+          + (" (a namesake is not stored either)" if t.etype == "person" else ""))
+    if t.crawled_mentions:
+        print(f"not changed: {t.crawled_mentions} crawled text(s) that mention the name (posting titles, comments); "
+              "forget does not edit crawled text")
+    if t.employees:
+        print(f"not changed: {t.employees} person record(s) that name it as their employer; forget a person by name")
+    if files:
+        print("not changed: your own files that show the name (exports, config); edit, delete or re-export them yourself:")
+        for p in files[:20]:
+            print(f"  {p}")
+    if t.etype == "company" and t.sources:
+        print(f"note: {', '.join(t.sources)} will still be fetched; postings of this company are skipped at storage. "
+              "If a source reads only this company's board, take the board out of config.yaml "
+              "(the database mirrors a source's config until then).")
+    if args.dry_run:
+        print("dry run: nothing changed")
+        return 0
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("refusing to erase without confirmation: pass --yes (or --dry-run to only look)", file=sys.stderr)
+            return 2
+        if input("This cannot be undone. Erase? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("nothing changed")
+            return 1
+    done = erase.forget(app.conn, t, app.now(), log)
+    for sink in app.sinks:  # the calendar feed is rebuilt, so it no longer shows the name
+        sink.write_all()
+    words = {"entities": "record(s)", "links": "page link(s)", "items": "posting(s)", "signals": "signal(s)", "aliases": "alias row(s)",
+             "qualifications": "qualify answer(s)", "suggestions": "suggestion(s) emptied", "texts": "text(s) with the name replaced",
+             "snapshots": "snapshot(s) trimmed"}
+    parts = [f"{v} {words[k]}" for k, v in done.items() if v and k in words]
+    print(f"erased: {', '.join(parts) or 'no stored rows'}; forgotten list +{done['listed']} mark(s); logged in logs/policy.jsonl "
+          "(a hash and counts, no name)")
     return 0
 
 
@@ -977,7 +1059,16 @@ def build_parser() -> argparse.ArgumentParser:
     lk.add_argument("--dry-run", action="store_true", help="fetch and extract, store nothing, print what was found")
     lk.add_argument("--replay", metavar="DIR", help="serve samples from DIR instead of the network")
     lk.set_defaults(fn=cmd_lookup)
-    sub.add_parser("status", help="source health, held and quarantined counts").set_defaults(fn=cmd_status)
+    fg = sub.add_parser("forget", help="erase a person or a company and everything that points at them; never collected again",
+                        description="Shows what would be removed, asks, then deletes it and puts a salted hash of the name on "
+                                    "the forgotten list. Cannot be undone. Exported files are listed, not changed.")
+    fg.add_argument("type", choices=["person", "company"])
+    fg.add_argument("name", help='the name as written ("Jane Doe"); for a company also its domain (acme.com)')
+    fg.add_argument("--dry-run", action="store_true", help="show what would be removed; change nothing")
+    fg.add_argument("--yes", action="store_true", help="erase without asking (needed when not typed at a terminal)")
+    fg.add_argument("--lift", action="store_true", help="take the name off the forgotten list (restores nothing)")
+    fg.set_defaults(fn=cmd_forget)
+    sub.add_parser("status", help="source health, held and quarantined counts, last retention sweep").set_defaults(fn=cmd_status)
     sub.add_parser("budget", help="daily budgets and per-source stats").set_defaults(fn=cmd_budget)
     return p
 
