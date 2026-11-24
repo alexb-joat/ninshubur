@@ -45,9 +45,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "sinks": {
         "ics": {"path": "feeds/timings.ics"},
-        "trello": {"enabled": False, "key_env": "TRELLO_KEY", "token_env": "TRELLO_TOKEN", "list_id": ""},
-        "google_calendar": {"enabled": False, "credentials_env": "GOOGLE_CAL_CREDENTIALS_JSON", "calendar_id": "primary"},
-        "platform": {"enabled": False, "base_url": "", "token_env": "PLATFORM_API_TOKEN"},
     },
     "api": {"host": "127.0.0.1", "port": 8791},
     "sources": {},
