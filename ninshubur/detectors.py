@@ -291,20 +291,58 @@ JSON_MAX_BYTES = 8_000_000  # the fetcher's hard body cap: nothing larger is eve
 def load_json(data: bytes | str, *, max_bytes: int = JSON_MAX_BYTES, max_depth: int = 64) -> Any:
     """``json.loads`` for hostile input: every failure is a ValueError, so a caller's ``except ValueError`` holds.
 
-    Too large, nested past ``max_depth``, or nested past the interpreter's recursion limit (``json.loads`` raises
-    RecursionError there, not ValueError: 8 MB of ``[`` took 15 ms to reach it, on 17 Nov, so it is cheap and needs
-    no pre-scan) all raise ValueError with the reason. Bytes must be UTF-8 (UnicodeDecodeError is a ValueError)."""
+    Too large or nested past ``max_depth`` raises ValueError with the reason. Bytes must be UTF-8
+    (UnicodeDecodeError is a ValueError). Nesting is counted on the text before anything is parsed, because the
+    parser's own guard can't be relied on: up to Python 3.13 it raises RecursionError after a fixed number of
+    levels, from 3.14 on it stops only when the C stack runs low. Measured on 3.14.4, 24 Nov: 8 MB of brackets
+    under ``ulimit -s unlimited`` parsed in 1.1 s at 934 MB peak before the depth check below could refuse it."""
     if len(data) > max_bytes:
         raise ValueError(f"JSON of {len(data)} bytes is over the {max_bytes}-byte limit")
     if isinstance(data, bytes):
         data = data.decode("utf-8")
+    if nesting_over(data, max_depth):
+        raise ValueError(f"JSON nested deeper than {max_depth} levels")
     try:
         obj = json.loads(data)
-    except RecursionError:
+    except RecursionError:  # unreachable while max_depth stays far below the interpreter's limit; kept as a backstop
         raise ValueError("JSON nested too deeply to parse") from None
     if depth_of(obj, limit=max_depth) > max_depth:
         raise ValueError(f"JSON nested deeper than {max_depth} levels")
     return obj
+
+
+_JSON_MARKS = re.compile(r'["\[\]{}]')
+
+
+def nesting_over(text: str, limit: int) -> bool:
+    """True when the brackets of a JSON text open more than ``limit`` levels at once. One pass, no recursion.
+
+    Brackets inside strings don't count; a quote ends a string unless an odd number of backslashes precedes it.
+    On a valid text the count is exact. On a broken one it is exact up to the first error, which is as far as a
+    parser gets."""
+    if text.count("[") + text.count("{") <= limit:
+        return False
+    depth = 0
+    in_string = False
+    for m in _JSON_MARKS.finditer(text):
+        ch = m.group()
+        if ch == '"':
+            if in_string:
+                i = m.start() - 1
+                while i >= 0 and text[i] == "\\":
+                    i -= 1
+                if (m.start() - 1 - i) % 2:
+                    continue  # an escaped quote: still inside the string
+            in_string = not in_string
+        elif in_string:
+            continue
+        elif ch in "[{":
+            depth += 1
+            if depth > limit:
+                return True
+        else:
+            depth -= 1
+    return False
 
 
 def depth_of(obj: Any, limit: int = 64) -> int:

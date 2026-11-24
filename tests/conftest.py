@@ -13,6 +13,17 @@ SAMPLES = Path(__file__).parent / "samples"
 MALICIOUS = Path(__file__).parent / "malicious"
 
 
+def pytest_collection_modifyitems(items):
+    """The explorer is Linux only, so tests/test_explorer_*.py run only there; on any other system they are skipped
+    with the reason its commands give. tests/test_linux_only.py runs everywhere and tests that refusal."""
+    from ninshubur.explorer import linux_only
+    why = linux_only()
+    if why:
+        for item in items:
+            if item.path.name.startswith("test_explorer_"):
+                item.add_marker(pytest.mark.skip(reason=why))
+
+
 @pytest.fixture
 def now() -> float:
     return NOW

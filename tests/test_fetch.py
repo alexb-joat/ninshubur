@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import gzip
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -529,7 +531,10 @@ def test_a_real_connect_error_names_the_socket_reason():
         finally:
             await t.aclose()
     detail = run(go())
-    assert detail.startswith("[Errno 111]") and "All connection attempts failed" not in detail
+    # the socket's own words: "[Errno 111] ..." on Linux, 61 on macOS, "[Errno 10061] ..." or "[WinError 1225] ..." on Windows
+    assert re.match(r"\[(Errno|WinError) \d+\] ", detail) and "All connection attempts failed" not in detail
+    if os.name == "posix":
+        assert detail.startswith(f"[Errno {errno.ECONNREFUSED}] ")
 
 
 def test_reachable_needs_an_address_and_a_route(monkeypatch):

@@ -57,6 +57,11 @@ def in_unit(tmp_path):
     env = {k: os.environ[k] for k in ("PATH", "HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS") if k in os.environ}
     env |= {"NINSHUBUR_HOME": str(d / "nh"), "XDG_CONFIG_HOME": str(tmp_path / "config")}
     try:
+        # Some user sessions run a plain unit but can't fence one (GitHub's Linux runners: no unprivileged mount
+        # namespace for the user manager). The script names that case; anything else it reports stays a failure.
+        r = script(env, "--check", py=stub(d, "exit 0\n"))
+        if r.returncode and "systemd could not start a process under the service's limits" in r.stderr:
+            pytest.skip("this systemd user session can't fence a unit: " + r.stderr.split(";")[0].split("(")[-1])
         yield d, env
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -92,10 +97,27 @@ def test_a_check_that_fails_under_the_unit_installs_nothing(in_unit, tmp_path):
     d, env = in_unit
     broken = stub(d, 'echo "explore check: the sandbox did not run" >&2\nexit 2\n')
     r = script(env, "--check", py=broken)
-    assert r.returncode == 1 and "the sandbox did not run" in r.stderr and "under the service's limits" in r.stderr
+    assert r.returncode == 1 and "the sandbox did not run" in r.stderr and "under the service's limits (exit code 2;" in r.stderr
     r = script(env, py=broken)
     assert r.returncode == 1 and "not installing" in r.stderr and "--check shows" in r.stderr
-    assert not (tmp_path / "config").exists()  # no unit file was written, so no timer was enabled
+
+
+def test_a_unit_systemd_cannot_fence_is_named_as_such(tmp_path):
+    """On a machine where systemd can't apply the limits the check never starts, so there is nothing "above" to
+    read: the script has to say it was systemd, with the code. Stand-ins: a systemd-run that answers 226
+    (NAMESPACE) and a bwrap that is only there to be found, so this runs on any Linux."""
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    for name, body in (("systemd-run", "exit 226\n"), ("bwrap", "exit 0\n")):
+        (fake / name).write_text("#!/bin/sh\n" + body)
+        (fake / name).chmod(0o700)
+    env = {"PATH": f"{fake}:{os.environ['PATH']}", "HOME": str(tmp_path), "NINSHUBUR_HOME": str(tmp_path / "nh"),
+           "XDG_CONFIG_HOME": str(tmp_path / "config")}
+    for args in (("--check",), ()):
+        r = script(env, *args, py=stub(tmp_path, "exit 0\n"))
+        assert r.returncode == 1 and "systemd could not start a process" in r.stderr and "exit code 226" in r.stderr
+        assert "never ran" in r.stderr
+    assert not (tmp_path / "config").exists()  # nothing installed
 
 
 @needs_bwrap

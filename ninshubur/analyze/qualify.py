@@ -88,6 +88,7 @@ class Subject:
     total: int                   # distinct evidence lines the subject has, shown or not
     sources: tuple[str, ...] = ()
     redactions: int = 0
+    urls: tuple[str, ...] = ()   # the page behind each line, for the label sheet only (never in the prompt or the hash)
 
     @property
     def evidence_hash(self) -> str:
@@ -133,6 +134,17 @@ def evidence_line(item: dict) -> tuple[str, int]:
     return " | ".join(parts)[:MAX_LINE_CHARS].rstrip(), taken
 
 
+MAX_URL_CHARS = 300
+
+
+def _link(url) -> str:
+    """A page address for a person to open: http(s) only and capped, else empty (crawled text is untrusted)."""
+    url = str(url or "").strip()
+    if not url.lower().startswith(("https://", "http://")) or len(url) > MAX_URL_CHARS or any(c.isspace() for c in url):
+        return ""
+    return url
+
+
 def build_subjects(groups: dict[str, list[dict]], names: dict[str, str], profile: Profile) -> list[Subject]:
     """One Subject per group that has at least one usable line, in key order. Deterministic."""
     out: list[Subject] = []
@@ -148,25 +160,27 @@ def build_subjects(groups: dict[str, list[dict]], names: dict[str, str], profile
             _, wanted, unwanted = rel.lexical(f"{it.get('title') or ''} {it.get('text') or ''}", profile)
             score = len(wanted) + len(unwanted)
             at = float(it.get("published_at") or it.get("first_seen_at") or 0)
-            ranked.append((-score, -at, int(it["id"]), line, n, str(it.get("source") or "")))
+            ranked.append((-score, -at, int(it["id"]), line, n, str(it.get("source") or ""), _link(it.get("url"))))
         ranked.sort()
         lines: list[str] = []
         ids: list[int] = []
+        urls: list[str] = []
         taken = 0
         seen: set[str] = set()
-        for _, _, iid, line, n, _src in ranked:
+        for _, _, iid, line, n, _src, url in ranked:
             if line in seen:
                 continue
             seen.add(line)
             if len(lines) < MAX_LINES:
                 lines.append(line)
                 ids.append(iid)
+                urls.append(url)
                 taken += n
         if not lines:
             continue
         name = _flat(names.get(key) or key, MAX_NAME_CHARS)[0] or key
         out.append(Subject(key=key, name=name, lines=tuple(lines), item_ids=tuple(ids), total=len(seen),
-                           sources=tuple(sorted({r[5] for r in ranked if r[5]})), redactions=taken))
+                           sources=tuple(sorted({r[5] for r in ranked if r[5]})), redactions=taken, urls=tuple(urls)))
     return out
 
 

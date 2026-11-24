@@ -78,7 +78,8 @@ def test_frontier_lists_caps_and_stopped_sites(cli, home):
 
 
 # -- lane E2: run, sites, check ------------------------------------------------------------------------------------
-def test_run_dry_run_lists_pages_and_their_probes_and_sends_nothing(cli, home):
+def test_run_dry_run_lists_pages_and_their_probes_and_sends_nothing(cli, home, monkeypatch):
+    monkeypatch.setattr("ninshubur.explorer.sandbox.shutil.which", lambda name: "/usr/bin/bwrap")  # never started here
     cli("explore", "offer", "https://ex.org/a")
     code, out = cli("explore", "run", "--dry-run")
     assert code == 0 and "would fetch https://ex.org/a (+ soft-404 probe)" in out and "nothing was sent" in out

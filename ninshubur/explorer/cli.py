@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import sys
 
 from ..db import rows
@@ -372,6 +373,20 @@ def cmd_inbox(args, app) -> int:
     return 0
 
 
+def _linux_only(fn):
+    """Off Linux no explore command touches the explorer's folder: it says why and exits 2."""
+    @functools.wraps(fn)
+    def gated(args, app) -> int:
+        from . import linux_only
+        why = linux_only()
+        if why:
+            print(f"explore {args.xcmd}: {why}; nothing of the explorer's was read or written. The rest of Ninshubur runs here.",
+                  file=sys.stderr)
+            return 2
+        return fn(args, app)
+    return gated
+
+
 def add_commands(sub: argparse._SubParsersAction) -> None:
     x = sub.add_parser("explore", help="the explorer: open-web discovery with its own database and fences")
     xs = x.add_subparsers(dest="xcmd", required=True)
@@ -427,3 +442,5 @@ def add_commands(sub: argparse._SubParsersAction) -> None:
     rs.set_defaults(fn=cmd_resume, main_db=False)
     ss = xs.add_parser("status", help="stopped or running, the sandbox, today's bytes, the ladder, the handoff")
     ss.set_defaults(fn=cmd_status, main_db=False)
+    for sub_parser in xs.choices.values():  # one gate for all of them: the explorer is Linux only
+        sub_parser.set_defaults(fn=_linux_only(sub_parser.get_default("fn")))
