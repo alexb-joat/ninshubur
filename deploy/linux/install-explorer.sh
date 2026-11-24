@@ -91,6 +91,19 @@ LINES
   systemd-run --user --wait --collect --quiet --pipe "$@" "$PY" -m ninshubur explore check
 }
 
+# Say why the check failed. Exit codes 200 to 245 are systemd's own (systemd.exec(5), "PROCESS EXIT CODES"): it could
+# not set the process up under the limits, so the check never started and printed nothing.
+explain() {
+  if [ "$1" -ge 200 ] && [ "$1" -le 245 ]; then
+    echo "systemd could not start a process under the service's limits (its exit code $1; 226 means it could not build" >&2
+    echo "the unit's view of the file system: ProtectSystem=, ProtectHome=, PrivateTmp=, or a ReadWritePaths= folder" >&2
+    echo "it can't see, such as one under /tmp). \`ninshubur explore check\` never ran, and the timer's cycles would" >&2
+    echo "fail the same way. \`journalctl --user -n 20\` has systemd's line; \`man systemd.exec\` lists the codes." >&2
+  else
+    echo "\`ninshubur explore check\` failed under the service's limits (exit code $1; its own words are above)" >&2
+  fi
+}
+
 case "${1:-}" in
   --print)
     echo "# $UNIT_DIR/ninshubur-explorer.service"; service
@@ -111,14 +124,17 @@ esac
 command -v bwrap >/dev/null || { echo "bwrap not found: install bubblewrap first (the explorer never parses without it)" >&2; exit 1; }
 mkdir -p "$HOME_DIR/explorer" "$HOME_DIR/logs" "$HOME_DIR/feeds"  # the unit can write only explorer/
 chmod 700 "$HOME_DIR" "$HOME_DIR/explorer"
+rc=0
 if [ "${1:-}" = "--check" ]; then
-  check_in_unit || { echo "\`ninshubur explore check\` failed under the service's limits (see above)" >&2; exit 1; }
+  check_in_unit || rc=$?
+  [ "$rc" -eq 0 ] || { explain "$rc"; exit 1; }
   echo "the sandbox is fenced under the service's limits; nothing was installed"
   exit 0
 fi
-check_in_unit >/dev/null || {
-  echo "\`ninshubur explore check\` failed under the service's limits: the timer's cycles would halt; not installing." >&2
-  echo "$0 --check shows the check's own output" >&2; exit 1; }
+check_in_unit >/dev/null || rc=$?
+[ "$rc" -eq 0 ] || {
+  explain "$rc"
+  echo "The timer's cycles would halt; not installing. $0 --check shows the check's own output." >&2; exit 1; }
 mkdir -p "$UNIT_DIR"
 service > "$UNIT_DIR/ninshubur-explorer.service"
 timer > "$UNIT_DIR/ninshubur-explorer.timer"
