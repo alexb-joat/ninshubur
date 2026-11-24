@@ -776,7 +776,8 @@ def cmd_evaluate(args, app: App) -> int:
             print("nothing to score: no stored answers on this sheet's evidence and no --rater file; ask with "
                   f"`ninshubur qualify --profile {sheet.meta['profile']} --from-sheet {args.sheet}`", file=sys.stderr)
             return 2
-        rep = ev.evaluate(sheet, raters, reps=args.reps, seed=args.seed, now=app.now())
+        prices = ev.load_prices(Path(args.prices)) if args.prices else None
+        rep = ev.evaluate(sheet, raters, reps=args.reps, seed=args.seed, now=app.now(), prices=prices)
     except (LabelSheetError, ValueError) as e:
         print(f"cannot evaluate: {e}", file=sys.stderr)
         return 2
@@ -953,6 +954,8 @@ def build_parser() -> argparse.ArgumentParser:
     evp.add_argument("--rater", action="append", metavar="CSV[=NAME]", help="also score a filled copy of the sheet (repeatable)")
     evp.add_argument("--reps", type=int, default=10_000, help="bootstrap resamples (default 10000)")
     evp.add_argument("--seed", type=int, default=7, help="bootstrap seed (default 7)")
+    evp.add_argument("--prices", metavar="FILE", help="a provider-facts file (`export euboulia-facts`): adds each rater's "
+                                                      "list-price cost (default: tokens only, no cost)")
     evp.add_argument("-o", "--output", metavar="FILE", help="report path (.md and .json are written; default: feeds/eval-<profile>-seed<N>-<date>)")
     evp.add_argument("--no-save", action="store_true", help="print the report only; write nothing")
     evp.add_argument("--json", action="store_true", help="print the JSON report instead of the markdown")
