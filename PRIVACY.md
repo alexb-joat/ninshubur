@@ -62,7 +62,7 @@ lawful reading is the only reading the code can take.
 - **Retention and erasure:** `retention_until = fetched_at + 12 months`, enforced by the hourly sweep;
   `ninshubur forget person "<name>"` removes the person and every link and keeps the name from being
   stored again; the erasure is logged with a hash and counts (see Person data above).
-- **Volume:** at most 20 events a day, five pages per event, one request per second per host.
+- **Volume:** at most 20 events a day; per event the homepage and at most four pages it links to; one request per second per host.
 
 ## Per-source terms (to re-verify at each trust review)
 
