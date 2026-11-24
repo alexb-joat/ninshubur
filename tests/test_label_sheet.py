@@ -143,3 +143,166 @@ def test_cli_writes_the_sheet_and_refuses_what_it_cannot_draw(cli, home):  # noq
     assert code == 2 and "exists and may hold labels" in out
     code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--force", "--sample", "1")
     assert code == 0 and len(parse(path.read_text(encoding="utf-8"))) == 1
+    code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--seed", "8", "--exclude", str(path))
+    assert code == 2 and "nothing is left to draw" in out  # the replay has one company, and it is on the seed-7 sheet
+    other = home / "other.csv"
+    other.write_text("row,subject_key\n1,company:not-in-the-replay\n", encoding="utf-8")
+    code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--seed", "8", "--exclude", str(other))
+    assert code == 0 and "left out 0 subject(s) already on other.csv" in out, out
+    code, out = cli("export", "label-sheet", "--profile", "agency-eu", "--seed", "9", "--exclude", str(home / "nope.csv"))
+    assert code == 2 and "cannot read it" in out
+
+
+
+def test_a_second_sheet_leaves_out_every_subject_on_the_first(home):
+    prof = PROFILE
+    subjects = population()
+    first, _ = L.write(subjects, prof, home, sample=10, seed=7, now=NOW)
+    seen = {r["subject_key"] for r in parse(first.read_text(encoding="utf-8"))}
+    second, sheet = L.write(subjects, prof, home, sample=10, seed=8, now=NOW, exclude=[first])
+    keys = {r["subject_key"] for r in parse(second.read_text(encoding="utf-8"))}
+    assert keys and not keys & seen and len(keys) == 10
+    meta = json.loads(L.meta_path(second).read_text(encoding="utf-8"))
+    assert meta["population"] == len(subjects) - len(seen) == sheet.population
+    assert meta["excluded"] == [{"sheet": first.name, "sha256": meta["excluded"][0]["sha256"], "subjects": 10, "in_population": 10}]
+    assert json.loads(L.meta_path(first).read_text(encoding="utf-8"))["excluded"] == []
+    with pytest.raises(L.LabelSheetError, match="--exclude .*cannot read it"):
+        L.write(subjects, prof, home, sample=5, seed=9, now=NOW, exclude=[home / "missing.csv"])
+    (home / "notes.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    with pytest.raises(L.LabelSheetError, match="no subject_key column"):
+        L.write(subjects, prof, home, sample=5, seed=9, now=NOW, exclude=[home / "notes.csv"])
+    everyone, _ = L.write(subjects, prof, home, sample=len(subjects), seed=10, now=NOW)
+    with pytest.raises(L.LabelSheetError, match="nothing is left to draw"):
+        L.write(subjects, prof, home, sample=5, seed=11, now=NOW, exclude=[everyone])
+
+# --- reading a filled sheet ----------------------------------------------------------------------
+def fill(path, labels: dict[int, str], *, libreoffice: bool = False, edit=None) -> None:
+    """Fill the label column the way a person would; ``libreoffice`` re-saves it with a BOM, CRLF and an empty column."""
+    text = path.read_text(encoding="utf-8-sig")
+    recs = list(csv.DictReader(io.StringIO(text)))
+    for r in recs:
+        r["label"] = labels.get(int(r["row"]), "")
+        if edit:
+            edit(r)
+    buf = io.StringIO()
+    cols = list(recs[0].keys()) + ([""] if libreoffice else [])
+    w = csv.DictWriter(buf, cols, lineterminator="\r\n" if libreoffice else "\n")
+    w.writeheader()
+    for r in recs:
+        w.writerow({**r, **({"": ""} if libreoffice else {})})
+    path.write_text(("﻿" if libreoffice else "") + buf.getvalue(), encoding="utf-8")
+
+
+def test_a_filled_sheet_reads_back_with_its_subjects(home):
+    path, sheet = L.write(population(), PROFILE, home, sample=6, seed=7, now=NOW)
+    fill(path, {1: "fit", 2: "NO_FIT ", 3: "fit"}, libreoffice=True)
+    got = L.read_sheet(path)
+    assert [r.row for r in got.rows] == list(range(1, 7))
+    assert [r.label for r in got.rows[:4]] == ["fit", "no_fit", "fit", None] and got.unlabelled() == [4, 5, 6]
+    for r, (s, stratum) in zip(got.rows, sheet.rows):
+        assert r.subject.key == s.key and r.subject.lines == s.lines and r.subject.evidence_hash == s.evidence_hash
+        assert r.subject.total == s.total and r.stratum == stratum and r.subject.item_ids == s.item_ids
+    assert got.labels == ("fit", "no_fit") and got.positive == "fit" and len(got.sha256) == 64
+
+
+def test_a_guarded_name_reads_back_as_drawn(home):
+    s = Q.Subject(key="company:x", name="=HYPERLINK(1)", lines=("@risk line",), item_ids=(1,), total=1, sources=("board",))
+    path, _ = L.write([s], PROFILE, home, sample=1, seed=7, now=NOW)
+    fill(path, {1: "fit"})
+    assert L.read_sheet(path).rows[0].subject.name == "=HYPERLINK(1)"
+
+
+@pytest.mark.parametrize("edit, match", [
+    (lambda r: r.update(evidence=r["evidence"] + " (checked)") if r["row"] == "2" else None, r"row 2 .*differs from what was drawn"),
+    (lambda r: r.update(name="Someone else") if r["row"] == "3" else None, r"row 3 .*differs from what was drawn"),
+    (lambda r: r.update(label="maybe") if r["row"] == "1" else None, r"row 1 .*'maybe' is not one of fit, no_fit"),
+    (lambda r: r.update(evidence="1. renumbered") if r["row"] == "1" else None, r"row 1: evidence line 1 does not start with '\[1\]'"),
+    (lambda r: r.update(subject_key="company:zzz") if r["row"] == "4" else None, r"row 4: subject 'company:zzz'"),
+])
+def test_an_edited_sheet_is_refused_with_the_row(home, edit, match):
+    path, _ = L.write(population(), PROFILE, home, sample=5, seed=7, now=NOW)
+    fill(path, {1: "fit"}, edit=edit)
+    with pytest.raises(L.LabelSheetError, match=match):
+        L.read_sheet(path)
+
+
+def test_deleted_or_missing_pieces_are_refused(home):
+    path, _ = L.write(population(), PROFILE, home, sample=5, seed=7, now=NOW)
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    path.write_text("".join(lines[:1] + lines[2:]), encoding="utf-8")
+    with pytest.raises(L.LabelSheetError, match=r"row\(s\) 1 are missing"):
+        L.read_sheet(path)
+    L.meta_path(path).unlink()
+    with pytest.raises(L.LabelSheetError, match="meta.json is missing"):
+        L.read_sheet(path)
+
+
+def test_a_second_raters_copy_is_read_against_the_first_meta(home):
+    path, _ = L.write(population(), PROFILE, home, sample=4, seed=7, now=NOW)
+    copy = home / "feeds" / "rater.csv"
+    copy.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    fill(copy, {1: "fit", 2: "fit", 3: "no_fit", 4: "fit"}, edit=lambda r: r.update(reason="because"))
+    meta = json.loads(L.meta_path(path).read_text(encoding="utf-8"))
+    got = L.read_sheet(copy, meta=meta)
+    assert [r.label for r in got.rows] == ["fit", "fit", "no_fit", "fit"] and got.rows[0].extra == {"reason": "because"}
+
+
+def test_cli_asks_on_the_sheet_as_drawn_and_on_a_second_prompt(cli, home):  # noqa: F811
+    from ninshubur.db import connect, rows
+    assert cli("run", "--replay", str(SAMPLES))[0] == 0
+    assert cli("export", "label-sheet", "--profile", "agency-eu", "--sample", "3", "--seed", "7")[0] == 0
+    path = home / "feeds" / "label-sheet-agency-eu-seed7.csv"
+    fill(path, {1: "fit", 2: "no_fit", 3: "unsure"}, libreoffice=True)
+    meta = json.loads(L.meta_path(path).read_text(encoding="utf-8"))
+    n = len(meta["rows"])
+    assert n >= 1
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path))
+    assert code == 0 and "evidence exactly as drawn" in out and "is the one the sheet was drawn with" in out
+    assert len(cli.server.requests) == n
+    sent = json.loads(cli.server.requests[0].content)["messages"][1]["content"]
+    first = L.read_sheet(path).rows[0].subject
+    assert all(line in sent or any(line in json.loads(r.content)["messages"][1]["content"] for r in cli.server.requests)
+               for line in first.lines)
+    conn = connect(home)
+    got = {(r["subject_key"], r["evidence_hash"]) for r in rows(conn, "SELECT subject_key, evidence_hash FROM qualifications")}
+    assert got == {(r["subject_key"], r["evidence_hash"]) for r in meta["rows"]}
+
+    second = home / "p1.yaml"
+    second.write_text("qualify:\n  question: Would this company buy the service within a month?\n  labels: [fit, no_fit, unsure]\n",
+                      encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--qualify-file", str(second), "--dry-run")
+    assert code == 0 and "differs from the sheet's" in out and f"to ask: {n}" in out and len(cli.server.requests) == n
+
+    second.write_text("question: Would this company buy?\nlabels: [yes, no]\n", encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--qualify-file", str(second))
+    assert code == 2 and "must keep the same answers" in out
+    second.write_text("question: Would this company buy?\nlabel: [fit]\n", encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--qualify-file", str(second))
+    assert code == 2 and "unknown key(s) label" in out
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(home / "nope.csv"))
+    assert code == 2 and "cannot read" in out
+    meta["profile"] = "other"
+    other = home / "other-meta.json"
+    other.write_text(json.dumps(meta), encoding="utf-8")
+    code, out = cli("qualify", "--profile", "agency-eu", "--from-sheet", str(path), "--meta", str(other))
+    assert code == 2 and "drawn for profile 'other'" in out
+    assert len(cli.server.requests) == n
+
+
+def test_the_sheet_links_each_line_to_its_page_and_only_to_web_pages(home):
+    groups = {"company:x": [
+        {"id": 1, "kind": "hiring", "source": "board", "title": "Python engineer", "text": "", "attrs": "{}", "published_at": NOW,
+         "first_seen_at": NOW, "url": "https://jobs.example/1", "tainted": 0, "held": 0, "person_data": 0},
+        {"id": 2, "kind": "hiring", "source": "board", "title": "Data engineer", "text": "", "attrs": "{}", "published_at": NOW - 1,
+         "first_seen_at": NOW - 1, "url": "javascript:alert(1)", "tainted": 0, "held": 0, "person_data": 0},
+        {"id": 3, "kind": "hiring", "source": "board", "title": "ML engineer", "text": "", "attrs": "{}", "published_at": NOW - 2,
+         "first_seen_at": NOW - 2, "url": "=HYPERLINK(\"https://x\")", "tainted": 0, "held": 0, "person_data": 0}]}
+    (s,) = Q.build_subjects(groups, {"company:x": "X"}, PROFILE)
+    assert s.urls == ("https://jobs.example/1", "", "")
+    before = Q.Subject(key=s.key, name=s.name, lines=s.lines, item_ids=s.item_ids, total=s.total)
+    assert s.evidence_hash == before.evidence_hash  # links are not evidence
+    path, _ = L.write([s], PROFILE, home, sample=1, seed=7, now=NOW)
+    row = parse(path.read_text(encoding="utf-8"))[0]
+    assert row["links"] == "[1] https://jobs.example/1"
+    fill(path, {1: "fit"})
+    assert L.read_sheet(path).rows[0].label == "fit"

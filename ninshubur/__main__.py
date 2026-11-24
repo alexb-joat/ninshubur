@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import random
 import sys
@@ -28,11 +29,11 @@ from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
 from .home import data_home, ensure_home
 from .ingest import Ingestor
-from .labelsheet import LabelSheetError, meta_path as label_meta_path, write as write_label_sheet
+from .labelsheet import LabelSheetError, meta_path as label_meta_path, read_sheet as read_label_sheet, write as write_label_sheet
 from .llm import LLMClient, LLMError
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
-from .profiles import PROFILE_KEYS, ProfileError, load_profiles
+from .profiles import PROFILE_KEYS, ProfileError, load_profiles, load_qualify_file
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
@@ -624,6 +625,28 @@ def _print_qualification(r: dict) -> None:
     print(f"  {head:<22} {r['name'][:32]:<32} lines {cited:<10} {r['reason'] or ''}{note}")
 
 
+def _sheet_meta(path: str | None) -> dict | None:
+    """The meta file given with --meta, or None to use the one beside the sheet."""
+    if not path:
+        return None
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ValueError(f"cannot read --meta {path}: {e.strerror or e}") from None
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--meta {path} is not valid JSON ({e})") from None
+
+
+def _sheet_mismatch(sheet, profile) -> str | None:
+    """Why this profile's question cannot be asked on this sheet, or None."""
+    if sheet.meta.get("profile") != profile.name:
+        return f"it was drawn for profile {sheet.meta.get('profile')!r}, not {profile.name!r}"
+    if tuple(profile.qualify.labels) != sheet.labels:
+        return (f"the question's answers ({', '.join(profile.qualify.labels)}) differ from the sheet's ({', '.join(sheet.labels)}); "
+                "a second prompt must keep the same answers so it can be scored against the same labels")
+    return None
+
+
 def cmd_qualify(args, app: App) -> int:
     profile = app.profiles.get(args.profile)
     if profile is None:
@@ -649,7 +672,29 @@ def cmd_qualify(args, app: App) -> int:
         print(f"{len(found)} stored answer(s): " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
         return 0
 
-    subjects = qualify_subjects(app, profile)
+    if args.qualify_file:
+        try:
+            profile = dataclasses.replace(profile, qualify=load_qualify_file(Path(args.qualify_file), profile.name))
+        except ProfileError as e:
+            print(f"cannot use {args.qualify_file}: {e}", file=sys.stderr)
+            return 2
+    if args.from_sheet:
+        try:
+            sheet = read_label_sheet(Path(args.from_sheet), meta=_sheet_meta(args.meta))
+        except (LabelSheetError, ValueError) as e:
+            print(f"cannot ask on {args.from_sheet}: {e}", file=sys.stderr)
+            return 2
+        problem = _sheet_mismatch(sheet, profile)
+        if problem:
+            print(f"cannot ask on {Path(args.from_sheet).name}: {problem}", file=sys.stderr)
+            return 2
+        subjects = [r.subject for r in sheet.rows]
+        same = qualifier.prompt_hash(profile.qualify) == sheet.meta.get("prompt_hash")
+        print(f"from sheet {sheet.path.name} (sha256 {sheet.sha256[:16]}): {len(subjects)} subject(s), evidence exactly as drawn; "
+              f"prompt {qualifier.prompt_hash(profile.qualify)} "
+              + ("is the one the sheet was drawn with" if same else f"differs from the sheet's {sheet.meta.get('prompt_hash')}"))
+    else:
+        subjects = qualify_subjects(app, profile)
     try:
         plan = qualifier.plan(app.conn, app.cfg, profile, subjects, slot_name=args.slot, model=args.model,
                               again=args.again, limit=args.limit)
@@ -707,6 +752,45 @@ def cmd_qualify(args, app: App) -> int:
     return 0
 
 
+def cmd_evaluate(args, app: App) -> int:
+    """Score stored answers and filled sheet copies against a person's labels. Sends nothing."""
+    from . import evaluate as ev
+    try:
+        sheet = read_label_sheet(Path(args.sheet), meta=_sheet_meta(args.meta))
+        raters = []
+        pairs = ev.stored_pairs(app.conn, sheet)
+        if args.model:
+            pairs = [p for p in pairs if p[0] in args.model]
+            absent = [m for m in args.model if m not in {p[0] for p in pairs}]
+            if absent:
+                print(f"no stored answers on this sheet's evidence for {', '.join(absent)}; ask with "
+                      f"`ninshubur qualify --profile {sheet.meta['profile']} --from-sheet {args.sheet} --model M`", file=sys.stderr)
+                return 2
+        if args.prompt_hash:
+            pairs = [p for p in pairs if p[1].startswith(tuple(args.prompt_hash))]
+        raters += [ev.stored_rater(app.conn, sheet, m, h) for m, h in pairs]
+        for spec in args.rater or []:
+            path, _, name = spec.partition("=")
+            raters.append(ev.sheet_rater(Path(path), sheet, name or None))
+        if not raters:
+            print("nothing to score: no stored answers on this sheet's evidence and no --rater file; ask with "
+                  f"`ninshubur qualify --profile {sheet.meta['profile']} --from-sheet {args.sheet}`", file=sys.stderr)
+            return 2
+        rep = ev.evaluate(sheet, raters, reps=args.reps, seed=args.seed, now=app.now())
+    except (LabelSheetError, ValueError) as e:
+        print(f"cannot evaluate: {e}", file=sys.stderr)
+        return 2
+    md = ev.render_markdown(rep)
+    print(ev.to_json(rep) if args.json else md, end="")
+    if not args.no_save:
+        md_path, json_path = (Path(args.output).with_suffix(".md"), Path(args.output).with_suffix(".json")) if args.output \
+            else ev.report_paths(app.home, rep)
+        write_private(md_path, md)
+        write_private(json_path, ev.to_json(rep))
+        print(f"report written: {md_path} and {json_path.name} (readable by you only)", file=sys.stderr)
+    return 0
+
+
 def cmd_export(args, app: App) -> int:
     if args.what == "euboulia-facts":
         path = export_provider_facts(app.conn, app.home, app.now(), out=Path(args.output) if args.output else None)
@@ -724,7 +808,8 @@ def cmd_export(args, app: App) -> int:
         try:
             path, sheet = write_label_sheet(qualify_subjects(app, profile) if profile.qualify else [], profile, app.home,
                                             sample=args.sample, seed=args.seed, now=app.now(),
-                                            out=Path(args.output) if args.output else None, force=args.force)
+                                            out=Path(args.output) if args.output else None, force=args.force,
+                                            exclude=[Path(x) for x in args.exclude])
         except LabelSheetError as e:
             print(e, file=sys.stderr)
             return 2
@@ -732,6 +817,8 @@ def cmd_export(args, app: App) -> int:
         print(f"written {path}")
         print(f"  {len(sheet.rows)} row(s) drawn from {sheet.population} with seed {sheet.seed}, over {len(sheet.strata)} strata "
               f"(counts in {label_meta_path(path).name}); no model output is in the sheet")
+        for x in sheet.excluded:
+            print(f"  left out {x['in_population']} subject(s) already on {x['sheet']}")
         if len(sheet.rows) < sheet.asked:
             print(f"  note: {sheet.asked} were asked for, but only {sheet.population} have evidence")
         print(f"  question: {q.question}")
@@ -835,6 +922,11 @@ def build_parser() -> argparse.ArgumentParser:
     ql.add_argument("--limit", type=int, metavar="N", help="ask at most N subjects (in key order)")
     ql.add_argument("--again", action="store_true", help="also ask subjects whose last good answer is still current")
     ql.add_argument("--show", action="store_true", help="list the stored answers and send nothing")
+    ql.add_argument("--from-sheet", metavar="SHEET", help="ask on a label sheet's subjects and evidence exactly as drawn, "
+                    "not on the stored evidence of today (for `ninshubur evaluate`)")
+    ql.add_argument("--meta", metavar="FILE", help="the sheet's meta file, when it is not beside the sheet as <sheet>.meta.json")
+    ql.add_argument("--qualify-file", metavar="FILE", help="ask a qualify: block from this YAML file instead of the profile's "
+                    "(a second prompt to compare; it must keep the same answers)")
     ql.add_argument("--json", action="store_true")
     ql.set_defaults(fn=cmd_qualify)
     sh = sub.add_parser("show")
@@ -853,12 +945,26 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
     add_explore_commands(sub)
+    evp = sub.add_parser("evaluate", help="score stored qualify answers (and filled sheet copies) against a labelled sheet")
+    evp.add_argument("--sheet", required=True, help="the labelled sheet (its meta file beside it, or --meta)")
+    evp.add_argument("--meta", metavar="FILE", help="the sheet's meta file, when it is not beside the sheet as <sheet>.meta.json")
+    evp.add_argument("--model", action="append", metavar="M", help="score only this model's stored answers (repeatable; default: all)")
+    evp.add_argument("--prompt-hash", action="append", metavar="H", help="score only answers to this prompt (a prefix is enough)")
+    evp.add_argument("--rater", action="append", metavar="CSV[=NAME]", help="also score a filled copy of the sheet (repeatable)")
+    evp.add_argument("--reps", type=int, default=10_000, help="bootstrap resamples (default 10000)")
+    evp.add_argument("--seed", type=int, default=7, help="bootstrap seed (default 7)")
+    evp.add_argument("-o", "--output", metavar="FILE", help="report path (.md and .json are written; default: feeds/eval-<profile>-seed<N>-<date>)")
+    evp.add_argument("--no-save", action="store_true", help="print the report only; write nothing")
+    evp.add_argument("--json", action="store_true", help="print the JSON report instead of the markdown")
+    evp.set_defaults(fn=cmd_evaluate)
     ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv) or "
                                        "euboulia-facts (json) to feeds/")
     ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts"])
     ex.add_argument("--sample", type=int, default=100, metavar="N", help="label-sheet: how many rows to draw (default 100)")
     ex.add_argument("--seed", type=int, default=7, help="label-sheet: the same seed draws the same rows (default 7)")
     ex.add_argument("--force", action="store_true", help="label-sheet: replace an existing sheet (its labels are lost)")
+    ex.add_argument("--exclude", action="append", default=[], metavar="SHEET",
+                    help="label-sheet: leave out every subject already on this earlier sheet (repeatable)")
     ex.add_argument("--event", help="prospects: one event (item id or uid)")
     ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
     ex.add_argument("--profile")

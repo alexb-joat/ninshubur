@@ -361,7 +361,8 @@ ninshubur export label-sheet --profile acme --sample 100 --seed 7
 
 writes `feeds/label-sheet-acme-seed7.csv` and, beside it, `label-sheet-acme-seed7.csv.meta.json`.
 Open the CSV in a spreadsheet, read each row's `evidence`, and type one of the profile's labels in
-`label` (`note` is free text). Judge from the evidence shown: it is what the model is given.
+`label` (`note` is free text). Judge from the evidence shown: it is what the model is given. `links`
+holds the web address of the page behind each line, if you need the whole posting.
 
 - **Blind.** The sheet holds the name, the evidence lines and two empty cells. Nothing a model
   answered is read when it is built.
@@ -372,9 +373,47 @@ Open the CSV in a spreadsheet, read each row's `evidence`, and type one of the p
 - **Repeatable.** The same seed draws the same rows on any machine. If more rows are asked for
   than there are companies with evidence, all are taken and the command says so.
 - **Safe.** An existing sheet is never replaced unless you pass `--force`; `-o` writes elsewhere.
+- **New rows only.** `--exclude feeds/label-sheet-acme-seed7.csv` (repeatable) leaves out every company
+  already on that sheet, so a second sheet tests a prompt on companies you haven't judged yet. The
+  meta file names the sheets left out, with a hash of each.
 
 The meta file records the question, the labels, the seed and, per row, the group, a hash of the
-evidence and the item ids, so a later comparison can prove the model was asked on the same lines.
+evidence, the item ids and the line total, so a later comparison can prove the model was asked on
+the same lines.
+
+### Scoring a model against your labels
+
+When every row has a label, ask the model on the sheet itself, then score it:
+
+```bash
+ninshubur qualify --profile acme --from-sheet feeds/label-sheet-acme-seed7.csv                  # local model
+ninshubur qualify --profile acme --from-sheet feeds/label-sheet-acme-seed7.csv --model other:7b # another one
+ninshubur evaluate --sheet feeds/label-sheet-acme-seed7.csv
+```
+
+- **Same evidence.** `--from-sheet` asks on the sheet's rows exactly as drawn, not on what the crawler
+  has stored since. Each row's evidence hash is rebuilt from the cells and checked against the meta
+  file, so an edited evidence cell, a deleted row or an unknown label stops the command with the row
+  number. A spreadsheet's re-save (byte-order mark, an extra empty column) is fine. Keep a read-only
+  copy of the labelled sheet and score against that copy (its meta file beside it as
+  `<copy>.meta.json`, or `--meta` pointing at the original).
+- **A second prompt.** `--qualify-file p2.yaml` asks a `qualify:` block from its own file, checked
+  like a profile's. It must keep the same answers, so it is scored against the same labels. If you
+  wrote it after seeing where a model went wrong on this sheet, its score here is optimistic: test it
+  on a fresh sheet (another seed) before trusting it.
+- **What is scored.** `evaluate` reads every model and prompt that answered on this sheet's evidence
+  (or `--model` / `--prompt-hash` only), plus any `--rater copy.csv[=name]`: a copy of the sheet with
+  its `label` column filled by someone or something else. A row with no usable answer counts as a
+  disagreement and is also shown on its own.
+- **The numbers.** Agreement with your labels (Wilson 95% interval); Cohen's kappa, agreement beyond
+  chance (seeded bootstrap interval, `--reps`, `--seed`); precision and recall of the first label; an
+  exact McNemar test of whether the model says the first label more or less often than you; and the
+  baseline of always giving your commonest label. A local model gets a verdict against the best remote
+  one: non-inferior when the paired bootstrap interval of the difference in agreement stays above
+  -0.10 and at most 5 rows lack an answer.
+- **The report.** Printed, and written to `feeds/eval-<profile>-seed<N>-<date>.md` and `.json`
+  (readable by you only; `-o` elsewhere, `--no-save` writes nothing). It lists each model's confusion
+  table and every row where a model differs from you. `evaluate` sends nothing.
 
 ## 6d. Finding new sources: explorer reach
 
