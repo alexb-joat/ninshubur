@@ -121,7 +121,8 @@ def test_cli_scores_and_writes_a_private_report(cli, home, sheet):  # noqa: F811
     assert code == 0 and "report written" in out
     js, md = sorted((home / "feeds").glob("eval-acme-seed7-*"))
     assert (js.suffix, md.suffix) == (".json", ".md") and md.read_text(encoding="utf-8").startswith("# Evaluation: profile acme")
-    for p in (md, js):
-        assert oct(os.stat(p).st_mode & 0o777) == "0o600"
+    if os.name == "posix":  # Windows has no owner-only mode bits to read back
+        for p in (md, js):
+            assert oct(os.stat(p).st_mode & 0o777) == "0o600"
     data = json.loads(js.read_text(encoding="utf-8"))
     assert data["raters"][0]["kappa"] == pytest.approx(0.4) and len(data["rows"]) == N
