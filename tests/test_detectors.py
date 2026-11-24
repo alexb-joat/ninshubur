@@ -163,7 +163,8 @@ def test_item_explosion():
 def test_load_json_turns_every_hostile_shape_into_a_value_error():
     from ninshubur.detectors import load_json
     assert load_json(b'{"a": [1, {"b": "c"}]}') == {"a": [1, {"b": "c"}]}
-    for bad, why in [(b"[" * 100_000 + b"]" * 100_000, "too deeply"), (b"[" * 70 + b"]" * 70, "deeper than 64"),
+    for bad, why in [(b"[" * 100_000 + b"]" * 100_000, "deeper than 64"), (b"[" * 70 + b"]" * 70, "deeper than 64"),
+                     (b'{"a":' * 70 + b"1" + b"}" * 70, "deeper than 64"),
                      (b"1" * 20, None), (b"\xff", None), (b'{"a": ' + b"9" * 5000 + b"}", None)]:
         if why is None and bad == b"1" * 20:
             assert load_json(bad) == int(bad)  # a number is valid JSON
@@ -173,6 +174,33 @@ def test_load_json_turns_every_hostile_shape_into_a_value_error():
         assert why is None or why in str(e.value)
     with pytest.raises(ValueError, match="over the 10-byte limit"):
         load_json(b'["aaaaaaaaaaaa"]', max_bytes=10)
+
+
+def test_load_json_refuses_deep_nesting_before_the_parser_sees_it(monkeypatch):
+    """Whether ``json.loads`` raises on deep input depends on the Python version and, from 3.14 on, on the stack
+    size (CI's 3.14.10 parsed 100 000 levels that 3.14.4 refused). The depth is counted on the text first."""
+    import ninshubur.detectors as d
+    real = d.json.loads
+    monkeypatch.setattr(d.json, "loads", lambda *a, **k: pytest.fail("the parser was reached"))
+    for deep in ("[" * 65 + "]" * 65, "[" * 100_000, '{"a":[' * 33 + "1", '["x", "\\\\", ' + "[" * 65):
+        with pytest.raises(ValueError, match="deeper than 64"):
+            d.load_json(deep)
+    with pytest.raises(ValueError, match="deeper than 2 levels"):
+        d.load_json("[[[1]]]", max_depth=2)
+    monkeypatch.setattr(d.json, "loads", real)
+    # brackets inside strings are text, whatever the escapes around them
+    for text in ('["' + "[" * 70 + '"]', '["\\"' + "[{" * 70 + '"]', '["\\\\", "' + "[" * 70 + '"]', '{"' + "{" * 70 + '": 1}'):
+        assert d.load_json(text) == real(text)
+    assert d.load_json("[" * 64 + "]" * 64) == real("[" * 64 + "]" * 64)  # the limit itself passes
+
+
+def test_nesting_over_counts_levels_open_at_once():
+    from ninshubur.detectors import nesting_over
+    assert not nesting_over("[[],[],[]]" * 100, 2) and nesting_over("[[[]]]", 2) and not nesting_over("[[[]]]", 3)
+    assert not nesting_over("[]" * 100_000, 1)                 # many siblings are not depth
+    assert not nesting_over('"' + "\\" * 50_000 + '"', 0)      # a long run of backslashes is read once
+    assert nesting_over('["a\\\\"' + ",[" * 5, 4)              # an even run before the quote ends the string
+    assert not nesting_over('["a\\\\\\"' + ",[" * 5 + '"]', 4)   # an odd run does not
 
 
 def test_json_ld_blocks_nested_too_deeply_are_skipped():
