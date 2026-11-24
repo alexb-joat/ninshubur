@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import os
-import resource
 import shutil
 import signal
 import socket
@@ -31,6 +30,13 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import linux_only
+
+try:
+    import resource
+except ImportError:  # Windows has no such module; ``unavailable()`` refuses there before any limit is set
+    resource = None
 
 from .. import detectors
 from ..policy import check_url
@@ -85,8 +91,9 @@ class Sandbox:
 
     def unavailable(self) -> str | None:
         """Why the sandbox can't run here, with the fix; None when it can."""
-        if not sys.platform.startswith("linux"):
-            return f"the explorer's parser sandbox needs Linux (bubblewrap); this is {sys.platform}"
+        why = linux_only()
+        if why:
+            return why
         if not self.bwrap:
             return "bwrap is not installed: install bubblewrap (apt install bubblewrap, dnf install bubblewrap)"
         return None

@@ -378,6 +378,10 @@ evidence and the item ids, so a later comparison can prove the model was asked o
 
 ## 6d. Finding new sources: explorer reach
 
+The explorer (sections 6d to 6f) is **Linux only**: its parser runs in bubblewrap, its stop and hand-off files use
+Linux file flags, and its timer is a systemd unit. On macOS and Windows every `ninshubur explore` command says so,
+exits 2 and touches nothing; the rest of Ninshubur runs there as before.
+
 `ninshubur explore reach` gathers *candidates* for the explorer into its own database
 (`~/.ninshubur/explorer/explorer.db`). It never touches `ninshubur.db` except to read it, and never writes
 `config.yaml`.

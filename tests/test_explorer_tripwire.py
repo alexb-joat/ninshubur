@@ -53,7 +53,7 @@ def test_the_window_and_resume_reset_the_count(home, policy):
     assert count(home, now=clock.t + 10, window_s=86400).n == 0 and check(home, lim, now=clock.t + 10) is None
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0, reason="root reads any file")
 def test_deleting_the_stop_file_by_hand_does_not_trip_again(home, policy):
     """Review finding 6: only `explore resume` reset the count, so after `rm STOP` (which the kill switch allows) the
     next run saw the same three attempts, wrote STOP again and stayed stuck for up to 24 h."""
