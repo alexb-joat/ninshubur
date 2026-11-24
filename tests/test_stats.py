@@ -79,3 +79,35 @@ def test_paired_difference_of_identical_raters_is_zero():
     assert point == lo == hi == 0.0
     point, lo, hi = S.paired_bootstrap_diff(t, t, x, S.agreement, reps=500)
     assert point == pytest.approx(0.25) and lo <= 0.25 <= hi
+
+
+def test_f1_hand_values():
+    # the textbook table above, "yes" as positive: tp 20, fp 10, fn 5. precision 2/3, recall 4/5,
+    # F1 = 2 * (2/3 * 4/5) / (2/3 + 4/5) = 2 * 20 / (2 * 20 + 10 + 5) = 40/55 = 8/11
+    a = ["yes"] * 25 + ["no"] * 25
+    b = ["yes"] * 20 + ["no"] * 5 + ["yes"] * 10 + ["no"] * 15
+    assert S.f1(a, b, "yes") == pytest.approx(8 / 11)
+    # "unsure" in truth and "failed" in pred count as not "yes": tp 1 (row 1), fp 1 (row 3), fn 1 (row 2) -> 2/4
+    assert S.f1(["yes", "yes", "unsure", "no"], ["yes", "failed", "yes", "no"], "yes") == pytest.approx(0.5)
+    # both rates defined but no true positive: precision 0/1, recall 0/1 -> 0.0, not None
+    assert S.f1(["yes", "no"], ["no", "yes"], "yes") == 0.0
+
+
+def test_f1_edge_cases():
+    t = ["yes", "no", "unsure", "yes", "no"]
+    assert S.f1(t, t, "yes") == 1.0                          # a perfect rater
+    assert S.f1(t, ["no"] * 5, "yes") is None                # never says yes: precision undefined
+    assert S.f1(["no"] * 5, t, "yes") is None                # no yes in truth: recall undefined
+    assert S.f1(["no"] * 5, ["no"] * 5, "yes") is None       # neither has a yes
+    assert math.isnan(S.f1_stat("yes")(t, ["no"] * 5)) and S.f1_stat("yes")(t, t) == 1.0
+
+
+def test_f1_bootstrap_is_seeded_and_brackets_the_point():
+    a = ["yes"] * 25 + ["no"] * 25
+    b = ["yes"] * 20 + ["no"] * 5 + ["yes"] * 10 + ["no"] * 15
+    one = S.bootstrap(a, b, S.f1_stat("yes"), reps=2000, seed=7)
+    assert one == S.bootstrap(a, b, S.f1_stat("yes"), reps=2000, seed=7)
+    assert one[0] < 8 / 11 < one[1] and 0 <= one[0] and one[1] <= 1
+    assert S.bootstrap(a, a, S.f1_stat("yes"), reps=200) == (1.0, 1.0)  # every resample of a perfect rater
+    lo, hi = S.bootstrap(a, ["no"] * 50, S.f1_stat("yes"), reps=200)    # undefined in every resample
+    assert math.isnan(lo) and math.isnan(hi)

@@ -5,6 +5,7 @@ Standard library only. Every interval that resamples is seeded, so a report repr
 - ``wilson``: the 95% interval of a proportion (k of n). Unlike the normal approximation it stays inside
   [0, 1] and is usable at 0 of n and n of n.
 - ``cohen_kappa``: agreement beyond what the two label counts would give by chance (1 = perfect, 0 = chance).
+- ``f1``: the harmonic mean of precision and recall for one label; ``f1_stat`` is its form for ``bootstrap``.
 - ``bootstrap`` and ``paired_bootstrap_diff``: percentile intervals from resampling rows with replacement.
   The paired form resamples the same rows for both raters, so it compares two models on the same subjects.
 - ``mcnemar_exact``: whether two paired raters disagree in one direction more than the other (two-sided
@@ -89,6 +90,28 @@ def precision_recall(truth: Labels, pred: Labels, positive: str) -> dict:
     return {"tp": tp, "fp": fp, "fn": fn,
             "precision": tp / (tp + fp) if tp + fp else None,
             "recall": tp / (tp + fn) if tp + fn else None}
+
+
+def f1(truth: Labels, pred: Labels, positive: str) -> float | None:
+    """F1 for the positive label: 2·precision·recall / (precision + recall), which is 2·tp / (2·tp + fp + fn).
+
+    None when precision or recall is undefined: no row has the positive label in ``truth`` (nothing to recall), or
+    no row has it in ``pred`` (a rater that never says it has no precision). 0.0 when both are defined and tp is 0.
+    Any label other than ``positive`` (including "failed") counts as not positive.
+    """
+    pr = precision_recall(truth, pred, positive)
+    p, r = pr["precision"], pr["recall"]
+    if p is None or r is None:
+        return None
+    return 0.0 if p + r == 0 else 2 * p * r / (p + r)
+
+
+def f1_stat(positive: str) -> Stat:
+    """``f1`` as a ``bootstrap`` statistic: NaN where F1 is undefined, so ``bootstrap`` drops that resample."""
+    def stat(a: Labels, b: Labels) -> float:
+        v = f1(a, b, positive)
+        return float("nan") if v is None else v
+    return stat
 
 
 def mcnemar_exact(b: int, c: int) -> float:
