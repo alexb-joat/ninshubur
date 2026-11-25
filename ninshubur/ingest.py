@@ -20,6 +20,7 @@ from . import detectors
 from .adapters.base import AdapterSpec, Fetched, ParseResult
 from .config import Config, SourceConfig
 from .db import j, one, uj
+from .erase import Forgotten
 from .items import Item
 from .logs import JsonlLog
 from .policy import Policy
@@ -56,6 +57,7 @@ class Ingestor:
         self.cfg = cfg
         self.now = now
         self.policy_log = JsonlLog(home / "logs" / "policy.jsonl")
+        self.forgotten = Forgotten(conn)  # names `ninshubur forget` erased: never stored again
         self.rep = {k: float(v) for k, v in policy.get("reputation", default={}).items()}
 
     # -- source rows ----------------------------------------------------------------------------
@@ -235,8 +237,12 @@ class Ingestor:
         health = self._reevaluate_health(name, high=bool(high_items or doc_high or parsed.dropped_rows), drift=drift)
         hold_all = health in ("suspect", "quarantined")
 
+        skipped = 0
         for it in parsed.items:
             if it.taint_severity == "high":
+                continue
+            if self.forgotten.blocks(it):
+                skipped += 1
                 continue
             held = hold_all or it.taint_severity == "medium"
             created = self._store_item(it, src, fetched.fetched_at or now, held=held)
@@ -244,6 +250,8 @@ class Ingestor:
             rep.updated += int(not created)
             rep.tainted += int(bool(it.tainted))
             rep.held += int(held)
+        if skipped:
+            self.policy_log.write({"event": "forgotten_skipped", "source": name, "items": skipped})
         rep.candidates = self._store_candidates(name, parsed.candidates)
         self.conn.execute("UPDATE source_stats SET items_total=items_total+? WHERE source=?", (rep.stored, name))
         if clean_doc and parsed.items:
@@ -311,6 +319,8 @@ class Ingestor:
         return created
 
     def _upsert_entity(self, e, src: SourceConfig, fetched_at: float) -> int | None:
+        if self.forgotten.has(e.type, name=e.name, domain=e.domain, key=e.key if e.type == "company" else None):
+            return None
         if e.type == "person":
             fields, _ = self.policy.allow_store({"name": e.name, "title": e.title, "office_city": e.city, "country": e.country,
                                                  "company_domain": e.domain, "company": e.company, "handle": e.handle},

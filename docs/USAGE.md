@@ -270,8 +270,9 @@ platform) are never fetched; they appear in `sources candidates` for a human.
 **What is kept.** Per person: name, title, company, talk, role, and a public LinkedIn profile URL if
 the page shows one (stored as text, never visited: LinkedIn is a denied host). Per organisation:
 name, website domain (never visited), role (sponsor, exhibitor, partner, organizer). Emails, phone
-numbers, photos, bios and addresses on a page are counted and discarded. Person rows keep the
-12-month retention and `forget` rules.
+numbers, photos, bios and addresses on a page are counted and discarded. Person rows are deleted by
+the hourly sweep 12 months after their last sighting, and at once by `ninshubur forget person "<name>"`
+(preview first; see PRIVACY.md).
 
 **What a hostile page can and cannot do.** Scripts, frames and styles never run: the page is parsed
 into a bounded tree and those elements are discarded. Every extracted text is taint-scanned; a
@@ -582,6 +583,37 @@ A running daemon follows changes to `sources` in `config.yaml` within one tick (
 `sources disable`, `sources add`, a hand edit). Any other setting, and `profiles.yaml`, needs a
 restart: `systemctl --user restart ninshubur`. Pausing leaves a source's health alone, so a
 quarantine lasts until `sources review <name> --clear`.
+
+## 8a. Forgetting a person or a company
+
+When someone asks to be removed, or you no longer want a record:
+
+```bash
+ninshubur forget person "Marie Curie" --dry-run
+```
+
+```
+forget person 'Marie Curie' would remove:
+  person record: Marie Curie (Head of Research, Radium Labs, speaker), from event-sites
+  3 link(s) between those records and crawled pages
+  the name goes on the forgotten list as a salted hash, so a later crawl does not store it again (a namesake is not stored either)
+dry run: nothing changed
+```
+
+Without `--dry-run` it shows the same list and asks before it deletes; `--yes` skips the question (a script
+or a timer must pass it). It cannot be undone. `ninshubur forget company "Radium Labs"` (or its domain) does
+the same for a company and also removes its stored postings, signals and qualify answers.
+
+- **Matching.** A person is matched by name, whatever the case and spacing, so two people with one name are
+  both removed and both kept out. A company is matched by any stored spelling, its domain or its key.
+- **Kept out.** The forgotten list holds salted hashes, never names. `ninshubur status` counts them.
+  `--lift` takes a name off the list after a typing mistake; it restores nothing.
+- **What you still have to do.** The preview lists your own files that show the name (exports under
+  `feeds/`, `config.yaml`, `profiles.yaml`): delete, edit or re-export them. It counts crawled texts that
+  mention a person and people who name a forgotten company as their employer; those stay.
+- **By itself.** Once an hour the daemon (and any `ninshubur run` after an hour has passed) deletes person
+  records not seen for 12 months, snapshots older than 30 days and quarantine rows older than 90 days.
+  The numbers are policy `retention`; your `~/.ninshubur/policy.yaml` can shorten them, never lengthen.
 
 ## 9. Moving it to a shared machine
 

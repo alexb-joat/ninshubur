@@ -54,12 +54,12 @@ $ ninshubur suggest --top 1
 |---|---|---|
 | A source is fetched only after a named reviewer admitted it through the H1–H8 checklist (`ninshubur sources test NAME`). Tiers 0–3 set starting reputation, review cadence and evidence weight. Links found in content become *candidates* for a human, never fetch targets. | Every adapter ships a schema; `project()` keeps only those fields, sanitises them and drops the rest. Raw bodies never touch disk. | Transport, structure and content detectors quarantine bad items (hashes only), downgrade the source (`suspect`, then `quarantined`), hold the affected suggestions and keep serving from the last known-good snapshot. |
 
-These are tested invariants: 272 tests, including a malicious-input corpus, run on Linux, macOS and Windows with Python 3.11, 3.13 and 3.14. Two runtime dependencies (httpx, PyYAML); no LLM calls in this phase.
+These are tested invariants: over 950 tests, including a malicious-input corpus, run on Linux, macOS and Windows with Python 3.11, 3.13 and 3.14 (the explorer's tests run on Linux only). Two runtime dependencies (httpx, PyYAML; `tzdata` is added on Windows). A model is called only when you run `ninshubur qualify`.
 
 ## Status
 
 Phase 1 (policy core, rules-only analysis): `confs_tech`, `greenhouse`, `ashby`, `lever`, `hn`, `statuspage`
-adapters, plus `provider_docs` (LLM providers' model documentation, exported with `ninshubur export euboulia-facts` for the Euboulia extension); builders `cfp_submit`, `conference_trip`, `service_request_lead`,
+adapters, plus `provider_docs` (LLM providers' model documentation, exported with `ninshubur export euboulia-facts` for the Euboulia extension); builders `cfp_submit`, `conference_prospecting`, `service_request_lead`,
 `hiring_signal_outreach`, `tool_outage`; ICS calendar sink; Markdown/HTML/CSV exports; CLI. One LLM call, run by hand: `ninshubur qualify` asks a model the
 profile's own question about each company and keeps only answers that cite evidence lines it was shown (local model by default; see docs/USAGE.md, 6c).
 
@@ -109,8 +109,8 @@ Suggestion kinds today: `conference_prospecting` (the companies and speakers lis
 `cfp_submit` (call for papers closing in 3-90 days), `hiring_signal_outreach` (a target company or
 a matching role is hiring: Greenhouse, Ashby and Lever boards and HN "Who is hiring?" posts), `service_request_lead`
 (a public "seeking freelancer" style request matching the profile), `tool_outage` (a major incident
-at a provider in `tools_in_use`). Nothing leaves the machine: no push, no telemetry, no model calls
-in this phase.
+at a provider in `tools_in_use`). A crawl sends nothing but its page requests: no push, no telemetry.
+A model is called only by `ninshubur qualify`, when you run it (a local model unless you name another).
 
 Offline: `ninshubur run --replay tests/samples` runs the real pipeline on the shipped samples.
 `python scripts/smoke.py` does that end to end in a temporary home; `pytest -q` runs the suite,
@@ -139,7 +139,8 @@ ninshubur/fetch.py      the ONLY network gate (robots, pacing, caps, redirects, 
 ninshubur/ingest.py     quarantine, reputation, health, snapshots, items
 ninshubur/schedule.py   due sources, run_source, growth/backoff
 ninshubur/analyze/      relevance, timing, value, suggestion builders
-ninshubur/sinks/        ics (trello, google_calendar, platform in later phases)
+ninshubur/sinks/        ics (the calendar feed)
+ninshubur/erase.py      forget person|company, the forgotten list, the hourly retention sweep
 ```
 
 Data lives in `~/.ninshubur` (`NINSHUBUR_HOME`): `ninshubur.db`, `logs/{fetch,policy}.jsonl`,
