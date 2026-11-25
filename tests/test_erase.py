@@ -142,7 +142,7 @@ def test_forget_company_removes_postings_signals_answers_and_empties_its_suggest
     assert {p.name for p in erase.exported_mentions(home, t.names)} == {"config.yaml", "profiles.yaml"}
     # in the database the name is left in two places, both said in the preview: the mirror of the source's config
     # and the employer field of people who spoke for the company (their records are theirs)
-    assert _cells(env.conn, "Acme") == {("sources", "params"), ("entities", "company")} and t.employees >= 1
+    assert _cells(env.conn, "Acme") == {("sources", "params"), ("entities", "company")} and t.staff_rows >= 1
     assert all(r["type"] == "person" for r in rows(env.conn, "SELECT type FROM entities WHERE company LIKE '%Acme%'"))
 
     # the board is still in config, so it is fetched; its postings are skipped at storage and the rebuild stays empty

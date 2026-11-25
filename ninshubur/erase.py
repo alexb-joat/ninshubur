@@ -144,7 +144,7 @@ class Target:
     qualifications: int = 0
     texts: int = 0                                          # written texts that name it
     crawled_mentions: int = 0                               # person only: crawled text naming it, left as it is
-    employees: int = 0                                      # company only: person records naming it as employer, left
+    staff_rows: int = 0                                     # company only: person records naming it as employer, left
     already_forgotten: bool = False
 
     @property
@@ -255,7 +255,7 @@ def find(conn: sqlite3.Connection, etype: str, query: str, resolver: Resolver | 
                          if keyset & {str(k) for k in uj(s["entity_keys"], [])}]
         t.already_forgotten = fg.has("company", name=query, domain=qdomain)
         norms = {normalise_name(n) for n in t.names} - {""}
-        t.employees = sum(1 for p in rows(conn, "SELECT company FROM entities WHERE type='person' AND company IS NOT NULL")
+        t.staff_rows = sum(1 for p in rows(conn, "SELECT company FROM entities WHERE type='person' AND company IS NOT NULL")
                           if normalise_name(p["company"]) in norms)
     ids = [int(e["id"]) for e in t.entities]
     if ids:

@@ -407,8 +407,8 @@ def cmd_forget(args, app: App) -> int:
     if t.crawled_mentions:
         print(f"not changed: {t.crawled_mentions} crawled text(s) that mention the name (posting titles, comments); "
               "forget does not edit crawled text")
-    if t.employees:
-        print(f"not changed: {t.employees} person record(s) that name it as their employer; forget a person by name")
+    if t.staff_rows:
+        print(f"not changed: {t.staff_rows} person record(s) that name it as their employer; forget a person by name")
     if files:
         print("not changed: your own files that show the name (exports, config); edit, delete or re-export them yourself:")
         for p in files[:20]:
