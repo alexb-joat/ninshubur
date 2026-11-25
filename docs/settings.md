@@ -101,6 +101,13 @@ left in it. `undo ID` does the same for the apply with that id (see `log`). It i
 `log [--last N]` prints the last N audit lines (default 10), oldest first, with what each did and which were undone. A
 line that cannot be parsed is skipped.
 
+`apply --yes` and `undo` take turns: each one holds the file `settings.lock` in the data home while it reads
+`settings.yaml` and the log, numbers its line and writes, and removes it when it ends. So two of them started at the same
+moment never get the same id, and neither overwrites the other's change. A second one that finds the file refuses with
+exit status 2 and writes nothing; run it again when the first has finished. If no other `settings apply` or `undo` is
+running (a command was killed and left the file behind), the refusal names the file: delete it and run the command again.
+`list`, `preview`, `log` and `apply` without `--yes` only read, and don't need the file.
+
 ## A hand-edited `settings.yaml`
 
 The file is read with the same checks as `apply`: an entry for a guardrail key, an unknown key or a value out of bounds is

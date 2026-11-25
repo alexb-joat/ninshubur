@@ -401,6 +401,74 @@ def test_a_file_that_cannot_be_written_changes_nothing_and_a_late_failure_is_wit
     assert [(r["id"], r["event"]) for r in audit(home)][-1] == (2, "apply")                  # the withdrawn id is not reused
 
 
+
+def test_two_applies_started_at_once_take_different_ids_or_one_is_refused(cli, home, monkeypatch, capsys):
+    import argparse
+    import threading
+    import time
+    import types
+    real_read = S.read_audit
+
+    def slow_read(h):
+        records = real_read(h)
+        time.sleep(0.3)                                    # widen the gap between reading the log and writing the next line
+        return records
+    monkeypatch.setattr(S, "read_audit", slow_read)
+    app = types.SimpleNamespace(home=home, now=lambda: NOW)
+    start, codes = threading.Barrier(2), {}
+
+    def run(assignment: str) -> None:
+        args = argparse.Namespace(assignments=[assignment], note="", yes=True)
+        start.wait()
+        codes[assignment.split("=")[0]] = S.cmd_apply(args, app)
+    threads = [threading.Thread(target=run, args=(a,)) for a in ("base_value_usd.cfp_submit=900", "budgets.hourly_rate_usd=70")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    err = capsys.readouterr().err
+    assert sorted(codes.values()) in ([0, 0], [0, 2])
+    ids = [r["id"] for r in audit(home)]
+    assert ids and len(ids) == len(set(ids)) == list(codes.values()).count(0)
+    assert err.count("refused: another settings command is running") == list(codes.values()).count(2)
+    applied = {k for k, c in codes.items() if c == 0}
+    got = {f"{a}.{b}" for a, sub in overlay(home).items() for b in sub}
+    assert got == applied                                  # neither change overwrote the other
+    assert not (home / "settings.lock").exists()
+
+
+def test_a_left_over_lock_names_the_file_to_delete_and_apply_and_undo_write_nothing(cli, home):
+    assert cli("settings", "apply", "base_value_usd.cfp_submit=900", "--yes")[0] == 0
+    lock = home / "settings.lock"
+    lock.write_text("pid 1\n")
+    before = tree(home)
+    for cmd in (("apply", "budgets.hourly_rate_usd=70", "--yes"), ("undo",)):
+        code, out, err = cli("settings", *cmd)
+        assert code == 2 and "another settings command is running" in err and "nothing was written" in err
+        assert f"delete {lock} and run this again" in err
+        assert tree(home) == before                        # no overlay change, no audit line, and the lock is left alone
+    assert cli("settings", "preview", "budgets.hourly_rate_usd=70")[0] == 0   # reading needs no lock
+    assert cli("settings", "list")[0] == 0 and cli("settings", "log")[0] == 0
+    lock.unlink()
+    assert cli("settings", "undo")[0] == 0 and not lock.exists()
+    assert [(r["id"], r["event"]) for r in audit(home)] == [(1, "apply"), (2, "undo")]
+
+
+def test_the_lock_is_gone_after_a_failed_write_and_is_made_0600(cli, home, monkeypatch):
+    modes = []
+    real_commit = S.commit
+
+    def failing_commit(h, values, record):
+        modes.append((h / "settings.lock").stat().st_mode & 0o777)
+        raise OSError(28, "no space left")
+    monkeypatch.setattr(S, "commit", failing_commit)
+    code, out, err = cli("settings", "apply", "base_value_usd.cfp_submit=900", "--yes")
+    assert code == 1 and "nothing was changed" in err and not (home / "settings.lock").exists()
+    if os.name == "posix":
+        assert modes == [0o600]
+    monkeypatch.setattr(S, "commit", real_commit)
+    assert cli("settings", "apply", "base_value_usd.cfp_submit=900", "--yes")[0] == 0 and not (home / "settings.lock").exists()
+
 def test_log_lists_each_line_and_marks_what_was_undone(cli, home):
     out = cli("settings", "log")[1]
     assert out.strip() == "no settings changes logged yet (logs/settings.jsonl)"

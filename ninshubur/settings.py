@@ -21,6 +21,7 @@ import json
 import math
 import os
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from .logs import now_iso, read_jsonl
 
 OVERLAY = "settings.yaml"
 AUDIT = "logs/settings.jsonl"
+LOCK = "settings.lock"
 MISSING = object()
 
 
@@ -387,6 +389,42 @@ def _next_id(records: list[dict]) -> int:
     return 1 + max((r["id"] for r in records if type(r.get("id")) is int), default=0)
 
 
+class Busy(Exception):
+    """Another settings command holds the lock file (or one was left behind)."""
+
+
+@contextlib.contextmanager
+def exclusive(home: Path) -> Iterator[None]:
+    """Hold ``settings.lock`` while ``apply`` or ``undo`` reads the overlay and the log, numbers its line and writes, so two
+    commands started at once never take the same id or overwrite each other's change. The file is created with O_EXCL
+    (atomic on Linux, macOS and Windows), mode 0600, and removed when the command ends, however it ends. Raises
+    :class:`Busy` if the file already exists; a lock this call did not create is never removed."""
+    path = home / LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise Busy(str(path)) from None
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:  # closed before the unlink below, which Windows needs
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
+            f.write(f"pid {os.getpid()}\n")
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _locked(fn, args, app) -> int:
+    try:
+        with exclusive(app.home):
+            return fn(args, app)
+    except Busy as busy:
+        print(f"refused: another settings command is running ({busy} exists); nothing was written. If no other "
+              f"`ninshubur settings apply` or `undo` is running, delete {busy} and run this again", file=sys.stderr)
+        return 2
+
+
 def _overlay_refusals(layers: Layers) -> list[str]:
     if not layers.overlay.problems:
         return []
@@ -403,6 +441,10 @@ def _note_refusal(note: str) -> str | None:
 
 
 def cmd_apply(args, app) -> int:
+    return _locked(_apply, args, app) if args.yes else _apply(args, app)
+
+
+def _apply(args, app) -> int:
     home = app.home
     layers = read_layers(home)
     changes, refusals = plan(layers, args.assignments)
@@ -454,6 +496,10 @@ def _record_problem(rec: dict) -> str | None:
 
 
 def cmd_undo(args, app) -> int:
+    return _locked(_undo, args, app)
+
+
+def _undo(args, app) -> int:
     home = app.home
     layers = read_layers(home)
     acts, undone = history(read_audit(home))
