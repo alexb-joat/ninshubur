@@ -5,7 +5,7 @@
   <img alt="Ninshubur: trusted sources in, declared fields out, timed suggestions" src="docs/img/banner-light.svg" width="720">
 </picture>
 
-**A policy-first crawler for B2B signals.** Ninshubur gathers conferences, public service requests, hiring signals and provider status from human-admitted sources only, keeps only the fields each source declared, and turns them into timed, costed suggestions a person accepts or dismisses. Nothing is ever executed automatically.
+**A policy-first crawler for public sources.** Ninshubur reads only the sources a person has admitted, keeps only the fields each source declared, and turns what it finds (conferences, public service requests, hiring postings, provider status) into timed, costed suggestions you accept or dismiss. What counts as a good find is set by a profile, a short YAML file of keywords, titles and companies: a job search is one profile, a client's list of target companies another. Nothing is ever executed automatically.
 
 [![ci](https://github.com/alexb-joat/ninshubur/actions/workflows/ci.yml/badge.svg)](https://github.com/alexb-joat/ninshubur/actions/workflows/ci.yml)
 [![codeql](https://github.com/alexb-joat/ninshubur/actions/workflows/codeql.yml/badge.svg)](https://github.com/alexb-joat/ninshubur/actions/workflows/codeql.yml)
@@ -22,6 +22,31 @@
 </div>
 
 <br>
+
+## What it looks like
+
+<!-- gen:readme-sample -->
+```console
+$ ninshubur status
+sources: ok 5
+  confs-2026           confs_tech   T1 rep 0.79 ok                   next 2026-11-26 14:06 review 2027-02-09
+  event-sites          event_sites  T2 rep 0.53 ok                   next 2026-11-26 17:47 review 2027-01-12
+  hn-freelancer        hn           T2 rep 0.52 ok                   next 2026-11-25 18:21 review 2027-01-10
+  provider-docs-anthropic provider_docs T0 rep 0.90 ok                   next 2026-11-27 16:21 review 2027-01-12
+  provider-docs-openai provider_docs T0 rep 0.90 ok                   next 2026-11-27 15:09 review 2027-01-12
+items held 0, tainted 0; quarantine rows (7 d) 0; new candidates 9
+suggestions: new 3
+
+$ ninshubur suggest --top 1
+#3 [conference_prospecting] Prospect Remote Growth Summit (Online, 2026-12-01): 7 paying companies, 11 speakers  (T2 unverified)
+    value 75 USD  cost 23 USD  roi 2.3  confidence 0.50  profile agency-internal
+    due 2026-11-26 (best: 2026-11-25 to 2026-11-25, Europe/Lisbon)  expires 2026-12-02
+    - Remote Growth Summit starts 2026-12-01 in Online; 7 companies paid for presence, 11 speakers listed
+    - profile match: 0 target companies, 1 speakers with target titles; geo/topic factor 0.50
+```
+
+<sub>Captured 2026-11-25 from the replay of `tests/samples` (`ninshubur run --replay tests/samples` in a temporary home), not from live data. Rebuild it with `python scripts/readme_sample.py --update`.</sub>
+<!-- /gen -->
 
 ## Three rules
 
