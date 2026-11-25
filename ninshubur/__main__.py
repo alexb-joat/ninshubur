@@ -35,6 +35,7 @@ from .llm import LLMClient, LLMError
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
 from .profiles import PROFILE_KEYS, ProfileError, load_profiles, load_qualify_file
+from .runreport import run as run_report
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
@@ -807,6 +808,8 @@ def cmd_evaluate(args, app: App) -> int:
 
 
 def cmd_export(args, app: App) -> int:
+    if args.what == "run-report":  # main_db is off for it (see _main): it reads the database read-only
+        return run_report(args, app.home, app.now())
     if args.what == "euboulia-facts":
         path = export_provider_facts(app.conn, app.home, app.now(), out=Path(args.output) if args.output else None)
         print(f"written {path}")
@@ -974,16 +977,17 @@ def build_parser() -> argparse.ArgumentParser:
     evp.add_argument("--no-save", action="store_true", help="print the report only; write nothing")
     evp.add_argument("--json", action="store_true", help="print the JSON report instead of the markdown")
     evp.set_defaults(fn=cmd_evaluate, main_db=False)
-    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv) or "
-                                       "euboulia-facts (json) to feeds/")
-    ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts"])
+    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv), "
+                                       "euboulia-facts (json) or run-report (md/json) to feeds/")
+    ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts", "run-report"])
+    ex.add_argument("--days", type=int, metavar="N", help="run-report: count only the last N days (default: everything stored)")
     ex.add_argument("--sample", type=int, default=100, metavar="N", help="label-sheet: how many rows to draw (default 100)")
     ex.add_argument("--seed", type=int, default=7, help="label-sheet: the same seed draws the same rows (default 7)")
     ex.add_argument("--force", action="store_true", help="label-sheet: replace an existing sheet (its labels are lost)")
     ex.add_argument("--exclude", action="append", default=[], metavar="SHEET",
                     help="label-sheet: leave out every subject already on this earlier sheet (repeatable)")
     ex.add_argument("--event", help="prospects: one event (item id or uid)")
-    ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
+    ex.add_argument("--format", choices=["md", "html", "csv", "json"], default="md", help="json: run-report only")
     ex.add_argument("--profile")
     ex.add_argument("--status", default="new,accepted,held", help="comma list; default new,accepted,held")
     ex.add_argument("--since", metavar="7d", help="only suggestions/items updated in the last N d/w/h")
@@ -1008,7 +1012,7 @@ def _main(argv: list[str] | None) -> int:
     args = build_parser().parse_args(argv)
     try:
         app = App(verbose=args.verbose)
-        if getattr(args, "main_db", True):  # opened up front, so a schema error refuses before any work
+        if getattr(args, "main_db", True) and getattr(args, "what", None) != "run-report":  # opened up front, so a schema error refuses before any work
             app.conn
     except (PolicyError, ConfigError, ProfileError, SchemaError) as e:
         print(f"refusing to run: {e}", file=sys.stderr)
