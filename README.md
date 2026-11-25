@@ -127,6 +127,7 @@ What it does not do yet, each with the place that shows it (a test, a doc or a l
 - **Only a source with an adapter can be read.** A source names one of the adapters in `ninshubur/adapters/`; a site none of them reads stays closed until someone writes one. (ninshubur/adapters/base.py:147)
 - **Pages are read as the server sends them.** No browser or JavaScript engine is part of it (the runtime dependencies are httpx and PyYAML, and tzdata on Windows), so text a page builds in the browser is not seen. (pyproject.toml:12)
 - **The content detectors match known patterns.** Hidden characters, prompt-injection phrasing, active HTML and key-like strings are flagged by pattern; a hostile page that uses none of them is not flagged. (ninshubur/detectors.py:86)
+- **`forget` matches by name and leaves your own files as they are.** A namesake is forgotten and blocked too; exported files, config and profiles that mention the name are listed, and crawled text that mentions a person is counted, neither is rewritten; the retention sweep runs only while Ninshubur runs. (ninshubur/erase.py:8; ninshubur/schedule.py:379)
 
 ## Layout
 

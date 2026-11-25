@@ -1,7 +1,7 @@
 """CHANGELOG.md in its released form: Keep a Changelog layout, one `## Unreleased` section on top, then one dated heading per
 release (`## 0.2.0 - 2026-11-25`), newest first, the newest being the version the package declares. Each section uses the
-four sub-headings in order, each once and none empty. Nothing that belongs to PR #2 (forget, the sweep), and commit hashes
-stay out of the file; the review note carries the trace from each bullet to its commits."""
+four sub-headings in order, each once and none empty. Every `ninshubur <command>` a bullet names is a command the parser
+has, so the file cannot describe a command ahead of its code. Commit hashes and branch names stay out of the file."""
 from __future__ import annotations
 
 import datetime
@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 
 import ninshubur
+from ninshubur.__main__ import build_parser
 
 ROOT = Path(__file__).resolve().parents[1]
 TEXT = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -92,7 +93,8 @@ def test_each_bullet_is_one_plain_line_and_commit_hashes_stay_out():
         assert [x for x in body.splitlines() if x.strip() and not x.startswith(("- ", "#"))] == []
 
 
-def test_nothing_from_pr2_and_nothing_private():
-    low = TEXT.lower()
-    for word in ("forget", "sweep", "erase", "promises"):
-        assert word not in low, word
+def test_every_command_a_bullet_names_exists_and_no_branch_name_is_in_the_file():
+    top = next(a for a in build_parser()._actions if getattr(a, "choices", None))
+    named = set(re.findall(r"`ninshubur ([a-z][a-z-]*)", TEXT))
+    assert "forget" in named and named <= set(top.choices), sorted(named - set(top.choices))
+    assert "promises" not in TEXT.lower()

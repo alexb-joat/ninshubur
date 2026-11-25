@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from ninshubur.__main__ import build_parser
+
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 MAX_LIMITS = 8
@@ -82,11 +84,13 @@ def test_every_reference_exists_and_every_line_number_is_inside_its_file():
         assert [problem(r, files) for r in found] == [None] * len(found)
 
 
-def test_no_number_is_typed_into_the_prose_and_pr2_work_is_not_mentioned():
+def test_no_number_is_typed_into_the_prose_and_a_command_it_names_exists():
     prose = " ".join(re.sub(r"\([^()]*\)\s*$", "", " ".join(x.strip() for x in b)) for b in limits())
     assert set(re.findall(r"\d+", prose)) <= {"401", "403"}  # HTTP status codes the code itself names, no statistics
-    for word in ("forget", "sweep", "erase", "promises"):
-        assert word not in prose.lower()
+    top = next(a for a in build_parser()._actions if getattr(a, "choices", None))
+    named = set(re.findall(r"`ninshubur ([a-z][a-z-]*)", prose)) | ({"forget"} if "`forget`" in prose else set())
+    assert named <= set(top.choices), sorted(named - set(top.choices))  # a limit never describes a command ahead of its code
+    assert "promises" not in prose.lower()  # a branch name is not something a reader can use
 
 
 def test_the_checker_catches_a_bad_reference():

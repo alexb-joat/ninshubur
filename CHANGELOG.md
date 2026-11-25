@@ -6,18 +6,6 @@ heading and its date.
 
 ## Unreleased
 
-### Changed
-
-- `config.example.yaml` now shows the `llm.router` slot (off, with a commented, unpriced model entry to fill in), and `docs/USAGE.md` says how to turn it on for `--slot router`.
-- The default `user_agent`, and the one in `config.example.yaml`, now name the running version instead of an old one; a test fails if they drift apart. A `user_agent` line in your own `config.yaml` still overrides the default.
-- `PRIVACY.md` quotes what Lever's and Ashby's terms, API documentation and robots.txt say about reading public job postings, with their URLs; it drops the unchecked Hacker News request ceiling and says that page needs a person's eyes.
-- `scripts/fresh_clone.py` prints the test suite's whole final tally (passed, skipped, deselected, xfailed, failed) and the reason for each skipped test, instead of the passed count alone. It runs the same documented command, with `PYTEST_ADDOPTS=-rs` so pytest names the skips.
-
-### Fixed
-
-- Two `ninshubur settings apply --yes` or `undo` commands started at the same moment can no longer take the same id or overwrite each other's change: each holds `settings.lock` while it reads, numbers and writes, and a second one refuses with exit status 2 and writes nothing. A lock left by a killed command is named in the refusal, with the advice to delete it (docs/settings.md, "Undo and log").
-- `ninshubur settings list` prints each warning about an unusable `settings.yaml` entry once, under the list, instead of a second time on standard error. Other commands still print it on standard error; exit statuses are unchanged.
-
 ## 0.2.0 - 2026-11-25
 
 ### Added
@@ -48,8 +36,10 @@ heading and its date.
 - `ninshubur export run-report`: one dated page of counts (fetches, refusals and quarantines, items, suggestions, sources, model runs and the explorer ladder) with no title, link, host or name on it, built read-only from the database and rebuilt by one command; `docs/run-report.md` says what each number means and what the page leaves out.
 - README: a "What it looks like" block with real output captured by `scripts/readme_sample.py` from the replay of the shipped samples, and a "Known limits" section where each limit points at the test, doc or line that shows it.
 - `scripts/private_words.py`: a check that fails when a word on a list of hashes (a former employer, a person) appears in the name or text of any tracked file; it never prints the word.
-- `scripts/fresh_clone.py`: rehearses each install path from a clone of the committed HEAD (the README's quick start, CONTRIBUTING's set up and the requirements file), then runs the tests, the smoke script and `ninshubur check` in the CONTRIBUTING clone and prints one result line per step; `--dry-run` shows the plan and runs nothing.
-- `ninshubur settings`: change the numbers that decide how suggestions are valued (what a kind of suggestion is worth, what your hour is worth, what a trip or a task costs; 24 keys, each with bounds) by command. `list` shows each value and where it came from, `preview` shows old and new and writes nothing, `apply --yes` writes a separate `settings.yaml` (your `config.yaml` is never rewritten) and one line in `logs/settings.jsonl`, `undo` puts back what an apply replaced, and `log` prints the lines. Keys that change what is fetched, stored, sent or admitted are shown and never set. A new value takes effect at the next process start.
+- `scripts/fresh_clone.py`: rehearses each install path from a clone of the committed HEAD (the README's quick start, CONTRIBUTING's set up and the requirements file), then runs the tests, the smoke script and `ninshubur check` in the CONTRIBUTING clone and prints one result line per step; `--dry-run` shows the plan and runs nothing. The tests line carries the suite's whole final tally (passed, skipped, deselected, xfailed, failed) and the reason for each skipped test.
+- `ninshubur settings`: change the numbers that decide how suggestions are valued (what a kind of suggestion is worth, what your hour is worth, what a trip or a task costs; 24 keys, each with bounds) by command. `list` shows each value and where it came from, `preview` shows old and new and writes nothing, `apply --yes` writes a separate `settings.yaml` (your `config.yaml` is never rewritten) and one line in `logs/settings.jsonl`, `undo` puts back what an apply replaced, and `log` prints the lines. Keys that change what is fetched, stored, sent or admitted are shown and never set. A new value takes effect at the next process start. Two `apply --yes` or `undo` commands started at the same moment cannot take the same id or overwrite each other's change: the second refuses with exit status 2 and writes nothing (docs/settings.md, "Undo and log").
+- `ninshubur forget person "<name>"` and `ninshubur forget company "<name or domain>"` erase the record and everything that points at it, take the name out of the suggestions, feedback notes and qualify reasons Ninshubur wrote, and keep a salted hash of it so the next crawl does not collect it again. `--dry-run` shows what would go; `--yes` is needed when not typed at a terminal; `--lift` takes a name off the list and restores nothing. The log keeps a hash and counts, never the name.
+- An hourly retention sweep enforces `policy.yaml` `retention`: person records past their date, snapshots past `snapshots_days` (the newest of each source stays) and quarantine rows past `quarantine_days`. It runs after `ninshubur run` and on each daemon tick, and `ninshubur status` shows when it last ran.
 
 ### Changed
 
@@ -63,6 +53,11 @@ heading and its date.
 - Explorer stop rules tightened after review: a certificate error stops a site, a throttled probe is no answer and the cycle does not wait for it, a site that never answers cannot hold up the queue, links are followed only from a page with no taint, an offline machine costs no site anything, and a stopped candidate is rejected or quarantined according to who stopped it.
 - The example config disables the status-page source whose host's robots.txt disallows `/api/`; it stays as a commented template.
 - A failed connect in the fetch log names the socket's own reason, not the HTTP library's wrapper.
+- `config.example.yaml` shows the `llm.router` slot (off, with a commented, unpriced model entry to fill in), and `docs/USAGE.md` says how to turn it on for `--slot router`.
+- The default `user_agent`, and the one in `config.example.yaml`, name the running version; a test fails if they drift apart. A `user_agent` line in your own `config.yaml` still overrides the default.
+- `PRIVACY.md` quotes what Lever's and Ashby's terms, API documentation and robots.txt say about reading public job postings, with their URLs; it drops the unchecked Hacker News request ceiling and says that page needs a person's eyes.
+- Database schema 5 adds the `forgotten` table; it is created on first open. Deleted rows are overwritten (`PRAGMA secure_delete=ON`).
+- The unused `trello`, `google_calendar` and `platform` sink entries are gone from the defaults and the example config.
 
 ### Fixed
 
