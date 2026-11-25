@@ -146,7 +146,10 @@ def config_path(home: Path | None = None) -> Path | None:
     return None
 
 
-def load_config(home: Path | None = None, path: Path | None = None, policy: Policy | None = None) -> Config:
+def load_config(home: Path | None = None, path: Path | None = None, policy: Policy | None = None, *,
+                quiet_overlay: bool = False) -> Config:
+    """``quiet_overlay``: don't print the overlay's warnings to standard error (they are still in ``cfg.warnings``);
+    ``settings list`` sets it because it prints them itself, once, with the list."""
     path = path or config_path(home)
     raw: dict = {}
     if path is not None:
@@ -158,7 +161,7 @@ def load_config(home: Path | None = None, path: Path | None = None, policy: Poli
             raise ConfigError(f"{path} is not a mapping")
     data = _deep_merge(DEFAULTS, raw)
     from .settings import merge_overlay  # settings.yaml: the learnable keys `ninshubur settings apply` wrote (imported here: settings imports config)
-    data, overlay_warnings = merge_overlay(data, home or data_home())
+    data, overlay_warnings = merge_overlay(data, home or data_home(), announce=not quiet_overlay)
     cfg = Config(data=data, sources={}, path=path, warnings=overlay_warnings)
     _validate_llm(cfg)
     _validate_api(cfg)

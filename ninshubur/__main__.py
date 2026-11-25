@@ -53,11 +53,11 @@ from .termsafe import guarded_output
 class App:
     """Everything a command needs, built once. Fails closed on policy, config or schema errors."""
 
-    def __init__(self, *, transport=None, verbose: bool = False):
+    def __init__(self, *, transport=None, verbose: bool = False, quiet_overlay: bool = False):
         load_dotenv()
         self.home = ensure_home(data_home())
         self.policy = Policy.load(self.home)
-        self.cfg = load_config(self.home, policy=self.policy)
+        self.cfg = load_config(self.home, policy=self.policy, quiet_overlay=quiet_overlay)
         self.profiles = load_profiles(self.home)
         check_registry()
         self._transport = transport
@@ -1020,7 +1020,7 @@ def main(argv: list[str] | None = None) -> int:
 def _main(argv: list[str] | None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        app = App(verbose=args.verbose)
+        app = App(verbose=args.verbose, quiet_overlay=getattr(args, "quiet_overlay", False))
         if getattr(args, "main_db", True) and getattr(args, "what", None) != "run-report":  # opened up front, so a schema error refuses before any work
             _ = app.conn
     except (PolicyError, ConfigError, ProfileError, SchemaError) as e:

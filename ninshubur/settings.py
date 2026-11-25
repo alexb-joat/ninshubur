@@ -195,12 +195,12 @@ def read_layers(home: Path) -> Layers:
     return Layers(effective, source, overlay, base, base_source)
 
 
-def merge_overlay(data: dict, home: Path) -> tuple[dict, list[str]]:
+def merge_overlay(data: dict, home: Path, *, announce: bool = True) -> tuple[dict, list[str]]:
     """``config.load_config``'s hook: ``data`` with the overlay's learnable, valid entries set, and the warnings for
     every entry that is not (a guardrail, an unknown key, a value out of range), which are ignored and never applied."""
     overlay = read_overlay(home)
     warnings = [f"{OVERLAY}: {p}; ignored" for p in overlay.problems]
-    for w in warnings:
+    for w in warnings if announce else ():
         print(f"warning: {w}", file=sys.stderr)
     if not overlay.values:
         return data, warnings
@@ -604,7 +604,7 @@ def add_commands(sub) -> None:
     ss = st.add_subparsers(dest="settings_cmd", required=True, metavar="{list,preview,apply,undo,log}")
     ls = ss.add_parser("list", help="each setting's effective value, where it came from, its class and bounds")
     ls.add_argument("--all", action="store_true", help="also show the guardrail keys (read-only)")
-    ls.set_defaults(fn=cmd_list, main_db=False)
+    ls.set_defaults(fn=cmd_list, main_db=False, quiet_overlay=True)  # it prints the overlay's warnings in its own output
     pv = ss.add_parser("preview", help="old -> new for KEY=VALUE...; checks them and writes nothing (exit 2 on any refusal)")
     pv.add_argument("assignments", nargs="+", metavar="KEY=VALUE")
     pv.set_defaults(fn=cmd_preview, main_db=False)

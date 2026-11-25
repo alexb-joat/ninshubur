@@ -126,6 +126,18 @@ def test_list_warns_about_an_overlay_entry_it_cannot_use(cli, home):
     assert rows["base_value_usd.cfp_submit"][1:3] == ["800", "default"]  # the bad entry changed nothing
 
 
+
+def test_list_prints_each_overlay_warning_once_and_other_commands_still_warn(cli, home):
+    (home / "settings.yaml").write_text("llm:\n  caps:\n    daily_usd: 99\nbase_value_usd:\n  cfp_submit: -5\n", encoding="utf-8")
+    code, out, err = cli("settings", "list")
+    assert code == 0
+    lines = [ln for ln in (out + err).splitlines() if ln.startswith("warning: settings.yaml: ")]
+    assert len(lines) == len(set(lines)) == 2                                                 # once each, over both streams
+    assert all(ln in out.splitlines() for ln in lines) and "warning:" not in err             # on standard output, with the list
+    code, out, err = cli("settings", "preview", "budgets.hourly_rate_usd=70")
+    assert code == 0 and err.count("warning: settings.yaml: ") == 2 and "warning:" not in out   # elsewhere: on standard error, once
+
+
 # --- preview ------------------------------------------------------------------------------
 def test_preview_shows_old_to_new_and_leaves_the_data_home_byte_identical(cli, home):
     before = tree(home)

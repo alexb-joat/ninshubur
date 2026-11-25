@@ -111,6 +111,7 @@ running (a command was killed and left the file behind), the refusal names the f
 ## A hand-edited `settings.yaml`
 
 The file is read with the same checks as `apply`: an entry for a guardrail key, an unknown key or a value out of bounds is
-ignored with a warning (on standard error, and in `settings list`) and never applied; the entries that pass are used.
+ignored with a warning and never applied (each command that loads the configuration prints it on standard error;
+`settings list` prints it once, under the list, on standard output instead); the entries that pass are used.
 `apply` and `undo` refuse to rewrite a `settings.yaml` that holds such an entry, or that is not valid YAML, until you
 have removed it, so they never drop something you wrote by accident.

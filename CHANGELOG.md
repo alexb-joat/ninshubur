@@ -15,6 +15,7 @@ heading and its date.
 ### Fixed
 
 - Two `ninshubur settings apply --yes` or `undo` commands started at the same moment can no longer take the same id or overwrite each other's change: each holds `settings.lock` while it reads, numbers and writes, and a second one refuses with exit status 2 and writes nothing. A lock left by a killed command is named in the refusal, with the advice to delete it (docs/settings.md, "Undo and log").
+- `ninshubur settings list` prints each warning about an unusable `settings.yaml` entry once, under the list, instead of a second time on standard error. Other commands still print it on standard error; exit statuses are unchanged.
 
 ## 0.2.0 - 2026-11-25
 
