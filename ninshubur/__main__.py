@@ -402,7 +402,7 @@ def cmd_forget(args, app: App) -> int:
             print(f"  the name in {t.texts} suggestion, feedback or qualify text(s): replaced with {erase.REMOVED}")
     else:
         print(f"nothing stored matches {t.etype} {t.query!r}" + (" (it is already on the forgotten list)" if t.already_forgotten else ""))
-    print(f"  the name goes on the forgotten list as a salted hash, so a later crawl does not store it again"
+    print("  the name goes on the forgotten list as a salted hash, so a later crawl does not store it again"
           + (" (a namesake is not stored either)" if t.etype == "person" else ""))
     if t.crawled_mentions:
         print(f"not changed: {t.crawled_mentions} crawled text(s) that mention the name (posting titles, comments); "

@@ -40,7 +40,7 @@ def _cells(conn, needle):
     """(table, column) of every database cell that contains the needle."""
     hits = set()
     for t in [r["name"] for r in rows(conn, "SELECT name FROM sqlite_master WHERE type='table'")]:
-        for r in rows(conn, f"SELECT * FROM {t}"):
+        for r in rows(conn, f"SELECT * FROM {t}"):  # noqa: S608 — table and column names come from the test's own literals or sqlite_master
             hits |= {(t, k) for k, v in r.items() if isinstance(v, str) and needle in v}
     return hits
 
@@ -133,7 +133,7 @@ def test_forget_company_removes_postings_signals_answers_and_empties_its_suggest
 
     assert one(env.conn, "SELECT COUNT(*) AS n FROM items WHERE kind='hiring'")["n"] == 0
     for table, col in (("signals", "entity_key"), ("company_aliases", "company_key"), ("qualifications", "subject_key")):
-        assert one(env.conn, f"SELECT COUNT(*) AS n FROM {table} WHERE {col}='company:acme.example'")["n"] == 0, table
+        assert one(env.conn, f"SELECT COUNT(*) AS n FROM {table} WHERE {col}='company:acme.example'")["n"] == 0, table  # noqa: S608 — table and column names come from the test's own literals or sqlite_master
     assert "Acme Inc" not in _names(env.conn, "company") and "Orbit Systems" in _names(env.conn, "company")
     s = one(env.conn, "SELECT * FROM suggestions WHERE id=?", (sug["id"],))
     assert (s["status"], s["title"], s["steps"], s["evidence"], s["entity_keys"], s["item_ids"]) == ("redacted", "[removed]", "[]", "[]", "[]", "[]")

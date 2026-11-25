@@ -21,10 +21,11 @@ import re
 import secrets
 import sqlite3
 import unicodedata
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .companies import Resolver, company_domain, domain_key, name_key, normalise_name
 from .db import j, one, rows, uj
@@ -78,7 +79,7 @@ class Forgotten:
                 self.conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('forget_salt', ?)", (secrets.token_hex(16),))
                 row = one(self.conn, "SELECT value FROM meta WHERE key='forget_salt'")
             self._salt = str(row["value"])
-        return hashlib.sha256(f"{self._salt}|{etype}|{value}".encode("utf-8")).hexdigest()[:32]
+        return hashlib.sha256(f"{self._salt}|{etype}|{value}".encode()).hexdigest()[:32]
 
     def marks(self, etype: str, names: Any = (), domains: Any = (), keys: Any = ()) -> list[str]:
         if etype == "person":
@@ -98,7 +99,7 @@ class Forgotten:
         marks = self.marks(etype, [name] if name else (), [domain] if domain else (), [key] if key else ())
         if not marks:
             return False
-        return one(self.conn, f"SELECT 1 AS x FROM forgotten WHERE mark IN ({','.join('?' * len(marks))}) LIMIT 1", marks) is not None
+        return one(self.conn, f"SELECT 1 AS x FROM forgotten WHERE mark IN ({','.join('?' * len(marks))}) LIMIT 1", marks) is not None  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
 
     def blocks(self, item: Any) -> bool:
         """True for a hiring item whose company is forgotten: the item is the company's record, so it is not stored."""
@@ -119,7 +120,7 @@ class Forgotten:
     def lift(self, marks: list[str]) -> int:
         if not marks:
             return 0
-        return self.conn.execute(f"DELETE FROM forgotten WHERE mark IN ({','.join('?' * len(marks))})", marks).rowcount
+        return self.conn.execute(f"DELETE FROM forgotten WHERE mark IN ({','.join('?' * len(marks))})", marks).rowcount  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
 
     def counts(self) -> dict[str, int]:
         return {r["type"]: int(r["n"]) for r in rows(self.conn, "SELECT type, COUNT(*) AS n FROM forgotten GROUP BY type")}
@@ -165,7 +166,7 @@ def _like(conn: sqlite3.Connection, table: str, col: str, names: list[str]) -> l
         return []
     where = " OR ".join(f"{col} LIKE ? ESCAPE '\\'" for _ in usable)
     args = ["%" + n.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for n in usable]
-    return rows(conn, f"SELECT id, {col} AS v FROM {table} WHERE {col} IS NOT NULL AND ({where})", args)
+    return rows(conn, f"SELECT id, {col} AS v FROM {table} WHERE {col} IS NOT NULL AND ({where})", args)  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
 
 
 def _scrub(value: Any, rx: re.Pattern[str]) -> Any:
@@ -246,9 +247,9 @@ def find(conn: sqlite3.Connection, etype: str, query: str, resolver: Resolver | 
         t.sources = sorted({str(it["source"]) for it in hit_items.values()})
         t.keys, t.domains, t.names = sorted(keys), sorted(domains), sorted(n for n in names if n)
         ph = ",".join("?" * len(t.keys))
-        t.signals = int(one(conn, f"SELECT COUNT(*) AS n FROM signals WHERE entity_key IN ({ph})", t.keys)["n"])
-        t.aliases = int(one(conn, f"SELECT COUNT(*) AS n FROM company_aliases WHERE company_key IN ({ph})", t.keys)["n"])
-        t.qualifications = int(one(conn, f"SELECT COUNT(*) AS n FROM qualifications WHERE subject_key IN ({ph})", t.keys)["n"])
+        t.signals = int(one(conn, f"SELECT COUNT(*) AS n FROM signals WHERE entity_key IN ({ph})", t.keys)["n"])  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
+        t.aliases = int(one(conn, f"SELECT COUNT(*) AS n FROM company_aliases WHERE company_key IN ({ph})", t.keys)["n"])  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
+        t.qualifications = int(one(conn, f"SELECT COUNT(*) AS n FROM qualifications WHERE subject_key IN ({ph})", t.keys)["n"])  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
         keyset = set(t.keys)
         t.suggestions = [int(s["id"]) for s in rows(conn, "SELECT id, entity_keys FROM suggestions WHERE status != 'redacted'")
                          if keyset & {str(k) for k in uj(s["entity_keys"], [])}]
@@ -258,7 +259,7 @@ def find(conn: sqlite3.Connection, etype: str, query: str, resolver: Resolver | 
                           if normalise_name(p["company"]) in norms)
     ids = [int(e["id"]) for e in t.entities]
     if ids:
-        t.links = int(one(conn, f"SELECT COUNT(*) AS n FROM item_entities WHERE entity_id IN ({','.join('?' * len(ids))})", ids)["n"])
+        t.links = int(one(conn, f"SELECT COUNT(*) AS n FROM item_entities WHERE entity_id IN ({','.join('?' * len(ids))})", ids)["n"])  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
     t.texts = len(_named_texts(conn, t.names, set(t.suggestions)))
     if etype == "person":
         rx = _name_re(t.names)
@@ -280,7 +281,7 @@ def _delete_in(conn: sqlite3.Connection, table: str, col: str, values: list) -> 
     n = 0
     for i in range(0, len(values), 500):
         chunk = values[i:i + 500]
-        n += conn.execute(f"DELETE FROM {table} WHERE {col} IN ({','.join('?' * len(chunk))})", chunk).rowcount
+        n += conn.execute(f"DELETE FROM {table} WHERE {col} IN ({','.join('?' * len(chunk))})", chunk).rowcount  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
     return n
 
 
@@ -296,7 +297,7 @@ def _apply(conn: sqlite3.Connection, t: Target, now: float) -> dict:
             uids = set()
             for i in range(0, len(t.item_ids), 500):
                 chunk = t.item_ids[i:i + 500]
-                uids |= {r["uid"] for r in rows(conn, f"SELECT uid FROM items WHERE id IN ({','.join('?' * len(chunk))})", chunk)}
+                uids |= {r["uid"] for r in rows(conn, f"SELECT uid FROM items WHERE id IN ({','.join('?' * len(chunk))})", chunk)}  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
             for table in ("item_dates", "item_changes", "item_entities", "embeddings", "signals"):
                 _delete_in(conn, table, "item_id", t.item_ids)
             done["items"] = _delete_in(conn, "items", "id", t.item_ids)
@@ -315,7 +316,7 @@ def _apply(conn: sqlite3.Connection, t: Target, now: float) -> dict:
                 """UPDATE suggestions SET status='redacted', title=?, steps='[]', reasons='[]', evidence='[]', entity_keys='[]',
                    item_ids='[]', held_reason=NULL, updated_at=? WHERE id=?""", (REMOVED, now, sid)).rowcount
     for table, col, _is_json, rid, new in _named_texts(conn, t.names, set()):
-        conn.execute(f"UPDATE {table} SET {col}=? WHERE id=?", (new, rid))
+        conn.execute(f"UPDATE {table} SET {col}=? WHERE id=?", (new, rid))  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
         done["texts"] += 1
     return done
 
