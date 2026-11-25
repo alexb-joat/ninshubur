@@ -6,6 +6,10 @@ heading and its date.
 
 ## Unreleased
 
+### Changed
+
+- `PRIVACY.md` quotes what Lever's and Ashby's terms, API documentation and robots.txt say about reading public job postings, with their URLs; it drops the unchecked Hacker News request ceiling and says that page needs a person's eyes.
+
 ## 0.2.0 - 2026-11-25
 
 ### Added
