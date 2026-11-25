@@ -1,0 +1,6 @@
+# Hashes of words that must never appear in this repository's tracked files; scripts/private_words.py check reads them.
+# Made with:  printf 'word\n' | python scripts/private_words.py hash   (a word of one to three words; normalised: NFKD, no accents, lower case)
+# A hash here lets anyone who guesses the word confirm it, so no real word is listed here: the real words (former employers,
+# people) go in a file outside the repository, named by NINSHUBUR_PRIVATE_WORDS_FILE.
+# The one entry below is a made-up word that tests/test_private_words.py plants in a throwaway repository.
+d6e67e690d0fb3c515a92bde1aa0f5ee652053841a395954546ee3aa27fe0945
