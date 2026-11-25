@@ -237,3 +237,42 @@ def test_the_ref_option_clones_that_commit(synthetic_repo, tmp_path, monkeypatch
     assert fc.resolve_commit(None) != first and fc.resolve_commit(first[:10]) == first
     with pytest.raises(SystemExit):
         fc.resolve_commit("no-such-ref")
+
+
+# --- the test suite's line: the whole tally and why anything was skipped -------------------------
+CANNED = """\
+........................................................................ [ 96%]
+..............................s.......                                   [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_private_words.py:192: needs NINSHUBUR_PRIVATE_WORDS_FILE
+SKIPPED [2] tests/test_linux_only.py:30: the explorer runs on Linux only
+1106 passed, 3 skipped, 2 deselected, 1 xfailed in 187.29s (0:03:07)
+"""
+
+
+def test_the_tally_keeps_every_count_and_each_skip_reason():
+    assert fc.pytest_tally(CANNED) == ("1106 passed, 3 skipped, 2 deselected, 1 xfailed",
+                                       ["tests/test_private_words.py:192: needs NINSHUBUR_PRIVATE_WORDS_FILE",
+                                        "tests/test_linux_only.py:30: the explorer runs on Linux only"])
+    assert fc.pytest_tally("==== 1 failed, 2 passed, 1 error in 0.52s ====\n") == ("1 failed, 2 passed, 1 error", [])
+    assert fc.pytest_tally("no tests ran in 0.01s\n") == (None, [])
+
+
+def test_the_pytest_line_prints_the_tally_and_the_skips_and_asks_pytest_for_them(synthetic_repo, tmp_path, monkeypatch, capsys):
+    class Canned(Recorder):
+        def __call__(self, args, cwd, env, timeout):
+            if "pytest" in args:                      # the argument, not a path that holds the word
+                self.calls.append((list(args), Path(cwd), dict(env)))
+                return 0, CANNED
+            return super().__call__(args, cwd, env, timeout)
+    rec = Canned()
+    monkeypatch.setattr(fc, "sh", rec)
+    work = tmp_path / "work"
+    work.mkdir()
+    results = fc.rehearse(fc.PATHS[1], fc.resolve_commit(None), work)
+    assert results[1] == ("pytest", True, "[contributing] python -m pytest -q  1106 passed, 3 skipped, 2 deselected, 1 xfailed\n"
+                          "    skipped: tests/test_private_words.py:192: needs NINSHUBUR_PRIVATE_WORDS_FILE\n"
+                          "    skipped: tests/test_linux_only.py:30: the explorer runs on Linux only")
+    run = next(c for c in rec.calls if "pytest" in c[0])
+    assert run[0][1:] == ["-m", "pytest", "-q"] and run[2]["PYTEST_ADDOPTS"] == "-rs"   # the documented command, plus -rs
+    assert "then: PYTEST_ADDOPTS=-rs python -m pytest -q" in fc.render_plan()

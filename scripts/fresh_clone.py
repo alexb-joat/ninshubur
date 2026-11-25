@@ -8,7 +8,9 @@ repository ships) it clones the repository's committed HEAD (or REF) with ``git 
 empty folder, so an uncommitted or ignored file cannot sneak in, makes a virtual environment there, runs the install
 command, and prints one result line. In the CONTRIBUTING clone it then runs the checks CONTRIBUTING and CI name: the test
 suite, ``scripts/smoke.py`` and ``python -m ninshubur check`` on ``config.example.yaml``; in the lint clone it installs the
-hash-pinned ruff and runs ``ruff check .``, as CI's lint job does. Exit status 0 only if every line passed.
+hash-pinned ruff and runs ``ruff check .``, as CI's lint job does. Exit status 0 only if every line passed. The test
+suite's line carries pytest's whole final tally (passed, skipped, deselected, xfailed, failed...) and, under it, the
+reason for each skipped test, so a count that differs from another run says why.
 
 It reads from PyPI (pip) and nothing else. After the install it runs offline commands only: never ``sources test``, a
 run that is not a replay, ``qualify`` or ``explore``. The commands that fetch from the internet, ``ninshubur sources test``
@@ -55,7 +57,8 @@ class InstallPath:
 PATHS: tuple[InstallPath, ...] = (
     InstallPath("readme", "README quick start", "pip install -e ."),
     InstallPath("contributing", "CONTRIBUTING set up", 'pip install -e ".[dev]"', checks=(
-        Check("pytest", "python -m pytest -q"),
+        # -rs through the environment, so the command stays the documented one and pytest still names each skip
+        Check("pytest", "python -m pytest -q", env=(("PYTEST_ADDOPTS", "-rs"),)),
         Check("smoke", "python scripts/smoke.py"),
         Check("check", "python -m ninshubur check", env=(("NINSHUBUR_CONFIG", "config.example.yaml"),)),
     )),
@@ -115,6 +118,18 @@ def tail(text: str, n: int = 8) -> str:
     return "\n".join("    " + x[:200] for x in lines[-n:])
 
 
+_TALLY = re.compile(r"^=*\s*(\d+ [a-z]+(?:, \d+ [a-z]+)*) in \d[\d.]*s\b")
+_SKIP = re.compile(r"^SKIPPED \[\d+\] (.+)$")
+
+
+def pytest_tally(out: str) -> tuple[str | None, list[str]]:
+    """pytest's last final-tally line without its time ("1109 passed, 1 skipped"), or None if it printed none, and the
+    reason line of each skip from the short summary (``-rs``), such as "tests/test_x.py:192: needs a file"."""
+    lines = [ln.strip() for ln in out.splitlines()]
+    tallies = [m.group(1) for ln in lines if (m := _TALLY.match(ln))]
+    return (tallies[-1] if tallies else None), [m.group(1) for ln in lines if (m := _SKIP.match(ln))]
+
+
 def resolve_commit(ref: str | None) -> str:
     code, out = sh(["git", "rev-parse", "--verify", f"{ref or 'HEAD'}^{{commit}}"], ROOT, _base_env(), 60)
     if code != 0:
@@ -149,9 +164,10 @@ def rehearse(p: InstallPath, commit: str, work: Path) -> list[tuple[str, bool, s
         assert argv[0] in ("python", "ruff")
         code, out = sh([str(venv_tool(venv, argv[0])), *argv[1:]], repo, cenv, c.timeout)
         detail = f"[{p.key}] {c.command}"
-        if code == 0 and c.name == "pytest":
-            m = re.findall(r"(\d+) passed", out)
-            detail += f"  {m[-1]} passed" if m else ""
+        if c.name == "pytest":
+            tally, skips = pytest_tally(out)
+            detail += f"  {tally}" if tally else "  (no final tally in pytest's output)"
+            detail += "".join(f"\n    skipped: {s[:200]}" for s in skips)
         if code != 0:
             results.append((c.name, False, f"{detail}\n{tail(out)}"))
             break

@@ -11,6 +11,7 @@ heading and its date.
 - `config.example.yaml` now shows the `llm.router` slot (off, with a commented, unpriced model entry to fill in), and `docs/USAGE.md` says how to turn it on for `--slot router`.
 - The default `user_agent`, and the one in `config.example.yaml`, now name the running version instead of an old one; a test fails if they drift apart. A `user_agent` line in your own `config.yaml` still overrides the default.
 - `PRIVACY.md` quotes what Lever's and Ashby's terms, API documentation and robots.txt say about reading public job postings, with their URLs; it drops the unchecked Hacker News request ceiling and says that page needs a person's eyes.
+- `scripts/fresh_clone.py` prints the test suite's whole final tally (passed, skipped, deselected, xfailed, failed) and the reason for each skipped test, instead of the passed count alone. It runs the same documented command, with `PYTEST_ADDOPTS=-rs` so pytest names the skips.
 
 ### Fixed
 
