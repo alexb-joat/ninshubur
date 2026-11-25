@@ -178,6 +178,29 @@ def connect(home: Path | None = None, path: Path | None = None) -> sqlite3.Conne
     return conn
 
 
+def connect_readonly(home: Path | None = None, path: Path | None = None) -> sqlite3.Connection:
+    """Open an existing database to read it and nothing else: the file is never created, migrated, chmodded or written.
+
+    Raises ``FileNotFoundError`` when there is no file. The connection is ``mode=ro`` with ``query_only`` on, so a
+    write through it raises. Beside a live WAL database (a ``-wal`` or ``-shm`` file exists: some process has it
+    open) it reads under SQLite's own locking, and sees only what that process has committed. With no such file no
+    process has it open in WAL mode, and opening it ``mode=ro`` would still make a ``-wal`` and a ``-shm`` that this
+    read-only connection cannot clean up; so it is opened ``immutable``, which takes no locks and creates nothing.
+    If a writer opens the file in the instant between the check and the end of a read, that read may fail or see a mix
+    of states; it never writes.
+    """
+    path = path or db_path(home)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    live = any(Path(str(path) + s).exists() for s in ("-wal", "-shm", "-journal"))
+    uri = path.resolve().as_uri() + ("?mode=ro" if live else "?mode=ro&immutable=1")
+    conn = sqlite3.connect(uri, uri=True, timeout=30, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
+
 def migrate(conn: sqlite3.Connection) -> None:
     with conn:
         for stmt in SCHEMA:

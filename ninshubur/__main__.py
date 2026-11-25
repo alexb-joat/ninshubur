@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import random
+import sqlite3
 import sys
 import time
 from datetime import datetime
@@ -23,7 +24,7 @@ from .companies import ALIASES_FILE, evidence_items
 from .companies import companies as company_list
 from .companies import dupes as company_dupes
 from .config import ConfigError, SourceConfig, load_config
-from .db import connect, j, ledger_sum, one, rows, uj
+from .db import connect, connect_readonly, j, ledger_sum, one, rows, uj
 from .envvars import load_dotenv
 from .explorer.cli import add_commands as add_explore_commands
 from .export import export as export_files
@@ -41,8 +42,10 @@ from .llm import LLMClient, LLMError
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
 from .profiles import PROFILE_KEYS, ProfileError, load_profiles, load_qualify_file
+from .runreport import run as run_report
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
+from .settings import add_commands as add_settings_commands
 from .sinks.ics import IcsSink
 from .termsafe import guarded_output
 
@@ -760,12 +763,17 @@ def cmd_qualify(args, app: App) -> int:
 
 
 def cmd_evaluate(args, app: App) -> int:
-    """Score stored answers and filled sheet copies against a person's labels. Sends nothing."""
+    """Score stored answers and filled sheet copies against a person's labels. Sends nothing; reads the database read-only."""
     from . import evaluate as ev
+    conn = None
     try:
         sheet = read_label_sheet(Path(args.sheet), meta=_sheet_meta(args.meta))
         raters = []
-        pairs = ev.stored_pairs(app.conn, sheet)
+        try:
+            conn = connect_readonly(app.home)
+        except FileNotFoundError:
+            pass  # no database yet: only --rater files can score
+        pairs = ev.stored_pairs(conn, sheet) if conn else []
         if args.model:
             pairs = [p for p in pairs if p[0] in args.model]
             absent = [m for m in args.model if m not in {p[0] for p in pairs}]
@@ -775,7 +783,7 @@ def cmd_evaluate(args, app: App) -> int:
                 return 2
         if args.prompt_hash:
             pairs = [p for p in pairs if p[1].startswith(tuple(args.prompt_hash))]
-        raters += [ev.stored_rater(app.conn, sheet, m, h) for m, h in pairs]
+        raters += [ev.stored_rater(conn, sheet, m, h) for m, h in pairs]
         for spec in args.rater or []:
             path, _, name = spec.partition("=")
             raters.append(ev.sheet_rater(Path(path), sheet, name or None))
@@ -788,6 +796,14 @@ def cmd_evaluate(args, app: App) -> int:
     except (LabelSheetError, ValueError) as e:
         print(f"cannot evaluate: {e}", file=sys.stderr)
         return 2
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e):
+            raise
+        print("cannot evaluate: database is older than this build; run `ninshubur status` once to migrate it", file=sys.stderr)
+        return 2
+    finally:
+        if conn:
+            conn.close()
     md = ev.render_markdown(rep)
     print(ev.to_json(rep) if args.json else md, end="")
     if not args.no_save:
@@ -800,6 +816,8 @@ def cmd_evaluate(args, app: App) -> int:
 
 
 def cmd_export(args, app: App) -> int:
+    if args.what == "run-report":  # main_db is off for it (see _main): it reads the database read-only
+        return run_report(args, app.home, app.now())
     if args.what == "euboulia-facts":
         path = export_provider_facts(app.conn, app.home, app.now(), out=Path(args.output) if args.output else None)
         print(f"written {path}")
@@ -953,6 +971,7 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
     add_explore_commands(sub)
+    add_settings_commands(sub)
     evp = sub.add_parser("evaluate", help="score stored qualify answers (and filled sheet copies) against a labelled sheet")
     evp.add_argument("--sheet", required=True, help="the labelled sheet (its meta file beside it, or --meta)")
     evp.add_argument("--meta", metavar="FILE", help="the sheet's meta file, when it is not beside the sheet as <sheet>.meta.json")
@@ -966,17 +985,18 @@ def build_parser() -> argparse.ArgumentParser:
     evp.add_argument("-o", "--output", metavar="FILE", help="report path (.md and .json are written; default: feeds/eval-<profile>-seed<N>-<date>)")
     evp.add_argument("--no-save", action="store_true", help="print the report only; write nothing")
     evp.add_argument("--json", action="store_true", help="print the JSON report instead of the markdown")
-    evp.set_defaults(fn=cmd_evaluate)
-    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv) or "
-                                       "euboulia-facts (json) to feeds/")
-    ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts"])
+    evp.set_defaults(fn=cmd_evaluate, main_db=False)
+    ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv), "
+                                       "euboulia-facts (json) or run-report (md/json) to feeds/")
+    ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts", "run-report"])
+    ex.add_argument("--days", type=int, metavar="N", help="run-report: count only the last N days (default: everything stored)")
     ex.add_argument("--sample", type=int, default=100, metavar="N", help="label-sheet: how many rows to draw (default 100)")
     ex.add_argument("--seed", type=int, default=7, help="label-sheet: the same seed draws the same rows (default 7)")
     ex.add_argument("--force", action="store_true", help="label-sheet: replace an existing sheet (its labels are lost)")
     ex.add_argument("--exclude", action="append", default=[], metavar="SHEET",
                     help="label-sheet: leave out every subject already on this earlier sheet (repeatable)")
     ex.add_argument("--event", help="prospects: one event (item id or uid)")
-    ex.add_argument("--format", choices=["md", "html", "csv"], default="md")
+    ex.add_argument("--format", choices=["md", "html", "csv", "json"], default="md", help="json: run-report only")
     ex.add_argument("--profile")
     ex.add_argument("--status", default="new,accepted,held", help="comma list; default new,accepted,held")
     ex.add_argument("--since", metavar="7d", help="only suggestions/items updated in the last N d/w/h")
@@ -1001,7 +1021,7 @@ def _main(argv: list[str] | None) -> int:
     args = build_parser().parse_args(argv)
     try:
         app = App(verbose=args.verbose)
-        if getattr(args, "main_db", True):  # opened up front, so a schema error refuses before any work
+        if getattr(args, "main_db", True) and getattr(args, "what", None) != "run-report":  # opened up front, so a schema error refuses before any work
             _ = app.conn
     except (PolicyError, ConfigError, ProfileError, SchemaError) as e:
         print(f"refusing to run: {e}", file=sys.stderr)
