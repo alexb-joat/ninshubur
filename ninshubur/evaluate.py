@@ -8,7 +8,9 @@ The person's labels are the reference. A rater is anything that labelled the sam
   read with the first sheet's meta, so its evidence is checked the same way.
 
 A row a rater did not answer, or answered without grounding, gets the label ``failed``: it counts as a
-disagreement and is also reported on its own. Nothing here sends anything; the only write is the report.
+disagreement and is also reported on its own. Nothing here sends anything; the only write is the report: the
+database is opened with ``db.connect_readonly`` (never created, migrated, chmodded or written), and a database
+without the tables it reads is refused with a message, not migrated.
 
 Numbers (see ``stats.py``): agreement with a Wilson 95% interval; Cohen's kappa with a seeded bootstrap
 interval; for the positive label (the first answer), precision, recall, F1 with a bootstrap interval and an exact

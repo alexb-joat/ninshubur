@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import random
+import sqlite3
 import sys
 import time
 from functools import cached_property
@@ -21,7 +22,7 @@ from .analyze import qualify as qualifier
 from .analyze.suggest import Suggester
 from .companies import ALIASES_FILE, companies as company_list, dupes as company_dupes, evidence_items
 from .config import ConfigError, SourceConfig, load_config
-from .db import connect, j, ledger_sum, one, rows, uj
+from .db import connect, connect_readonly, j, ledger_sum, one, rows, uj
 from .envvars import load_dotenv
 from .export import export as export_files, parse_since, prospects_for_event, weekly_digests
 from .export_facts import export_provider_facts
@@ -753,12 +754,17 @@ def cmd_qualify(args, app: App) -> int:
 
 
 def cmd_evaluate(args, app: App) -> int:
-    """Score stored answers and filled sheet copies against a person's labels. Sends nothing."""
+    """Score stored answers and filled sheet copies against a person's labels. Sends nothing; reads the database read-only."""
     from . import evaluate as ev
+    conn = None
     try:
         sheet = read_label_sheet(Path(args.sheet), meta=_sheet_meta(args.meta))
         raters = []
-        pairs = ev.stored_pairs(app.conn, sheet)
+        try:
+            conn = connect_readonly(app.home)
+        except FileNotFoundError:
+            pass  # no database yet: only --rater files can score
+        pairs = ev.stored_pairs(conn, sheet) if conn else []
         if args.model:
             pairs = [p for p in pairs if p[0] in args.model]
             absent = [m for m in args.model if m not in {p[0] for p in pairs}]
@@ -768,7 +774,7 @@ def cmd_evaluate(args, app: App) -> int:
                 return 2
         if args.prompt_hash:
             pairs = [p for p in pairs if p[1].startswith(tuple(args.prompt_hash))]
-        raters += [ev.stored_rater(app.conn, sheet, m, h) for m, h in pairs]
+        raters += [ev.stored_rater(conn, sheet, m, h) for m, h in pairs]
         for spec in args.rater or []:
             path, _, name = spec.partition("=")
             raters.append(ev.sheet_rater(Path(path), sheet, name or None))
@@ -781,6 +787,14 @@ def cmd_evaluate(args, app: App) -> int:
     except (LabelSheetError, ValueError) as e:
         print(f"cannot evaluate: {e}", file=sys.stderr)
         return 2
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e):
+            raise
+        print("cannot evaluate: database is older than this build; run `ninshubur status` once to migrate it", file=sys.stderr)
+        return 2
+    finally:
+        if conn:
+            conn.close()
     md = ev.render_markdown(rep)
     print(ev.to_json(rep) if args.json else md, end="")
     if not args.no_save:
@@ -959,7 +973,7 @@ def build_parser() -> argparse.ArgumentParser:
     evp.add_argument("-o", "--output", metavar="FILE", help="report path (.md and .json are written; default: feeds/eval-<profile>-seed<N>-<date>)")
     evp.add_argument("--no-save", action="store_true", help="print the report only; write nothing")
     evp.add_argument("--json", action="store_true", help="print the JSON report instead of the markdown")
-    evp.set_defaults(fn=cmd_evaluate)
+    evp.set_defaults(fn=cmd_evaluate, main_db=False)
     ex = sub.add_parser("export", help="digest (md/html/csv), suggestions (csv), items (csv), label-sheet (csv) or "
                                        "euboulia-facts (json) to feeds/")
     ex.add_argument("what", choices=["digest", "suggestions", "items", "prospects", "label-sheet", "euboulia-facts"])
