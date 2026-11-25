@@ -11,7 +11,7 @@ import pytest
 
 from ninshubur import labelsheet as L
 from ninshubur.db import connect, connect_readonly, db_path
-from tests.test_evaluate import N, RATER, TRUTH, copy_with, sheet, store  # noqa: F401  (sheet is a fixture)
+from tests.test_evaluate import RATER, TRUTH, N, copy_with, sheet, store  # noqa: F401  (sheet is a fixture)
 from tests.test_qualify import cli  # noqa: F401  (a fixture)
 
 SIDECARS = ("-wal", "-shm", "-journal")

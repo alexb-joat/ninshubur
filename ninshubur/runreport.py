@@ -13,14 +13,15 @@ import json
 import re
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
 from .adapters.base import all_adapters
 from .db import connect_readonly
 from .detectors import SEVERITIES
-from .explorer.store import DB_NAME as EXPLORER_DB, STATUSES as LADDER_STATES
+from .explorer.store import DB_NAME as EXPLORER_DB
+from .explorer.store import STATUSES as LADDER_STATES
 from .items import ITEM_KINDS
 from .logs import write_private
 
@@ -58,7 +59,7 @@ DAY = 86400.0
 
 
 def _utc(ts: float | None) -> str | None:
-    return None if ts is None else datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return None if ts is None else datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def adapter_names() -> set[str]:
@@ -119,8 +120,8 @@ def _window(r: _Reader, since: float | None) -> dict:
     if not r.table("fetches"):
         return _missing("fetches")
     w, p = _where("ts", since)
-    first, last, n = r.all(f"SELECT MIN(ts), MAX(ts), COUNT(*) FROM fetches{w}", p)[0]
-    days = {x[0] for x in r.all(f"SELECT DISTINCT date(ts, 'unixepoch') FROM fetches{w}", p)}
+    first, last, n = r.all(f"SELECT MIN(ts), MAX(ts), COUNT(*) FROM fetches{w}", p)[0]  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
+    days = {x[0] for x in r.all(f"SELECT DISTINCT date(ts, 'unixepoch') FROM fetches{w}", p)}  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
     out = {"first_fetch": _utc(first), "last_fetch": _utc(last), "fetches": n, "days_with_a_fetch": len(days)}
     if r.table("feedback"):
         with_feedback = {x[0] for x in r.all("SELECT DISTINCT date(at, 'unixepoch') FROM feedback")}
@@ -141,7 +142,7 @@ def _fetches(r: _Reader, since: float | None) -> dict:
     by_class: dict[str, int] = {}
     by_adapter: dict[str, dict[str, int]] = {}
     errors = changed = nbytes = total = 0
-    sql = (f"SELECT {adapter_col}, f.status, f.error IS NOT NULL, COUNT(*), COALESCE(SUM(f.changed), 0), "
+    sql = (f"SELECT {adapter_col}, f.status, f.error IS NOT NULL, COUNT(*), COALESCE(SUM(f.changed), 0), "  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
            f"COALESCE(SUM(f.bytes), 0) FROM fetches f {join}{w} GROUP BY 1, 2, 3")
     for adapter, status, has_error, n, ch, nb in r.all(sql, p):
         cls = status_class(status)
@@ -168,7 +169,7 @@ def _refusals(r: _Reader, since: float | None) -> dict:
         w, p = _where("ts", since)
         gate: dict[str, int] = {}
         findings: dict[str, int] = {}
-        for err, n in r.all(f"SELECT error, COUNT(*) FROM fetches{w} GROUP BY error", p):
+        for err, n in r.all(f"SELECT error, COUNT(*) FROM fetches{w} GROUP BY error", p):  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
             if not err:
                 continue
             if err.startswith("refused:"):
@@ -187,7 +188,7 @@ def _refusals(r: _Reader, since: float | None) -> dict:
         by_sev: dict[str, int] = {}
         by_code: dict[str, int] = {}
         total = 0
-        for sev, codes, n in r.all(f"SELECT severity, detector_codes, COUNT(*) FROM quarantine{w} GROUP BY 1, 2", p):
+        for sev, codes, n in r.all(f"SELECT severity, detector_codes, COUNT(*) FROM quarantine{w} GROUP BY 1, 2", p):  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
             total += n
             _bump(by_sev, _closed(sev, SEVERITIES), n)
             for c in _split_codes(codes):
@@ -204,7 +205,7 @@ def _items(r: _Reader, since: float | None) -> dict:
         return _missing("items")
     w, p = _where("first_seen_at", since)
     by_kind: dict[str, dict[str, int]] = {}
-    for kind, n, held, tainted in r.all(f"SELECT kind, COUNT(*), COALESCE(SUM(held), 0), COALESCE(SUM(tainted), 0) FROM items{w} GROUP BY kind", p):
+    for kind, n, held, tainted in r.all(f"SELECT kind, COUNT(*), COALESCE(SUM(held), 0), COALESCE(SUM(tainted), 0) FROM items{w} GROUP BY kind", p):  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
         row = by_kind.setdefault(_closed(kind, ITEM_KINDS), {"items": 0, "held": 0, "tainted": 0})
         row["items"] += n
         row["held"] += held
@@ -224,7 +225,7 @@ def _suggestions(r: _Reader, since: float | None) -> dict:
         return _missing("suggestions")
     w, p = _where("created_at", since)
     grid: dict[str, dict[str, int]] = {}
-    for kind, status, n in r.all(f"SELECT kind, status, COUNT(*) FROM suggestions{w} GROUP BY 1, 2", p):
+    for kind, status, n in r.all(f"SELECT kind, status, COUNT(*) FROM suggestions{w} GROUP BY 1, 2", p):  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
         _bump(grid.setdefault(_closed(kind, SUGGESTION_KINDS), {}), _closed(status, SUGGESTION_STATUSES), n)
     return {"by_kind_and_status": {k: dict(sorted(v.items())) for k, v in sorted(grid.items())},
             "suggestions": sum(sum(v.values()) for v in grid.values())}
@@ -249,7 +250,7 @@ def _llm(r: _Reader, since: float | None) -> dict:
         return _missing("llm_runs")
     w, p = _where("started_at", since)
     by_model: dict[str, dict] = {}
-    sql = ("SELECT model, COUNT(*), COALESCE(SUM(answered), 0), COALESCE(SUM(failed), 0), COALESCE(SUM(input_tokens), 0), "
+    sql = ("SELECT model, COUNT(*), COALESCE(SUM(answered), 0), COALESCE(SUM(failed), 0), COALESCE(SUM(input_tokens), 0), "  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
            f"COALESCE(SUM(output_tokens), 0), COALESCE(SUM(usd), 0) FROM llm_runs{w} GROUP BY model")
     for model, runs, answered, failed, tin, tout, usd in r.all(sql, p):
         row = by_model.setdefault(model if _MODEL_NAME.match(str(model)) else "other (not a plain model name)",
@@ -367,7 +368,8 @@ def render_markdown(rep: dict) -> str:
     out.append("Fetches the gate refused before any request, by code:\n")
     out.append(_skip(ref["gate_refusals"]) or _counts(ref["gate_refusals"], "refusal code"))
     out.append("Findings recorded on fetched documents, by detector code:\n")
-    out.append(_skip(ref["fetch_findings"]) or _counts({f"{c} ({DETECTOR_SEVERITY[c]})": n for c, n in ref["fetch_findings"].items()}, "detector code (severity)"))
+    out.append(_skip(ref["fetch_findings"])
+               or _counts({f"{c} ({DETECTOR_SEVERITY[c]})": n for c, n in ref["fetch_findings"].items()}, "detector code (severity)"))
     q = ref["quarantine"]
     out.append("Quarantine records:\n")
     if _skip(q):
@@ -376,7 +378,8 @@ def render_markdown(rep: dict) -> str:
         out.append(f"{q['rows']:,} record(s). By severity:\n")
         out.append(_counts(q["by_severity"], "severity"))
         out.append("By detector code (a record can carry several):\n")
-        out.append(_counts({(f"{c} ({DETECTOR_SEVERITY[c]})" if c in DETECTOR_SEVERITY else c): n for c, n in q["by_code"].items()}, "detector code (severity)"))
+        out.append(_counts({(f"{c} ({DETECTOR_SEVERITY[c]})" if c in DETECTOR_SEVERITY else c): n for c, n in q["by_code"].items()},
+                           "detector code (severity)"))
 
     it = s["items"]
     out.append("## Items\n")
@@ -384,12 +387,14 @@ def render_markdown(rep: dict) -> str:
         out.append(_skip(it))
     else:
         out.append(f"{it['items']:,} items first seen in the window, by kind:\n")
-        out.append(_table(["kind", "items", "held", "tainted"], [[k, f"{v['items']:,}", f"{v['held']:,}", f"{v['tainted']:,}"] for k, v in it["by_kind"].items()]) + "\n"
+        out.append(_table(["kind", "items", "held", "tainted"],
+                          [[k, f"{v['items']:,}", f"{v['held']:,}", f"{v['tainted']:,}"] for k, v in it["by_kind"].items()]) + "\n"
                    if it["by_kind"] else "None.\n")
 
     c = s["companies"]
     out.append("## Companies\n")
-    out.append(_skip(c) or f"{c['canonical_groups']:,} canonical company groups (from {c['aliases']:,} aliases, as of the last roll-up; not limited to the window).\n")
+    out.append(_skip(c) or f"{c['canonical_groups']:,} canonical company groups "
+                           f"(from {c['aliases']:,} aliases, as of the last roll-up; not limited to the window).\n")
 
     sg = s["suggestions"]
     out.append("## Suggestions\n")
@@ -412,7 +417,8 @@ def render_markdown(rep: dict) -> str:
         states = [x for x in (*SOURCE_HEALTH, OTHER) if any(x in v["health"] for v in so["by_adapter"].values())]
         out.append(f"{so['sources']:,} sources as of now, by adapter and health:\n")
         out.append(_table(["adapter", "sources", "enabled", *states],
-                          [[a, f"{v['sources']:,}", f"{v['enabled']:,}", *(f"{v['health'].get(x, 0):,}" for x in states)] for a, v in so["by_adapter"].items()]) + "\n")
+                          [[a, f"{v['sources']:,}", f"{v['enabled']:,}", *(f"{v['health'].get(x, 0):,}" for x in states)]
+                           for a, v in so["by_adapter"].items()]) + "\n")
 
     ll = s["llm_runs"]
     out.append("## Model runs\n")
@@ -449,7 +455,7 @@ def to_json(rep: dict) -> str:
 
 
 def default_path(home: Path, now: float, fmt: str) -> Path:
-    return home / "feeds" / f"run-report-{datetime.fromtimestamp(now, timezone.utc):%Y-%m-%d}.{fmt}"
+    return home / "feeds" / f"run-report-{datetime.fromtimestamp(now, UTC):%Y-%m-%d}.{fmt}"
 
 
 def run(args, home: Path, now: float) -> int:

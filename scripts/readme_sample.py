@@ -14,11 +14,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess  # noqa: S404 - a script, never imported by the package
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,7 +58,7 @@ def capture() -> tuple[str, list[str]]:
 
 def block(today: str | None = None) -> str:
     body, _ = capture()
-    day = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = today or datetime.now(UTC).strftime("%Y-%m-%d")
     return (f"{START}\n{FENCE}console\n{body}\n{FENCE}\n\n"
             f"<sub>Captured {day} from the replay of `tests/samples` (`ninshubur run --replay tests/samples` in a temporary home), "
             f"not from live data. Rebuild it with `python scripts/readme_sample.py --update`.</sub>\n{END}")

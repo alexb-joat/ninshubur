@@ -71,7 +71,8 @@ _MINUTES = "the minutes of your time a suggestion of kind `{kind}` is costed at"
 
 LEARNABLE: tuple[Setting, ...] = (
     Setting(("corroboration_value_usd",), "usd", 0, USD_MAX,
-            "the value in USD above which a suggestion resting on a single Tier 2 or 3 source is held as needing corroboration (the policy's own limit still applies)"),
+            "the value in USD above which a suggestion resting on a single Tier 2 or 3 source is held as needing corroboration "
+            "(the policy's own limit still applies)"),
     Setting(("budgets", "daily_human_minutes"), "minutes", 0, 1440,
             "your daily budget of human minutes, shown by `ninshubur budget` against the minutes logged today"),
     Setting(("budgets", "hourly_rate_usd"), "usd", 0, 10_000,
@@ -279,8 +280,8 @@ def _fmt(v: Any) -> str:
 
 
 def _table(head: list[str], rows: list[list[str]]) -> str:
-    widths = [max(len(x) for x in col) for col in zip(head, *rows)]
-    lines = ["  ".join(c.ljust(w) for c, w in zip(row, widths)).rstrip() for row in (head, *rows)]
+    widths = [max(len(x) for x in col) for col in zip(head, *rows, strict=True)]
+    lines = ["  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip() for row in (head, *rows)]
     return "\n".join(lines)
 
 

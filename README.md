@@ -126,7 +126,7 @@ What it does not do yet, each with the place that shows it (a test, a doc or a l
 - **A host whose robots.txt answers 401 or 403 is off limits** until a person has read its terms and recorded that exact answer as `robots_reviewed_status` for the source, and only on the adapter's fixed hosts. (ninshubur/fetch.py:557; tests/test_fetch.py:215)
 - **Only a source with an adapter can be read.** A source names one of the adapters in `ninshubur/adapters/`; a site none of them reads stays closed until someone writes one. (ninshubur/adapters/base.py:147)
 - **Pages are read as the server sends them.** No browser or JavaScript engine is part of it (the runtime dependencies are httpx and PyYAML, and tzdata on Windows), so text a page builds in the browser is not seen. (pyproject.toml:12)
-- **The content detectors match known patterns.** Hidden characters, prompt-injection phrasing, active HTML and key-like strings are flagged by pattern; a hostile page that uses none of them is not flagged. (ninshubur/detectors.py:85)
+- **The content detectors match known patterns.** Hidden characters, prompt-injection phrasing, active HTML and key-like strings are flagged by pattern; a hostile page that uses none of them is not flagged. (ninshubur/detectors.py:86)
 
 ## Layout
 

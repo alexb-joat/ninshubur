@@ -123,6 +123,13 @@ def cmd_check(root: Path, tracked: Path) -> int:
         ntokens += len(toks)
         return {h for h in candidates(toks) if h in known} if toks else set()
 
+    def report(shown: str, line_no: int, found: set[str]) -> None:
+        nonlocal hits
+        for name, hs in lists.items():
+            if found & hs:
+                hits += 1
+                print(f"HIT {shown}:{line_no} ({name})")
+
     for number, rel in enumerate(tracked_files(root), 1):
         path = root / rel
         if path.resolve() in skip or not path.is_file():
@@ -135,21 +142,13 @@ def cmd_check(root: Path, tracked: Path) -> int:
         in_path = scan(rel)
         # A file whose own name is a hit is shown by its number in `git ls-files`: its path would print the word.
         shown = f"[git ls-files no. {number}]" if in_path else rel
-
-        def report(line_no: int, found: set[str]) -> None:
-            nonlocal hits
-            for name, hs in lists.items():
-                if found & hs:
-                    hits += 1
-                    print(f"HIT {shown}:{line_no} ({name})")
-
-        report(0, in_path)
+        report(shown, 0, in_path)
         if b"\0" in data[:8192]:
             continue
         for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
             found = scan(line)
             if found:
-                report(n, found)
+                report(shown, n, found)
     print(f"private-words check: {files} files, {ntokens} tokens, {len(known)} hashes, {hits} hits")
     return 1 if hits else 0
 

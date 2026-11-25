@@ -169,7 +169,7 @@ def test_preview_reads_a_float_a_negative_number_and_a_quoted_number_as_what_the
 def test_each_refusal_exits_2_with_its_reason(cli, home, spec, reason):
     before = tree(home)
     code, out, err = cli("settings", "preview", spec)
-    assert code == 2 and f"refused: " in err and reason in err, err
+    assert code == 2 and "refused: " in err and reason in err, err
     assert out.strip() == "settings preview (nothing is written)"
     assert tree(home) == before
 

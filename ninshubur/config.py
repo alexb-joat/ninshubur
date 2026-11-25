@@ -156,7 +156,7 @@ def load_config(home: Path | None = None, path: Path | None = None, policy: Poli
         if not isinstance(raw, dict):
             raise ConfigError(f"{path} is not a mapping")
     data = _deep_merge(DEFAULTS, raw)
-    from .settings import merge_overlay   # settings.yaml: the learnable keys `ninshubur settings apply` wrote (imported here: settings imports config)
+    from .settings import merge_overlay  # settings.yaml: the learnable keys `ninshubur settings apply` wrote (imported here: settings imports config)
     data, overlay_warnings = merge_overlay(data, home or data_home())
     cfg = Config(data=data, sources={}, path=path, warnings=overlay_warnings)
     _validate_llm(cfg)

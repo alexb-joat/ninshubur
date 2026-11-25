@@ -8,7 +8,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -30,7 +30,7 @@ DISTINCTIVE = [
 
 
 def at(day: int, hh: int = 0, mm: int = 0) -> float:
-    return datetime(2026, 10, day, hh, mm, tzinfo=timezone.utc).timestamp()
+    return datetime(2026, 10, day, hh, mm, tzinfo=UTC).timestamp()
 
 
 def add_source(conn, name, adapter, *, enabled=1, health="ok", reason=None):
@@ -88,7 +88,8 @@ def build_db(home, *, explorer: bool = False) -> Path:
                                           (3, "event", "Zq Title Three", 0, 1), (4, "zq_kind", "Zq Title Four", 0, 0),
                                           (5, "person", "Zq Person Name", 0, 0)]:
         add_item(conn, n, kind, title, at(10, 12), held, tainted)
-    conn.execute("""INSERT INTO entities(type, key, name, source, legal_basis, fetched_at) VALUES ('person','p1','Zq Entity Person','Zq Source Alpha','x',?)""", (NOW,))
+    conn.execute("INSERT INTO entities(type, key, name, source, legal_basis, fetched_at) "
+                 "VALUES ('person','p1','Zq Entity Person','Zq Source Alpha','x',?)", (NOW,))
     for alias, key in [("name:zq-a", "company:zq1"), ("board:greenhouse:zq", "company:zq1"), ("name:zq-b", "company:zq2")]:
         conn.execute("INSERT INTO company_aliases(alias, company_key, origin, created_at) VALUES (?,?,?,?)", (alias, key, "name", NOW))
     for n, kind, status in [(1, "cfp_submit", "new"), (2, "cfp_submit", "new"), (3, "cfp_submit", "accepted"),
