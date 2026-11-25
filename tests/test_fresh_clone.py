@@ -47,11 +47,23 @@ def test_dry_run_prints_the_plan_and_runs_nothing(monkeypatch, capsys, tmp_path)
 
 
 def test_the_install_commands_are_the_ones_the_documents_write():
-    readme, contributing, ci = fc.PATHS[0], fc.PATHS[1], (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    readme, contributing, lint = fc.PATHS[0], fc.PATHS[1], fc.PATHS[3]
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert doc_commands("README.md", "pip install") == [readme.install]
-    assert doc_commands("CONTRIBUTING.md", "pip install") == [contributing.install]
-    assert re.findall(r"run: (pip install .*)$", ci, re.M) == [contributing.install]
+    # CI runs two installs (the test job's, then the lint job's hash-pinned ruff); CONTRIBUTING gives exactly those two.
+    assert doc_commands("CONTRIBUTING.md", "pip install") == [contributing.install, lint.install]
+    assert re.findall(r"run: (pip install .*)$", ci, re.M) == [contributing.install, lint.install]
     assert shlex.split(contributing.install) == ["pip", "install", "-e", ".[dev]"]
+    assert shlex.split(lint.install) == ["pip", "install", "--require-hashes", "--no-deps", "-r", "requirements-lint.txt"]
+
+
+def test_the_lint_check_is_the_one_contributing_and_ci_name_and_its_requirements_are_hash_pinned():
+    (ruff,) = fc.PATHS[3].checks
+    assert ruff.command == "ruff check ." and doc_commands("CONTRIBUTING.md", "ruff check") == [ruff.command]
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert re.search(r"run: ruff check( --output-format=github)? \.$", ci, re.M)  # CI only adds the annotation format
+    pinned = (ROOT / shlex.split(fc.PATHS[3].install)[-1]).read_text(encoding="utf-8")
+    assert re.search(r"^ruff==\S+ \\$", pinned, re.M) and "--hash=sha256:" in pinned
 
 
 def test_the_checks_after_the_install_are_the_ones_contributing_and_ci_name():
@@ -174,6 +186,21 @@ def test_each_step_runs_in_the_clone_with_a_clean_environment_and_a_throwaway_ho
     assert all(str(c[0][0]).startswith(str(venv)) for c in after)  # the venv's python, not the caller's
 
 
+def test_the_lint_path_installs_the_hashed_requirements_and_runs_ruff_from_the_venv(synthetic_repo, tmp_path, monkeypatch):
+    rec = Recorder()
+    monkeypatch.setattr(fc, "sh", rec)
+    work = tmp_path / "work"
+    work.mkdir()
+    results = fc.rehearse(fc.PATHS[3], fc.resolve_commit(None), work)
+    assert [(r[0], r[1]) for r in results] == [("install", True), ("ruff", True)]
+    repo, venv = work / "lint" / "repo", work / "lint" / "venv"
+    pip = next(c for c in rec.calls if "pip" in c[0])
+    assert pip[0][1:] == ["-m", "pip", "install", "--require-hashes", "--no-deps", "-r", "requirements-lint.txt"] and pip[1] == repo
+    ruff = rec.calls[-1]
+    assert ruff[0][1:] == ["check", "."] and ruff[1] == repo
+    assert Path(ruff[0][0]).stem == "ruff" and Path(ruff[0][0]).parent.parent == venv  # the venv's ruff, not the caller's
+
+
 def test_a_failing_install_is_reported_with_its_tail_and_the_other_paths_still_run(synthetic_repo, tmp_path, monkeypatch, capsys):
     rec = Recorder(fail_on="requirements-dev.in")
     monkeypatch.setattr(fc, "sh", rec)
@@ -185,7 +212,7 @@ def test_a_failing_install_is_reported_with_its_tail_and_the_other_paths_still_r
     code = fc.main([])
     out = capsys.readouterr().out
     assert code == 1
-    assert out.count("install: PASS") == 2 and out.count("install: FAIL") == 1
+    assert out.count("install: PASS") == len(fc.PATHS) - 1 and out.count("install: FAIL") == 1
     assert "install: FAIL  [requirements-dev] pip install -r requirements-dev.in\n    ERROR: something broke\n    line two" in out
     assert "1 failed" in out and "ninshubur sources test, ninshubur run" in out
     assert not (tmp_path / "w").exists()                       # removed afterwards

@@ -17,6 +17,8 @@ policy".
    ```bash
    python -m pytest -q
    python scripts/smoke.py
+   pip install --require-hashes --no-deps -r requirements-lint.txt   # once: the ruff version CI runs
+   ruff check .
    ```
 4. **Open a pull request.** CI, CodeQL and dependency review run automatically.
 

@@ -3,12 +3,12 @@
 
     python scripts/fresh_clone.py [--ref REF] [--dry-run] [--keep] [--workdir DIR]
 
-For each documented way to install (README's quick start, CONTRIBUTING's setup, and the requirements file the repository
-ships) it clones the repository's committed HEAD (or REF) with ``git clone --no-hardlinks`` of the local path into a new
+For each documented way to install (README's quick start, CONTRIBUTING's setup and lint install, and the requirements file the
+repository ships) it clones the repository's committed HEAD (or REF) with ``git clone --no-hardlinks`` of the local path into a new
 empty folder, so an uncommitted or ignored file cannot sneak in, makes a virtual environment there, runs the install
 command, and prints one result line. In the CONTRIBUTING clone it then runs the checks CONTRIBUTING and CI name: the test
-suite, ``scripts/smoke.py`` and ``python -m ninshubur check`` on ``config.example.yaml``. Exit status 0 only if every
-line passed.
+suite, ``scripts/smoke.py`` and ``python -m ninshubur check`` on ``config.example.yaml``; in the lint clone it installs the
+hash-pinned ruff and runs ``ruff check .``, as CI's lint job does. Exit status 0 only if every line passed.
 
 It reads from PyPI (pip) and nothing else. After the install it runs offline commands only: never ``sources test``, a
 run that is not a replay, ``qualify`` or ``explore``. The commands that fetch from the internet, ``ninshubur sources test``
@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 @dataclass(frozen=True)
 class Check:
     name: str
-    command: str                     # as written in the docs; `python` is the clone's venv python
+    command: str                     # as written in the docs; `python` and `ruff` are the clone's venv programs
     env: tuple[tuple[str, str], ...] = ()
     timeout: int = 1800
 
@@ -50,7 +50,7 @@ class InstallPath:
     checks: tuple[Check, ...] = ()
 
 
-# The install commands are the ones written in README.md (quick start) and CONTRIBUTING.md (set up); tests/test_fresh_clone.py
+# The install commands are the ones written in README.md (quick start) and CONTRIBUTING.md (set up, lint); tests/test_fresh_clone.py
 # fails if either document, or the CI workflow, says something else.
 PATHS: tuple[InstallPath, ...] = (
     InstallPath("readme", "README quick start", "pip install -e ."),
@@ -60,11 +60,19 @@ PATHS: tuple[InstallPath, ...] = (
         Check("check", "python -m ninshubur check", env=(("NINSHUBUR_CONFIG", "config.example.yaml"),)),
     )),
     InstallPath("requirements-dev", "requirements-dev.in", "pip install -r requirements-dev.in"),
+    InstallPath("lint", "CONTRIBUTING lint check", "pip install --require-hashes --no-deps -r requirements-lint.txt", checks=(
+        Check("ruff", "ruff check ."),
+    )),
 )
 
 
 def venv_python(venv: Path) -> Path:
-    return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    return venv_tool(venv, "python")
+
+
+def venv_tool(venv: Path, name: str) -> Path:
+    """A program the venv provides: its python, or a console script such as ruff."""
+    return venv / (f"Scripts/{name}.exe" if os.name == "nt" else f"bin/{name}")
 
 
 def render_plan(paths: tuple[InstallPath, ...] = PATHS) -> str:
@@ -138,8 +146,8 @@ def rehearse(p: InstallPath, commit: str, work: Path) -> list[tuple[str, bool, s
     for c in p.checks:
         cenv = {**env, **dict(c.env)}
         argv = shlex.split(c.command)
-        assert argv[0] == "python"
-        code, out = sh([py, *argv[1:]], repo, cenv, c.timeout)
+        assert argv[0] in ("python", "ruff")
+        code, out = sh([str(venv_tool(venv, argv[0])), *argv[1:]], repo, cenv, c.timeout)
         detail = f"[{p.key}] {c.command}"
         if code == 0 and c.name == "pytest":
             m = re.findall(r"(\d+) passed", out)
