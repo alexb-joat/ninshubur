@@ -346,6 +346,13 @@ the cap; what was answered is kept and the next run asks the rest. The estimate 
 characters per token, so read it as a guide. The daily caps under `llm.caps` apply as well. The only
 network call is to the slot's `base_url`.
 
+**Turning the router slot on.** `config.example.yaml` has an `llm.router` block with `enabled: false`. In your own
+`config.yaml`, set `enabled: true`, point `base_url` at your router, and list under `models` each model you will ask
+for, with `price_usd_per_mtok` giving its `input` and `output` price in US dollars per million tokens. Ninshubur
+ships no prices: take them from your router's or provider's price list. The name you list is the name `--model` takes.
+`api_key_env` is the name of the environment variable that holds the key, never the key. With the router enabled and
+no priced model, or with a price below 0, `ninshubur check` refuses the config and names the key.
+
 **Limits.** The answer is the model's reading of at most 12 lines; a company with hundreds of
 postings is judged on the 12 that match your terms best. The check proves the cited lines exist,
 not that the reason follows from them. How often a model agrees with a person is measured

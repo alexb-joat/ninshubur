@@ -1,9 +1,21 @@
 # Copy to ~/.ninshubur/config.yaml (or set NINSHUBUR_CONFIG). Secrets never go here: only env var names.
-user_agent: "Ninshubur/0.1 (+https://github.com/alexb-joat/ninshubur; contact: https://github.com/alexb-joat/ninshubur/issues)"
+user_agent: "Ninshubur/0.2.0 (+https://github.com/alexb-joat/ninshubur; contact: https://github.com/alexb-joat/ninshubur/issues)"
 timezone: Europe/Lisbon
 
 llm:
   local: {base_url: http://127.0.0.1:11434/v1, model: qwen2.5:7b, embed_model: nomic-embed-text}
+  # An OpenAI-compatible router (for example Trioditis). Off by default. It may forward to a cloud model, so it always
+  # counts as remote and never receives person data. To turn it on, set enabled: true, point base_url at it and list at
+  # least one model it serves, each with its own price (the key is the model name you pass as `--model`):
+  router:
+    enabled: false
+    base_url: http://127.0.0.1:8787/v1
+    api_key_env: NINSHUBUR_ROUTER_KEY      # the NAME of the environment variable that holds the key, never the key
+    timeout_s: 120
+    concurrency: 4
+    # models:
+    #   <model name your router serves>:
+    #     price_usd_per_mtok: {input: <USD per million input tokens>, output: <USD per million output tokens>}
   cloud: {enabled: false, base_url: https://api.openai.com/v1, api_key_env: NINSHUBUR_CLOUD_KEY, model: gpt-5-mini}
   caps: {daily_usd: 0.50, daily_tokens: 300000}
   person_data: local_only

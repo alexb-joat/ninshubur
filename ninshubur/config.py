@@ -12,11 +12,12 @@ from typing import Any
 
 import yaml
 
+from . import __version__
 from .home import data_home
 from .policy import SECONDS_PER_DAY, Policy, _parse_day, check_url, host_of
 
 DEFAULTS: dict[str, Any] = {
-    "user_agent": "Ninshubur/0.1 (+https://github.com/alexb-joat/ninshubur; contact: https://github.com/alexb-joat/ninshubur/issues)",
+    "user_agent": f"Ninshubur/{__version__} (+https://github.com/alexb-joat/ninshubur; contact: https://github.com/alexb-joat/ninshubur/issues)",
     "timezone": "Europe/Lisbon",
     "llm": {
         "local": {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b", "embed_model": "nomic-embed-text",
