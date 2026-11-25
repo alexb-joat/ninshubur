@@ -68,23 +68,42 @@ status 2, a guardrail key, a key that is not in the configuration (naming the ne
 group such as `base_value_usd` (naming its settings), a value of the wrong type, and a value outside the bounds. If any
 assignment is refused, nothing is applied.
 
-## What `apply` will do
+## What `apply` does
 
-`apply KEY=VALUE… --yes` makes the same checks and then:
+`apply KEY=VALUE… --yes` makes the same checks as `preview`, and then:
 
-- writes the changes to `settings.yaml` in the data home, a second file merged over `config.yaml` when a process starts.
-  `config.yaml` is never written. The file is written whole to a temporary file and renamed into place, mode 0600 on
-  Linux and macOS;
-- appends one line to `logs/settings.jsonl`: an id, the time, each key with its old and new value, and your `--note`.
-  The line holds no environment values and no secrets;
+- writes the changes to `settings.yaml` in the data home, a second file that is merged over `config.yaml` whenever a
+  process starts. `config.yaml` is never written. The file is written whole to a temporary file and renamed into place,
+  mode 0600 on Linux and macOS. It is rewritten each time, so keep your own comments in `config.yaml`;
+- appends one line to `logs/settings.jsonl`: an id, the time, each key with its old and new value (and where the old one
+  came from), and your `--note` (one line, up to 200 characters). The line holds no environment values and no secrets.
+  The line goes down after the new file is written and before the rename, so a change never happens without its line; if
+  the line cannot be written, nothing changes (exit 1);
+- skips a key whose value is already the one asked for, and writes and logs nothing if that is every key;
 - changes nothing in any process that is already running. **A new value takes effect at the next process start** (the
-  next `ninshubur` command, or when the daemon is restarted); nothing is reloaded live.
+  next `ninshubur` command, or when the daemon is restarted); nothing is reloaded live, and the daemon's reload of
+  `config.yaml` does not carry a new value into the running process either.
 
 Without `--yes` it prints the preview and exits with status 2, saying so.
 
-`undo` restores the values the last apply (or the apply `ID`) replaced, logs that too, and removes `settings.yaml` when
-nothing is left in it. `log` prints the audit lines.
+## Undo and log
 
-A hand-edited `settings.yaml` is read with the same checks: an entry for a guardrail key, an unknown key or a value out of
-bounds is ignored with a warning and never applied. `apply` refuses to rewrite a `settings.yaml` that holds such entries
-until you have removed them, so it never drops something you wrote by accident.
+`undo` restores what the last apply replaced (a value from `config.yaml` or the default comes back when the apply had put
+the key in `settings.yaml` for the first time), logs that as its own line, and removes `settings.yaml` when nothing is
+left in it. `undo ID` does the same for the apply with that id (see `log`). It is refused, with the reason, when:
+
+- a key of that apply has changed again since (a later apply, or a hand edit): undo the later one first;
+- that apply was already undone, or no such apply is logged;
+- the audit line is not usable (a hand-edited line naming a guardrail key, or a value out of bounds).
+
+`undo` with no id means the last apply; if that one is already undone it says so and you name an earlier one.
+
+`log [--last N]` prints the last N audit lines (default 10), oldest first, with what each did and which were undone. A
+line that cannot be parsed is skipped.
+
+## A hand-edited `settings.yaml`
+
+The file is read with the same checks as `apply`: an entry for a guardrail key, an unknown key or a value out of bounds is
+ignored with a warning (on standard error, and in `settings list`) and never applied; the entries that pass are used.
+`apply` and `undo` refuse to rewrite a `settings.yaml` that holds such an entry, or that is not valid YAML, until you
+have removed it, so they never drop something you wrote by accident.

@@ -35,6 +35,7 @@ heading and its date.
 - README: a "What it looks like" block with real output captured by `scripts/readme_sample.py` from the replay of the shipped samples, and a "Known limits" section where each limit points at the test, doc or line that shows it.
 - `scripts/private_words.py`: a check that fails when a word on a list of hashes (a former employer, a person) appears in the name or text of any tracked file; it never prints the word.
 - `scripts/fresh_clone.py`: rehearses each install path from a clone of the committed HEAD (the README's quick start, CONTRIBUTING's set up and the requirements file), then runs the tests, the smoke script and `ninshubur check` in the CONTRIBUTING clone and prints one result line per step; `--dry-run` shows the plan and runs nothing.
+- `ninshubur settings`: change the numbers that decide how suggestions are valued (what a kind of suggestion is worth, what your hour is worth, what a trip or a task costs; 24 keys, each with bounds) by command. `list` shows each value and where it came from, `preview` shows old and new and writes nothing, `apply --yes` writes a separate `settings.yaml` (your `config.yaml` is never rewritten) and one line in `logs/settings.jsonl`, `undo` puts back what an apply replaced, and `log` prints the lines. Keys that change what is fetched, stored, sent or admitted are shown and never set. A new value takes effect at the next process start.
 
 ### Changed
 

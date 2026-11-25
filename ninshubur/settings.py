@@ -7,16 +7,19 @@ effective configuration is a **guardrail** key: it changes what is fetched, stor
 but never set here. A key is learnable only if it is listed; nothing is learnable by pattern.
 
 ``settings list`` shows the effective value of each key and where it came from (default, ``config.yaml``, or the
-overlay ``settings.yaml``); ``settings preview KEY=VALUE`` shows old -> new and writes nothing; ``apply``, ``undo`` and
-``log`` (below the preview code) write the overlay and an audit line. ``config.yaml`` and its comments are never
-rewritten: the overlay is a second file merged over it when a process starts.
+overlay ``settings.yaml``); ``settings preview KEY=VALUE`` shows old -> new and writes nothing; ``apply`` (with
+``--yes``) and ``undo`` write the overlay and one audit line each in ``logs/settings.jsonl``; ``log`` prints them.
+``config.yaml`` and its comments are never rewritten: the overlay is a second file that ``config.load_config`` merges
+over it, learnable and valid entries only, when a process starts.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import difflib
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +28,7 @@ from typing import Any
 import yaml
 
 from .config import DEFAULTS, config_path
+from .logs import now_iso, read_jsonl
 
 OVERLAY = "settings.yaml"
 AUDIT = "logs/settings.jsonl"
@@ -170,6 +174,8 @@ class Layers:
     effective: dict[str, Any]            # dotted key -> value, defaults < config.yaml < overlay
     source: dict[str, str]               # dotted key -> "default" | "config" | "overlay"
     overlay: Overlay
+    base: dict[str, Any]                 # the same without the overlay: what a key goes back to when its overlay entry goes
+    base_source: dict[str, str]
 
 
 def read_layers(home: Path) -> Layers:
@@ -179,10 +185,11 @@ def read_layers(home: Path) -> Layers:
     source = {k: "default" for k in effective}
     for k, v in config_flat.items():
         effective[k], source[k] = v, "config"
+    base, base_source = dict(effective), dict(source)
     overlay = read_overlay(home)
     for k, v in overlay.values.items():
         effective[k], source[k] = v, "overlay"
-    return Layers(effective, source, overlay)
+    return Layers(effective, source, overlay, base, base_source)
 
 
 def merge_overlay(data: dict, home: Path) -> tuple[dict, list[str]]:
@@ -305,6 +312,223 @@ def render_key_table() -> str:
     return "\n".join(lines)
 
 
+# --- apply, undo, log ---------------------------------------------------------------------------
+MAX_NOTE = 200
+OVERLAY_HEADER = ("# Written by `ninshubur settings apply` and `undo`; see docs/settings.md. Only learnable keys are read from this\n"
+                  "# file. It is rewritten whole each time, so keep your own comments in config.yaml.\n")
+
+
+def overlay_text(values: dict[str, Any]) -> str:
+    return OVERLAY_HEADER + yaml.safe_dump(nest(dict(sorted(values.items()))), sort_keys=True, default_flow_style=False)
+
+
+def read_audit(home: Path) -> list[dict]:
+    return [r for r in read_jsonl(home / AUDIT) if isinstance(r, dict)]
+
+
+def history(records: list[dict]) -> tuple[list[dict], dict[int, int]]:
+    """The apply and undo lines that took effect, in order, and which apply an undo undid (apply id -> undo id).
+    A line a later ``failed`` line withdraws (the overlay could not be replaced after the line was written) is left out."""
+    failed = {r.get("id") for r in records if r.get("event") == "failed"}
+    acts = [r for r in records if r.get("event") in ("apply", "undo") and type(r.get("id")) is int and r["id"] not in failed]
+    return acts, {r["undoes"]: r["id"] for r in acts if r["event"] == "undo" and type(r.get("undoes")) is int}
+
+
+def _entry(c: Change) -> dict:
+    return {"key": c.key, "old": c.old, "old_source": c.old_source, "new": c.new,
+            "overlay_before": None if c.overlay_old is MISSING else c.overlay_old}
+
+
+def _write_tmp(path: Path, text: str) -> Path:
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        f.write(text)
+    return tmp
+
+
+def _append_audit(path: Path, rec: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":"), default=str) + "\n")
+
+
+def commit(home: Path, values: dict[str, Any], record: dict) -> None:
+    """Make ``values`` the overlay (no entry left: no file) and log ``record``. The new file is written whole first, the audit
+    line goes down next, and only then does the rename replace the old file, so a change never happens without its line.
+    The audit line, unlike the run logs, is not best effort: if it cannot be written nothing changes. If the rename fails
+    after the line is written, a ``failed`` line withdraws it. Raises OSError."""
+    path = home / OVERLAY
+    tmp = _write_tmp(path, overlay_text(values)) if values else None
+    try:
+        _append_audit(home / AUDIT, record)
+    except OSError:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        raise
+    try:
+        if tmp is not None:
+            os.replace(tmp, path)
+        else:
+            path.unlink(missing_ok=True)
+    except OSError:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            _append_audit(home / AUDIT, {"id": record["id"], "ts": record["ts"], "event": "failed", "of": record["event"]})
+        raise
+
+
+def _next_id(records: list[dict]) -> int:
+    return 1 + max((r["id"] for r in records if type(r.get("id")) is int), default=0)
+
+
+def _overlay_refusals(layers: Layers) -> list[str]:
+    if not layers.overlay.problems:
+        return []
+    return [f"{OVERLAY} holds entries that cannot be used, so it is not rewritten (that would drop them without your say): "
+            f"{p}; remove them from the file, then run this again" for p in layers.overlay.problems]
+
+
+def _note_refusal(note: str) -> str | None:
+    if len(note) > MAX_NOTE:
+        return f"--note is {len(note)} characters; the limit is {MAX_NOTE}"
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in note):
+        return "--note holds a control character or a line break; keep it to one plain line"
+    return None
+
+
+def cmd_apply(args, app) -> int:
+    home = app.home
+    layers = read_layers(home)
+    changes, refusals = plan(layers, args.assignments)
+    if (why := _note_refusal(args.note)) is not None:
+        refusals.append(why)
+    refusals += _overlay_refusals(layers)
+    real = [c for c in changes if not c.unchanged]
+    print("settings apply" if args.yes else "settings preview (nothing is written)")
+    if changes:
+        print(render_changes(changes))
+    for r in refusals:
+        print(f"refused: {r}", file=sys.stderr)
+    if refusals:
+        return 2
+    if not real:
+        print("nothing to change: every value is already the one asked for")
+        return 0
+    if not args.yes:
+        print("not applied: nothing was written; add --yes to apply these", file=sys.stderr)
+        return 2
+    records = read_audit(home)
+    rec = {"id": _next_id(records), "ts": now_iso(app.now()), "event": "apply", "note": args.note,
+           "keys": [_entry(c) for c in real]}
+    values = {**layers.overlay.values, **{c.key: c.new for c in real}}
+    try:
+        commit(home, values, rec)
+    except OSError as e:
+        print(f"error: could not write {OVERLAY} or {AUDIT} ({e.strerror or type(e).__name__}); nothing was changed", file=sys.stderr)
+        return 1
+    print(f"applied as #{rec['id']}; it takes effect at the next process start (the next ninshubur command, or when the daemon "
+          f"restarts). Undo: ninshubur settings undo {rec['id']}")
+    return 0
+
+
+def _record_problem(rec: dict) -> str | None:
+    """Why an audit line cannot be undone from (a hand-edited or damaged line), or None."""
+    keys = rec.get("keys")
+    if not isinstance(keys, list) or not keys:
+        return "it lists no keys"
+    for e in keys:
+        setting = REGISTRY.get(e.get("key")) if isinstance(e, dict) else None
+        if setting is None:
+            return "it names a key that is not learnable"
+        for field_name in ("new", "overlay_before"):
+            v = e.get(field_name)
+            if (field_name == "new" or v is not None) and check_value(setting, v) is not None:
+                return f"{setting.key}: its {field_name} value is not valid"
+    return None
+
+
+def cmd_undo(args, app) -> int:
+    home = app.home
+    layers = read_layers(home)
+    acts, undone = history(read_audit(home))
+    applies = [r for r in acts if r["event"] == "apply"]
+    if args.id is None:
+        if not applies:
+            print(f"refused: nothing to undo: no apply is logged in {AUDIT}", file=sys.stderr)
+            return 2
+        target = applies[-1]
+    else:
+        target = next((r for r in applies if r["id"] == args.id), None)
+        if target is None:
+            print(f"refused: no apply with id {args.id} in {AUDIT} (ninshubur settings log lists them)", file=sys.stderr)
+            return 2
+    tid = target["id"]
+    if tid in undone:
+        hint = "name an earlier one with `ninshubur settings undo ID`" if args.id is None else "it cannot be undone twice"
+        print(f"refused: apply #{tid} was already undone by #{undone[tid]}; {hint}", file=sys.stderr)
+        return 2
+    if (why := _record_problem(target)) is not None:
+        print(f"refused: apply #{tid} cannot be undone from {AUDIT}: {why}", file=sys.stderr)
+        return 2
+    refusals = _overlay_refusals(layers)
+    for e in target["keys"]:
+        now = layers.overlay.values.get(e["key"], MISSING)
+        if now is MISSING or now != e["new"]:
+            refusals.append(f"{e['key']} was changed again since apply #{tid} (it is {_fmt(layers.effective[e['key']])} now, not "
+                            f"{_fmt(e['new'])}); undo the later change first (ninshubur settings log)")
+    for r in refusals:
+        print(f"refused: {r}", file=sys.stderr)
+    if refusals:
+        return 2
+    values = dict(layers.overlay.values)
+    entries = []
+    for e in target["keys"]:
+        key, before = e["key"], e.get("overlay_before")
+        entries.append({"key": key, "old": layers.effective[key], "old_source": "overlay",
+                        "new": layers.base[key] if before is None else before, "overlay_before": values[key]})
+        if before is None:
+            del values[key]
+        else:
+            values[key] = before
+    rec = {"id": _next_id(read_audit(home)), "ts": now_iso(app.now()), "event": "undo", "undoes": tid, "keys": entries}
+    try:
+        commit(home, values, rec)
+    except OSError as e:
+        print(f"error: could not write {OVERLAY} or {AUDIT} ({e.strerror or type(e).__name__}); nothing was changed", file=sys.stderr)
+        return 1
+    print(f"undid apply #{tid} as #{rec['id']}")
+    print(_table(["key", "was", "", "now"], [[x["key"], _fmt(x["old"]), "->", _fmt(x["new"])] for x in entries]))
+    print("it takes effect at the next process start")
+    return 0
+
+
+def cmd_log(args, app) -> int:
+    records = read_audit(app.home)
+    acts, undone = history(records)
+    withdrawn = {r.get("id") for r in records if r.get("event") == "failed"}
+    shown = [r for r in records if r.get("event") in ("apply", "undo") and type(r.get("id")) is int]
+    if not shown:
+        print(f"no settings changes logged yet ({AUDIT})")
+        return 0
+    rows = []
+    for r in shown[-args.last:]:
+        what = r["event"] + (f" of #{r.get('undoes')}" if r["event"] == "undo" else "")
+        if r["id"] in withdrawn:
+            what += " (failed: not written)"
+        elif r["id"] in undone:
+            what += f" (undone by #{undone[r['id']]})"
+        keys = r.get("keys") if isinstance(r.get("keys"), list) else []
+        changes = "; ".join(f"{e.get('key')} {_fmt(e.get('old'))} -> {_fmt(e.get('new'))}" for e in keys if isinstance(e, dict))
+        rows.append([f"#{r['id']}", str(r.get("ts", "")), what, changes, str(r.get("note") or "")])
+    print(_table(["id", "time", "what", "changes", "note"], rows))
+    return 0
+
+
 # --- commands ---------------------------------------------------------------------------------
 def cmd_list(args, app) -> int:
     print(render_list(read_layers(app.home), everything=args.all))
@@ -321,12 +545,30 @@ def cmd_preview(args, app) -> int:
     return 2 if refusals else 0
 
 
+def _count(text: str) -> int:
+    n = int(text)
+    if n < 1:
+        raise ValueError(text)
+    return n
+
+
 def add_commands(sub) -> None:
-    st = sub.add_parser("settings", help="the settings a person may change by command: list, preview (apply, undo and log below)")
-    ss = st.add_subparsers(dest="settings_cmd", required=True, metavar="{list,preview}")
+    st = sub.add_parser("settings", help="the settings a person may change by command: list, preview, apply, undo, log")
+    ss = st.add_subparsers(dest="settings_cmd", required=True, metavar="{list,preview,apply,undo,log}")
     ls = ss.add_parser("list", help="each setting's effective value, where it came from, its class and bounds")
     ls.add_argument("--all", action="store_true", help="also show the guardrail keys (read-only)")
     ls.set_defaults(fn=cmd_list, main_db=False)
     pv = ss.add_parser("preview", help="old -> new for KEY=VALUE...; checks them and writes nothing (exit 2 on any refusal)")
     pv.add_argument("assignments", nargs="+", metavar="KEY=VALUE")
     pv.set_defaults(fn=cmd_preview, main_db=False)
+    ap = ss.add_parser("apply", help="write KEY=VALUE... to settings.yaml (needs --yes) and log it; takes effect at the next process start")
+    ap.add_argument("assignments", nargs="+", metavar="KEY=VALUE")
+    ap.add_argument("--note", default="", help=f"why, kept in the log (one line, up to {MAX_NOTE} characters)")
+    ap.add_argument("--yes", action="store_true", help="write it; without this apply only previews and exits 2")
+    ap.set_defaults(fn=cmd_apply, main_db=False)
+    ud = ss.add_parser("undo", help="restore what the last apply (or apply ID) replaced; refused if a key changed again since")
+    ud.add_argument("id", nargs="?", type=int, metavar="ID")
+    ud.set_defaults(fn=cmd_undo, main_db=False)
+    lg = ss.add_parser("log", help="the audit lines of apply and undo, oldest first")
+    lg.add_argument("--last", type=_count, default=10, metavar="N", help="show the last N (default 10)")
+    lg.set_defaults(fn=cmd_log, main_db=False)
