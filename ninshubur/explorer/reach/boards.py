@@ -22,9 +22,9 @@ from collections import Counter
 from dataclasses import dataclass
 
 from ...adapters.ashby import BOARD_RE as ASHBY_RE
-from ...adapters.lever import BOARD_RE as LEVER_RE
-from ...adapters.base import FetchPlan, Fetched, run_projection
+from ...adapters.base import Fetched, FetchPlan, run_projection
 from ...adapters.greenhouse import BOARD_RE as GREENHOUSE_RE
+from ...adapters.lever import BOARD_RE as LEVER_RE
 from ...config import Config, SourceConfig
 from ...profiles import BOARD_ADAPTERS, Profile
 from .net import reach_source, reach_spec

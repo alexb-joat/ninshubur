@@ -12,8 +12,8 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from ..detectors import has_hidden_unicode, scan_text
-from .htmltree import Doc, Node, card_groups, iter_nodes, json_ld, microdata, walk_ld
+from ..detectors import scan_text
+from .htmltree import Doc, Node, card_groups, json_ld, microdata, walk_ld
 
 MAX_ROWS = 300
 SECTION_TERMS = {"sponsor": "sponsor", "exhibitor": "exhibitor", "partner": "partner", "organizer": "organizer", "organiser": "organizer"}
@@ -155,7 +155,7 @@ def _cards_persons(doc: Doc, out: list[dict], notes: list[str]) -> None:
             lines = card.lines(max_lines=6)
             if not lines:
                 continue
-            name_i = next((i for i, l in enumerate(lines) if looks_like_name(l)), None)
+            name_i = next((i for i, ln in enumerate(lines) if looks_like_name(ln)), None)
             if name_i is None:
                 continue
             handle = None
@@ -167,8 +167,8 @@ def _cards_persons(doc: Doc, out: list[dict], notes: list[str]) -> None:
             if not (handle or has_img):
                 continue
             title = company = None
-            for l in lines[name_i + 1: name_i + 3]:
-                t, c = split_title_company(l)
+            for ln in lines[name_i + 1: name_i + 3]:
+                t, c = split_title_company(ln)
                 title = title or t
                 company = company or c
             # The whole card (bio included) is taint-scanned here; only the fields below are ever stored.

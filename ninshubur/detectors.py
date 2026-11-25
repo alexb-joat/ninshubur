@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from .policy import check_url, host_of
 
@@ -212,7 +213,8 @@ def scan_text(text: str, *, allowlisted_hosts: Iterable[str] = (), base64_run_mi
         f.append(Finding("high", "mixed_script", toks[0][:40]))
     if _SHELL.search(text):
         f.append(Finding("medium", "shell_fragment"))
-    if re.search(r"[A-Za-z0-9+/]{%d,}={0,2}" % max(50, int(base64_run_min)), text):
+    run_min = max(50, int(base64_run_min))
+    if re.search(rf"[A-Za-z0-9+/]{{{run_min},}}={{0,2}}", text):
         f.append(Finding("medium", "base64_run"))
     if repetition_anomaly(text):
         f.append(Finding("medium", "repetition"))

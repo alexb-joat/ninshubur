@@ -17,7 +17,7 @@ def cmd_candidates(args, app) -> int:
         if args.kind:
             where += (" AND " if where else "WHERE ") + "kind=?"
             params.append(args.kind)
-        total = rows(conn, f"SELECT kind, status, COUNT(*) AS n FROM explorer_candidates {where} GROUP BY kind, status "
+        total = rows(conn, f"SELECT kind, status, COUNT(*) AS n FROM explorer_candidates {where} GROUP BY kind, status "  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                            "ORDER BY kind, status", params)
         if not total:
             print("no candidates yet")
@@ -26,7 +26,7 @@ def cmd_candidates(args, app) -> int:
             print(f"{r['kind']:<12} {r['status']:<12} {r['n']}")
         if args.limit:
             print()
-            for r in rows(conn, f"SELECT id, url, kind, via, count FROM explorer_candidates {where} "
+            for r in rows(conn, f"SELECT id, url, kind, via, count FROM explorer_candidates {where} "  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                                 "ORDER BY count DESC, id LIMIT ?", [*params, args.limit]):
                 print(f"#{r['id']:<6} x{r['count']:<4} {r['kind']:<12} {r['url'][:100]}  (via {r['via']})")
         return 0
@@ -281,7 +281,7 @@ def cmd_sites(args, app) -> int:
         where = "WHERE status='open' AND stage=?" if args.stage and args.stage != "stopped" else (
             "WHERE status!='open'" if args.stage == "stopped" else "")
         params = [args.stage] if where.endswith("?") else []
-        for r in rows(conn, f"SELECT * FROM explorer_sites {where} ORDER BY COALESCE(stage_at, first_seen) DESC LIMIT ?",
+        for r in rows(conn, f"SELECT * FROM explorer_sites {where} ORDER BY COALESCE(stage_at, first_seen) DESC LIMIT ?",  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                       [*params, args.limit]):
             state = r["stage"] if r["status"] == "open" else f"stopped ({r['status_reason']})"
             age = f", trial {(app.now() - r['trial_started']) / 86400:.1f} d" if r["trial_started"] and r["stage"] == "trial" else ""

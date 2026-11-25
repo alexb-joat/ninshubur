@@ -16,7 +16,7 @@ ITEM_KINDS = frozenset({
 
 
 def item_uid(source: str, canonical_id: str) -> str:
-    return hashlib.sha256(f"{source}:{canonical_id}".encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(f"{source}:{canonical_id}".encode()).hexdigest()[:32]
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ class Item:
     tier: int | None = None  # overrides the source tier (e.g. HN comments are Tier 3 under a Tier 2 source)
 
 
-def apply_taint(item: "Item", row: dict) -> "Item":
+def apply_taint(item: Item, row: dict) -> Item:
     """Copy the projection's taint verdict onto an item."""
     codes = tuple(row.get("_taint") or ())
     sev = row.get("_severity")

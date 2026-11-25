@@ -22,7 +22,7 @@ import sqlite3
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from ...adapters.base import FetchPlan, Fetched, run_projection
+from ...adapters.base import Fetched, FetchPlan, run_projection
 from ...policy import host_of
 from ...profiles import Profile
 from ..store import Candidate
@@ -94,7 +94,7 @@ def plan_queries(profiles: dict[str, Profile], api: str, *, cap: int, conn: sqli
     if conn is not None and cands:
         marks = ",".join("?" * len(cands))
         last = {r["key"]: r["last_fetched_at"] or 0.0 for r in
-                conn.execute(f"SELECT key, last_fetched_at FROM fetch_state WHERE key IN ({marks})", list(cands))}
+                conn.execute(f"SELECT key, last_fetched_at FROM fetch_state WHERE key IN ({marks})", list(cands))}  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
     order = sorted(cands.values(), key=lambda q: last.get(q.plan.key, -1.0))  # stable: profile, then term order
     return order[:max(0, cap)]
 

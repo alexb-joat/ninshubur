@@ -109,7 +109,7 @@ class Sandbox:
         prefix = os.path.realpath(sys.base_prefix)
         if not prefix.startswith("/usr"):  # an interpreter installed outside /usr (pyenv, uv): its own tree only
             a += ["--ro-bind", prefix, prefix]
-        a += ["--ro-bind", str(self.package), f"{INSIDE}/ninshubur", "--dev", "/dev", "--tmpfs", "/tmp", "--chdir", "/tmp",
+        a += ["--ro-bind", str(self.package), f"{INSIDE}/ninshubur", "--dev", "/dev", "--tmpfs", "/tmp", "--chdir", "/tmp",  # noqa: S108 — a tmpfs inside the bubblewrap sandbox, not the host /tmp
               "--", self.python, "-I", "-B", "-X", "utf8", "-c", code, *args]
         return a
 

@@ -10,7 +10,7 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -300,13 +300,13 @@ def parse_when(value: Any) -> float | None:
         return None
     try:
         d = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return d.replace(tzinfo=d.tzinfo or timezone.utc).timestamp()
+        return d.replace(tzinfo=d.tzinfo or UTC).timestamp()
     except ValueError:
         pass
     try:
         d = parsedate_to_datetime(s)
         if d is not None:
-            return d.replace(tzinfo=d.tzinfo or timezone.utc).timestamp()
+            return d.replace(tzinfo=d.tzinfo or UTC).timestamp()
     except (TypeError, ValueError, IndexError):
         pass
     m = _MONTH_D_Y.match(s)
@@ -315,7 +315,7 @@ def parse_when(value: Any) -> float | None:
         month = _MONTHS.get(name) or _MONTHS.get(next((k for k in _MONTHS if k.startswith(name[:3])), ""), None)
         if month:
             try:
-                return datetime(int(m.group("y")), month, int(m.group("d")), tzinfo=timezone.utc).timestamp()
+                return datetime(int(m.group("y")), month, int(m.group("d")), tzinfo=UTC).timestamp()
             except ValueError:
                 return None
     return None

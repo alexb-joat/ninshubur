@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from .. import db
 from ..policy import check_url, host_of
@@ -39,7 +39,7 @@ def explorer_home(home: Path) -> Path:
 def disk_use(home: Path, cap_files: int = 100_000) -> int:
     """Bytes in the explorer's folder (symlinks not followed; at most ``cap_files`` entries are counted)."""
     total, seen = 0, 0
-    for root, dirs, files in os.walk(explorer_home(home), followlinks=False):
+    for root, _dirs, files in os.walk(explorer_home(home), followlinks=False):
         for name in files:
             seen += 1
             if seen > cap_files:

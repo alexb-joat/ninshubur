@@ -9,9 +9,9 @@ when a cap trips, parsing stops and ``Doc.limited`` is set so the caller can fla
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Callable, Iterator
 
 DROP = frozenset({"script", "style", "template", "iframe", "object", "embed", "svg", "noscript", "canvas", "audio", "video", "math"})
 VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
@@ -27,9 +27,9 @@ _WS = re.compile(r"\s+")
 class Node:
     tag: str
     attrs: dict[str, str]
-    parent: "Node | None"
+    parent: Node | None
     depth: int
-    children: list["Node"] = field(default_factory=list)
+    children: list[Node] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
 
     @property
@@ -72,10 +72,10 @@ class Node:
                 break
         return out
 
-    def find_all(self, tag: str | None = None, pred: Callable[["Node"], bool] | None = None) -> list["Node"]:
+    def find_all(self, tag: str | None = None, pred: Callable[[Node], bool] | None = None) -> list[Node]:
         return [n for n in iter_nodes(self) if (tag is None or n.tag == tag) and (pred is None or pred(n))]
 
-    def ancestors(self) -> Iterator["Node"]:
+    def ancestors(self) -> Iterator[Node]:
         n = self.parent
         while n is not None:
             yield n
@@ -291,7 +291,7 @@ def card_groups(doc: Doc, min_size: int = 3, max_groups: int = 40) -> list[list[
         for c in n.children:
             if c.tag in ("div", "li", "article", "a", "section", "figure", "td"):
                 by_key.setdefault(c.key, []).append(c)
-        for key, members in by_key.items():
+        for members in by_key.values():
             if len(members) >= min_size:
                 groups.append(members)
                 if len(groups) >= max_groups:

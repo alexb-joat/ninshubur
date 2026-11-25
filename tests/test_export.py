@@ -8,7 +8,18 @@ from zoneinfo import ZoneInfo
 
 from ninshubur.analyze.suggest import Suggester
 from ninshubur.db import one
-from ninshubur.export import _cell, export, gather, parse_since, render_csv_items, render_csv_prospects, render_csv_suggestions, render_html, render_md, weekly_digests
+from ninshubur.export import (
+    _cell,
+    export,
+    gather,
+    parse_since,
+    render_csv_items,
+    render_csv_prospects,
+    render_csv_suggestions,
+    render_html,
+    render_md,
+    weekly_digests,
+)
 from ninshubur.profiles import load_profiles
 from tests.conftest import NOW, SAMPLE_ROUTES, Env, hn_router, load_sample, write_config, write_profiles
 
@@ -154,7 +165,7 @@ def test_csv_prospects_guards_formulas(home):
     rows_.append(dict(base, name="Ada Example", title="", company=None, seen_events=0))
     recs = _parsed(render_csv_prospects(rows_), len(PROSPECT_COLUMNS))
     ni, ti, ci, si = (PROSPECT_COLUMNS.index(c) for c in ("name", "title", "company", "seen_events"))
-    for rec, h in zip(recs[1:], HOSTILE):
+    for rec, h in zip(recs[1:-1], HOSTILE, strict=True):
         assert rec[ni] == rec[ti] == rec[ci] == "'" + h
     last = recs[-1]
     assert last[ni] == "Ada Example" and last[ti] == "" and last[ci] == "" and last[si] == "0" and last[0] == "ok"
@@ -165,13 +176,13 @@ def test_csv_suggestions_guards_formulas(home):
     d = gather(env.conn, sug, profile="agency-eu", statuses=("new", "accepted", "held"), since=None, now=env.clock.now(), tz=TZ)
     clean = list(csv.reader(io.StringIO(render_csv_suggestions(d).lstrip("\ufeff"))))
     d["suggestions"] = d["suggestions"][:len(HOSTILE)]
-    for s, h in zip(d["suggestions"], HOSTILE):
+    for s, h in zip(d["suggestions"], HOSTILE, strict=True):
         s["title"] = h
         s["steps"] = [h, "Ordinary step"]
     d["suggestions"][0]["roi"] = -2.5
     recs = _parsed(render_csv_suggestions(d), len(clean[0]))
     title_i, steps_i, roi_i = (clean[0].index(c) for c in ("title", "steps", "roi"))
-    for rec, h in zip(recs[1:], HOSTILE):
+    for rec, h in zip(recs[1:], HOSTILE, strict=True):
         assert rec[title_i] == "'" + h and rec[steps_i] == "'" + h + " | Ordinary step"
     assert recs[1][roi_i] == "-2.50"  # a formatted negative number is not a formula
     assert len(recs) == len(d["suggestions"]) + 1 and recs[0] == clean[0]
@@ -183,7 +194,7 @@ def test_csv_items_guards_formulas(home):
     clean = _parsed(render_csv_items(env.conn, since=None, tz=TZ), 11)
     ids = [r["id"] for r in env.conn.execute("SELECT id FROM items ORDER BY id LIMIT ?", (len(HOSTILE),)).fetchall()]
     assert len(ids) == len(HOSTILE)
-    for i, h in zip(ids, HOSTILE):
+    for i, h in zip(ids, HOSTILE, strict=True):
         env.conn.execute("UPDATE items SET title=? WHERE id=?", (h, i))
     env.conn.commit()
     recs = _parsed(render_csv_items(env.conn, since=None, tz=TZ), 11)

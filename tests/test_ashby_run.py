@@ -51,7 +51,8 @@ def test_sources_add_admits_ashby_only_with_the_reviewed_status(home, capsys, mo
     import yaml
 
     import ninshubur.__main__ as cli_mod
-    from tests.conftest import NOW, make_transport, public_resolver, write_profiles as wp
+    from tests.conftest import NOW, make_transport, public_resolver
+    from tests.conftest import write_profiles as wp
 
     write_config(home, {})
     wp(home)

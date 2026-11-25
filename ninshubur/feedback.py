@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from .analyze.suggest import _hydrate
 from .db import one
@@ -38,7 +38,7 @@ class Feedback:
         return self._get(sid)
 
     def _calibrate(self, kind: str, col: str) -> None:
-        self.conn.execute(f"INSERT INTO calibration(kind, multiplier, {col}, updated_at) VALUES (?, 1.0, 1, ?) "
+        self.conn.execute(f"INSERT INTO calibration(kind, multiplier, {col}, updated_at) VALUES (?, 1.0, 1, ?) "  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                           f"ON CONFLICT(kind) DO UPDATE SET {col}={col}+1, updated_at=excluded.updated_at", (kind, self.now()))
 
     def accept(self, sid: int) -> tuple[dict, list[tuple[str, str]]]:

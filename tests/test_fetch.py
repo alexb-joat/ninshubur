@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from ninshubur.adapters.base import AdapterSpec, FetchPlan
-from ninshubur.config import Config, SourceConfig, load_config
+from ninshubur.config import SourceConfig, load_config
 from ninshubur.db import connect, rows
 from ninshubur.fetch import Fetcher, RobotsCache
 from ninshubur.logs import read_jsonl
@@ -69,7 +69,7 @@ def test_basic_fetch_records_state_and_logs(home, policy):
     assert len(st) == 1 and st[0]["etag"] == '"v1"' and st[0]["size"] > 0
     assert [c[1] for c in seen.calls] == ["/robots.txt", "/x.json", "/x.json"]
     log = read_jsonl(home / "logs" / "fetch.jsonl")
-    assert [l["status"] for l in log] == [200, 304] and log[1]["conditional"] is True
+    assert [rec["status"] for rec in log] == [200, 304] and log[1]["conditional"] is True
     assert "ts" in log[0] and set(log[0]) >= {"source", "url", "status", "bytes", "changed", "duration_ms", "conditional", "boosted", "error"}
     if os.name == "posix":
         assert stat.S_IMODE((home / "logs" / "fetch.jsonl").stat().st_mode) == 0o600
@@ -368,7 +368,7 @@ def test_two_refusals_end_the_request_with_the_real_cause(home, policy):
                                         (HOST, "/x"): refuse_on(V4, V4B, V6)}, resolve=lambda h: [V6, V4B, V4])
     r = run(f.fetch(FetchPlan(url=f"https://{HOST}/x", key="k"), SRC, SPEC))
     assert r.error == "ConnectError" and r.error_detail == "[Errno 111] Connection refused"
-    assert [a for p, a in zip([c[1] for c in seen.calls], seen.addresses) if p == "/x"] == [V4B, V4]  # IPv4 first, in answer order; V6 untried
+    assert [a for p, a in zip([c[1] for c in seen.calls], seen.addresses, strict=True) if p == "/x"] == [V4B, V4]  # IPv4 first, in answer order; V6 untried
 
 
 def test_an_error_after_the_request_was_sent_is_not_retried_elsewhere(home, policy):
@@ -626,7 +626,7 @@ def test_sources_sharing_a_fetcher_take_turns_on_a_host(home, policy):
     async def four():
         return await asyncio.gather(*(f.fetch(FetchPlan(url=f"https://{HOST}/p{i}", key=f"k{i}"), SRC, SPEC) for i in range(4)))
     assert all(r.ok for r in run(four()))
-    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    gaps = [b - a for a, b in zip(starts, starts[1:], strict=False)]
     assert flight["max"] == 1 and min(gaps) >= f.gate.min_gap - 1e-9
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from ninshubur.db import rows, one
+from ninshubur.db import one, rows
 from ninshubur.logs import read_jsonl
 from ninshubur.schedule import status_summary
 from tests.conftest import NOW, SAMPLE_ROUTES, Env, grep_home, hn_router, load_sample, write_config
@@ -72,7 +72,7 @@ def test_second_run_is_conditional_and_grows_interval(home):
     assert r2.unchanged == 1 and r2.changed == 0
     assert env.source("confs")["interval_s"] > interval1
     log = read_jsonl(home / "logs" / "fetch.jsonl")
-    assert [l["status"] for l in log if l["url"].endswith("general.json")] == [200, 304]
+    assert [rec["status"] for rec in log if rec["url"].endswith("general.json")] == [200, 304]
     assert log[-1]["conditional"] is True
 
 

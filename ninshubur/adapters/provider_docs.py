@@ -8,12 +8,12 @@ rows are quarantined. The ChatGPT help centre blocks automated readers and is de
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ..config import SourceConfig
 from ..items import DateRef, Item, apply_taint, item_uid
 from ..schemas import Projection, get_schema, project
-from .base import AdapterSpec, FetchPlan, Fetched, ParseResult, register
+from .base import AdapterSpec, Fetched, FetchPlan, ParseResult, register
 
 KNOWN_PAGES: dict[str, dict[str, str]] = {
     "anthropic": {
@@ -331,7 +331,7 @@ def _plain_date(s: str | None) -> float | None:
         return None
     for fmt in ("%B %d, %Y", "%Y-%m-%d"):
         try:
-            return datetime.strptime(s.strip(), fmt).replace(tzinfo=timezone.utc).timestamp()
+            return datetime.strptime(s.strip(), fmt).replace(tzinfo=UTC).timestamp()
         except ValueError:
             continue
     return None

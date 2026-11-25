@@ -13,13 +13,13 @@ For each URL the frontier releases (at most one per site, within the site's day 
 6. records (events, jobs) from sites in trial or admitted go to ``on_records`` (the one-way handoff).
 
 The cycle halts at once when the STOP file appears, the sandbox can't run (fail closed: an unparsed page is never
-used), the 24-hour byte budget is used up, or a request gets no answer while this machine is offline. Those are the explorer's own stops, not the page's: the URL stays queued
-and nothing is counted against its site.
+used), the 24-hour byte budget is used up, or a request gets no answer while this machine is offline. Those are the
+explorer's own stops, not the page's: the URL stays queued and nothing is counted against its site.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from . import store, traps
 from .frontier import SSRF_CODES

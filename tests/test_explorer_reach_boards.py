@@ -136,7 +136,7 @@ def test_probe_uses_the_reviewed_robots_status_of_the_configured_source(home):
 def test_a_lever_probe_that_hits_its_limit_says_there_may_be_more():
     import json
 
-    from ninshubur.adapters.base import FetchPlan, Fetched
+    from ninshubur.adapters.base import Fetched, FetchPlan
     from tests.conftest import NOW
 
     def judged(n):

@@ -15,16 +15,16 @@ import sqlite3
 import time
 import urllib.robotparser
 import zlib
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterator, Awaitable, Callable, Iterable
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
 from . import detectors
-from .adapters.base import AdapterSpec, FetchPlan, Fetched
+from .adapters.base import AdapterSpec, Fetched, FetchPlan
 from .config import Config, SourceConfig
 from .db import ledger_add, ledger_sum
 from .logs import JsonlLog

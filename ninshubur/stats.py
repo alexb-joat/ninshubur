@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 import random
 from collections import Counter
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 Z95 = 1.959963984540054  # two-sided 95% normal quantile
 REPS = 10_000
@@ -49,14 +49,14 @@ def _pairs(a: Labels, b: Labels) -> None:
 def agreement(a: Labels, b: Labels) -> float:
     """Share of rows where both gave the same label."""
     _pairs(a, b)
-    return sum(x == y for x, y in zip(a, b)) / len(a)
+    return sum(x == y for x, y in zip(a, b, strict=True)) / len(a)
 
 
 def cohen_kappa(a: Labels, b: Labels) -> float:
     """Cohen's kappa. NaN when chance agreement is 1 (both raters gave one and the same label to every row)."""
     _pairs(a, b)
     n = len(a)
-    po = sum(x == y for x, y in zip(a, b)) / n
+    po = sum(x == y for x, y in zip(a, b, strict=True)) / n
     ca, cb = Counter(a), Counter(b)
     pe = sum(ca[k] * cb[k] for k in set(ca) | set(cb)) / (n * n)
     if pe >= 1:
@@ -69,7 +69,7 @@ def confusion(truth: Labels, pred: Labels, labels: Sequence[str]) -> dict[str, d
     _pairs(truth, pred)
     cols = list(labels) + sorted({p for p in pred if p not in labels})
     out = {t: {p: 0 for p in cols} for t in labels}
-    for t, p in zip(truth, pred):
+    for t, p in zip(truth, pred, strict=True):
         if t not in out:
             raise ValueError(f"truth label {t!r} is not one of {', '.join(labels)}")
         out[t][p] += 1
@@ -84,9 +84,9 @@ def binary(labels: Labels, positive: str) -> list[str]:
 def precision_recall(truth: Labels, pred: Labels, positive: str) -> dict:
     """Counts and rates for the positive label. A rate with an empty denominator is None, not 0."""
     _pairs(truth, pred)
-    tp = sum(1 for t, p in zip(truth, pred) if t == p == positive)
-    fp = sum(1 for t, p in zip(truth, pred) if p == positive and t != positive)
-    fn = sum(1 for t, p in zip(truth, pred) if t == positive and p != positive)
+    tp = sum(1 for t, p in zip(truth, pred, strict=True) if t == p == positive)
+    fp = sum(1 for t, p in zip(truth, pred, strict=True) if p == positive and t != positive)
+    fn = sum(1 for t, p in zip(truth, pred, strict=True) if t == positive and p != positive)
     return {"tp": tp, "fp": fp, "fn": fn,
             "precision": tp / (tp + fp) if tp + fp else None,
             "recall": tp / (tp + fn) if tp + fn else None}
@@ -136,7 +136,7 @@ def _percentile(values: list[float], level: float) -> tuple[float, float]:
 
 
 def _draws(n: int, reps: int, seed: int):
-    rnd = random.Random(seed)
+    rnd = random.Random(seed)  # noqa: S311 — scheduling jitter / resampling, not security
     for _ in range(reps):
         yield [rnd.randrange(n) for _ in range(n)]
 

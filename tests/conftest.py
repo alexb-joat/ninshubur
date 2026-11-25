@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 
-NOW = datetime(2026, 10, 12, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+NOW = datetime(2026, 10, 12, 12, 0, 0, tzinfo=UTC).timestamp()
 SAMPLES = Path(__file__).parent / "samples"
 MALICIOUS = Path(__file__).parent / "malicious"
 
@@ -210,13 +209,14 @@ def public_resolver(host: str) -> list[str]:
 
 class Env:
     def __init__(self, home: Path, routes: dict, clock=None):
+        import random
+
         from ninshubur.config import load_config
         from ninshubur.db import connect
         from ninshubur.fetch import Fetcher
         from ninshubur.ingest import Ingestor
         from ninshubur.policy import Policy
         from ninshubur.schedule import Scheduler
-        import random
 
         self.home = home
         self.clock = clock or _Clock()

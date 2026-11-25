@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-from ninshubur.adapters.base import FetchPlan, Fetched, get_adapter
+from ninshubur.adapters.base import Fetched, FetchPlan, get_adapter
 from ninshubur.config import SourceConfig
 from ninshubur.db import one, rows, uj
 from ninshubur.logs import read_jsonl
-from tests.conftest import DEFAULT_SOURCES, MALICIOUS, NOW, SAMPLE_ROUTES, SAMPLES, Env, grep_home, page, write_config, write_profiles
+from tests.conftest import MALICIOUS, NOW, SAMPLE_ROUTES, SAMPLES, Env, grep_home, page, write_config, write_profiles
 
 DAY = 86400.0
 SRC = SourceConfig(name="event-sites", adapter="event_sites", params={"events_per_day": 2, "pages_per_event": 3},
@@ -115,7 +115,7 @@ def test_end_to_end_crawl_and_prospecting_suggestion(home):
     orgs = {o["name"]: o for o in rows(env.conn, "SELECT * FROM entities WHERE type='company'")}
     assert orgs["Acme Inc"]["domain"] == "acme.example" and orgs["Orbit Systems"]["role"] == "sponsor"
     links = rows(env.conn, "SELECT role, COUNT(*) AS n FROM item_entities GROUP BY role")
-    assert {l["role"] for l in links} >= {"speaker", "sponsor", "partner", "organizer"}
+    assert {lk["role"] for lk in links} >= {"speaker", "sponsor", "partner", "organizer"}
     # state persisted per event
     st = uj(env.source("event-sites")["state"])
     assert st["daily"]["n"] == 3 and all(v.get("last") for v in st["per_event"].values())

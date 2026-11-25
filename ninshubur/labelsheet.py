@@ -53,7 +53,7 @@ class Sheet:
 
 
 def _rank(seed: int, what: str, key: str) -> str:
-    return hashlib.sha256(f"{seed}:{what}:{key}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{seed}:{what}:{key}".encode()).hexdigest()
 
 
 def stratify(subjects: list[Subject]) -> dict[str, str]:
@@ -139,7 +139,8 @@ def render_csv(sheet: Sheet) -> str:
 
 def render_meta(sheet: Sheet, profile: Profile, now: float) -> str:
     q = profile.qualify
-    assert q is not None
+    if q is None:
+        raise ValueError(f"profile {profile.name!r} has no qualify section; a label sheet needs one")
     return json.dumps({
         "profile": profile.name, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "seed": sheet.seed, "sample_asked": sheet.asked, "sampled": len(sheet.rows), "population": sheet.population,

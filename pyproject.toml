@@ -32,3 +32,20 @@ ninshubur = ["policy.yaml", "data/*.json", "data/*.dat", "static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 160          # the code's own width: long lines here are messages, SQL and tables, not deep nesting
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, import order, bugbear, pyupgrade and the bandit security rules (the same set as Trioditis).
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+# S603 flags every subprocess call; the checks that matter stay on: shell=True (S602, S605)
+# and a program found through PATH (S607).
+ignore = ["S603"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, write temp files, use fake keys and bind 0.0.0.0 on purpose; short setup lines may share a line;
+# simulations use seeded, non-cryptographic randomness.
+"tests/**" = ["S101", "S104", "S105", "S106", "S108", "S310", "S311", "S607", "E701", "E702"]
+"scripts/**" = ["S101", "S104", "S310", "S607"]

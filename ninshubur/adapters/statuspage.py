@@ -6,7 +6,7 @@ from ..config import SourceConfig
 from ..items import DateRef, Item, apply_taint, item_uid
 from ..policy import host_of
 from ..schemas import get_schema, project
-from .base import AdapterSpec, FetchPlan, Fetched, ParseResult, register
+from .base import AdapterSpec, Fetched, FetchPlan, ParseResult, register
 
 KNOWN_HOSTS = frozenset({"status.claude.com", "status.anthropic.com", "status.openai.com", "www.githubstatus.com",
                          "status.openrouter.ai", "status.hubspot.com"})

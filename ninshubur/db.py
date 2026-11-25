@@ -5,8 +5,9 @@ import json
 import os
 import sqlite3
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .home import data_home
 

@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ninshubur.companies import (AliasesError, Resolver, companies, dupes, load_aliases, normalise_domain, normalise_name,
-                                 registrable, rollup, split_name)
+from ninshubur.companies import AliasesError, Resolver, companies, dupes, load_aliases, normalise_domain, normalise_name, registrable, rollup, split_name
 from ninshubur.config import load_config
 from ninshubur.db import connect, j, one, rows
 from ninshubur.profiles import load_profiles
@@ -250,6 +249,7 @@ def test_near_miss_names_stay_separate_and_are_listed(world):
 
 def test_dupes_prefilter_matches_every_pair_comparison():
     import random
+
     from ninshubur.companies import CompanySummary, _limit, _names
     from ninshubur.detectors import edit_distance
     rnd = random.Random(7)

@@ -10,10 +10,11 @@ from __future__ import annotations
 import ipaddress
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
@@ -277,15 +278,15 @@ def host_of(url: str) -> str:
 
 def _parse_day(v: Any) -> float | None:
     if isinstance(v, datetime):
-        return v.replace(tzinfo=v.tzinfo or timezone.utc).timestamp()
+        return v.replace(tzinfo=v.tzinfo or UTC).timestamp()
     if isinstance(v, date):
-        return datetime(v.year, v.month, v.day, tzinfo=timezone.utc).timestamp()
+        return datetime(v.year, v.month, v.day, tzinfo=UTC).timestamp()
     if isinstance(v, str):
         try:
             d = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
         except ValueError:
             return None
-        return d.replace(tzinfo=d.tzinfo or timezone.utc).timestamp()
+        return d.replace(tzinfo=d.tzinfo or UTC).timestamp()
     return None
 
 
@@ -302,7 +303,7 @@ class Policy:
 
     # -- loading ------------------------------------------------------------------------------
     @classmethod
-    def load(cls, home: Path | None = None, shipped: Path = SHIPPED) -> "Policy":
+    def load(cls, home: Path | None = None, shipped: Path = SHIPPED) -> Policy:
         try:
             base = yaml.safe_load(shipped.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as e:

@@ -145,6 +145,7 @@ def test_stop_resume_and_status_round_trip(cli, home):
 
 def test_run_refuses_when_tripped(cli, home):
     import json
+
     from ninshubur.explorer.killswitch import read_stop
     from ninshubur.explorer.tripwire import log_path
     from tests.conftest import NOW

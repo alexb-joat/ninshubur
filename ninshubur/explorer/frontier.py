@@ -18,9 +18,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from ..db import one, rows
@@ -92,7 +92,7 @@ class Limits:
     disk_quota_bytes: int = 500_000_000
 
     @classmethod
-    def from_policy(cls, policy: Policy) -> "Limits":
+    def from_policy(cls, policy: Policy) -> Limits:
         block = policy.get("explorer", default={}) or {}
         kw = {}
         for name, default in cls.__dataclass_fields__.items():  # noqa: B007

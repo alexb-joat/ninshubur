@@ -91,7 +91,7 @@ class Ladder:
         now = self.fr.now()
         sets = ", ".join(f"{k}=?" for k in cols)
         with self.conn:
-            self.conn.execute(f"UPDATE explorer_sites SET stage=?, stage_at=?{', ' + sets if sets else ''} WHERE site=?",
+            self.conn.execute(f"UPDATE explorer_sites SET stage=?, stage_at=?{', ' + sets if sets else ''} WHERE site=?",  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                               (stage, now, *cols.values(), site))
         self.log.write({"event": "ladder", "site": site, "stage": stage, "reason": reason[:200]})
 
@@ -155,7 +155,7 @@ class Ladder:
                 self._set(site, "admitted", why, **cols)
                 return Step(site, stage, "admitted", why)
         with self.conn:
-            self.conn.execute(f"UPDATE explorer_sites SET {', '.join(f'{k}=?' for k in cols)} WHERE site=?",
+            self.conn.execute(f"UPDATE explorer_sites SET {', '.join(f'{k}=?' for k in cols)} WHERE site=?",  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                               (*cols.values(), site))
         return Step(site, stage, stage)
 

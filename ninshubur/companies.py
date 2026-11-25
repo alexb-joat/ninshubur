@@ -22,10 +22,10 @@ import sqlite3
 import time
 import unicodedata
 from collections import Counter
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 import yaml
 
@@ -307,7 +307,7 @@ class Resolver:
         self._name = {n: ks for n, ks in self._name.items() if self._unambiguous(n, ks)}
 
     @classmethod
-    def load(cls, cfg: Config | None, profiles: dict[str, Profile] | None, home: Path | None = None) -> "Resolver":
+    def load(cls, cfg: Config | None, profiles: dict[str, Profile] | None, home: Path | None = None) -> Resolver:
         path = aliases_path(home)
         return cls(cfg, profiles, load_aliases(path), aliases_file=path)
 
@@ -439,7 +439,7 @@ def _hiring_rows(conn: sqlite3.Connection, *, include_held: bool) -> list[dict]:
     # Never a person row: hiring items only, person_data=0; tainted content never names a company.
     return rows(conn, f"""SELECT id, source, attrs, published_at, first_seen_at, held FROM items
                           WHERE kind='hiring' AND tainted=0 AND person_data=0 {'' if include_held else 'AND held=0'}
-                          ORDER BY first_seen_at, id""")
+                          ORDER BY first_seen_at, id""")  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
 
 
 def evidence_items(conn: sqlite3.Connection, resolver: Resolver) -> dict[str, list[dict]]:

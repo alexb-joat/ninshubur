@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ninshubur.adapters.base import FetchPlan, Fetched, all_adapters, get_adapter
+from ninshubur.adapters.base import Fetched, FetchPlan, all_adapters, get_adapter
 from ninshubur.config import SourceConfig
 from ninshubur.schemas import SCHEMAS
 from tests.conftest import NOW, load_sample

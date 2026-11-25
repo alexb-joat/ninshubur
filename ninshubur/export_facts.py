@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .adapters.provider_docs import KNOWN_PAGES, OPENAI_MODEL_PAGE, strip_snapshot
@@ -64,7 +64,8 @@ def build_provider_facts(rows: list[dict], fetched_at: dict[tuple[str, str], flo
         if not prov or not page or not mid or prov not in FIELD_SOURCES:
             continue
         by.setdefault((prov, strip_snapshot(mid)), {})[page] = r
-    day = lambda ts: datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+    def day(ts: float) -> str:
+        return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
     providers: dict = {}
     for (prov, mid), pages in sorted(by.items()):
         srcs = providers.setdefault(prov, {"sources": {}, "models": {}})["sources"]
@@ -74,7 +75,7 @@ def build_provider_facts(rows: list[dict], fetched_at: dict[tuple[str, str], flo
             srcs.setdefault(page, {"url": url, "fetched": day(ts), "format": "markdown (.md)"})
         model: dict = {"apiId": pages[next(iter(pages))].get("model_id", mid), "sources": {}}
         pri = FIELD_SOURCES[prov]
-        def take(field: str, key: str):
+        def take(field: str, key: str, pri: dict = pri, pages: dict = pages):
             for page in pri.get(field, []):
                 row = pages.get(page)
                 if row is not None and row.get(key) is not None:

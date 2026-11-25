@@ -20,9 +20,10 @@ from __future__ import annotations
 import asyncio
 import email.utils
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import httpx
 
@@ -162,7 +163,7 @@ class LLMClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self) -> "LLMClient":
+    async def __aenter__(self) -> LLMClient:
         return self
 
     async def __aexit__(self, *exc) -> None:

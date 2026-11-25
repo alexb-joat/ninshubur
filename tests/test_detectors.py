@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from ninshubur.detectors import (check_bytes, check_structure, check_transport, codes, content_type_matches,
-                                 edit_distance, is_lookalike, item_explosion, scan_text, worst)
+from ninshubur.detectors import (
+    check_bytes,
+    check_structure,
+    check_transport,
+    codes,
+    content_type_matches,
+    edit_distance,
+    is_lookalike,
+    item_explosion,
+    scan_text,
+    worst,
+)
 
 
 @pytest.mark.parametrize("text,code,severity", [

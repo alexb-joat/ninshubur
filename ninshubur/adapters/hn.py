@@ -16,7 +16,7 @@ from ..config import SourceConfig
 from ..items import DateRef, EntityRef, Item, apply_taint, item_uid
 from ..policy import host_of
 from ..schemas import sanitize_str
-from .base import AdapterSpec, FetchPlan, Fetched, ParseResult, register, run_projection
+from .base import AdapterSpec, Fetched, FetchPlan, ParseResult, register, run_projection
 
 QUERY_RE = re.compile(r"^[\w .+#-]{1,60}$")
 SEEKING_FREELANCER = re.compile(r"\bSEEKING\s+FREELANCER\b", re.IGNORECASE)

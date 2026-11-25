@@ -20,9 +20,9 @@ import re
 import sqlite3
 import stat
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from .. import detectors
 from ..adapters.base import AdapterSpec

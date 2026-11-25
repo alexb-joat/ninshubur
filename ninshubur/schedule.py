@@ -10,13 +10,13 @@ import asyncio
 import random
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from .adapters.base import Adapter, FetchPlan, get_adapter
 from .config import Config, ConfigError, SourceConfig, load_config
-from .db import one, rows, uj, j
+from .db import j, one, rows, uj
 from .fetch import Fetcher, reachable
 from .ingest import Ingestor, IngestReport
 from .policy import Policy, host_of
@@ -64,7 +64,7 @@ class Scheduler:
         self.ingestor = ingestor
         self._inbox = None  # the explorer hand-off's reader, made at the first tick (read_explorer_inbox)
         self.now = now
-        self.rng = rng or random.Random()
+        self.rng = rng or random.Random()  # noqa: S311 — scheduling jitter / resampling, not security
         self.reachable = reachable
         self.offline_since: float | None = None
         self.jitter = float(cfg.get("scheduler", "jitter", default=0.10))
@@ -392,7 +392,7 @@ class Scheduler:
                 self.ingestor.policy_log.write({"event": "tick_error", "error": type(e).__name__, "detail": str(e)[:200]})
             try:
                 await asyncio.wait_for(stop.wait(), timeout=tick)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
 
@@ -413,7 +413,8 @@ def health_label(row: dict) -> str:
 
 
 def status_summary(conn: sqlite3.Connection, now: float) -> dict:
-    srcs = rows(conn, "SELECT name, adapter, tier, reputation, enabled, health, health_reason, interval_s, next_due_at, last_run_at, last_change_at, fail_count, reviewed_at, review_every_days FROM sources ORDER BY name")
+    srcs = rows(conn, "SELECT name, adapter, tier, reputation, enabled, health, health_reason, interval_s, next_due_at, last_run_at, "
+                      "last_change_at, fail_count, reviewed_at, review_every_days FROM sources ORDER BY name")
     by_health: dict[str, int] = {}
     for s in srcs:
         by_health[health_label(s)] = by_health.get(health_label(s), 0) + 1

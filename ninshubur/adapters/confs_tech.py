@@ -6,7 +6,7 @@ import re
 from ..config import SourceConfig
 from ..items import DateRef, Item, apply_taint, item_uid
 from ..policy import host_of
-from .base import AdapterSpec, FetchPlan, Fetched, ParseResult, register, run_projection
+from .base import AdapterSpec, Fetched, FetchPlan, ParseResult, register, run_projection
 
 TOPIC_RE = re.compile(r"^[a-z0-9-]{1,40}$")
 DEFAULT_TOPICS = ("general", "javascript", "devops", "data", "python")

@@ -5,7 +5,6 @@ import csv
 import io
 import json
 
-import httpx
 import pytest
 
 from ninshubur import labelsheet as L
@@ -94,7 +93,7 @@ def test_the_meta_file_says_what_was_drawn_and_from_what(home):
     assert sum(s["population"] for s in meta["strata"]) == 100 and sum(s["sampled"] for s in meta["strata"]) == 20
     by_key = {s.key: s for s in population()}
     assert [r["row"] for r in meta["rows"]] == list(range(1, 21))
-    for r, (s, stratum) in zip(meta["rows"], sheet.rows):
+    for r, (s, stratum) in zip(meta["rows"], sheet.rows, strict=True):
         assert r["subject_key"] == s.key and r["stratum"] == stratum
         assert r["evidence_hash"] == by_key[s.key].evidence_hash and r["item_ids"] == list(s.item_ids)
 
@@ -199,7 +198,7 @@ def test_a_filled_sheet_reads_back_with_its_subjects(home):
     got = L.read_sheet(path)
     assert [r.row for r in got.rows] == list(range(1, 7))
     assert [r.label for r in got.rows[:4]] == ["fit", "no_fit", "fit", None] and got.unlabelled() == [4, 5, 6]
-    for r, (s, stratum) in zip(got.rows, sheet.rows):
+    for r, (s, stratum) in zip(got.rows, sheet.rows, strict=True):
         assert r.subject.key == s.key and r.subject.lines == s.lines and r.subject.evidence_hash == s.evidence_hash
         assert r.subject.total == s.total and r.stratum == stratum and r.subject.item_ids == s.item_ids
     assert got.labels == ("fit", "no_fit") and got.positive == "fit" and len(got.sha256) == 64

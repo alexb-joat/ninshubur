@@ -12,9 +12,9 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from . import detectors
 from .adapters.base import AdapterSpec, Fetched, ParseResult
@@ -356,7 +356,8 @@ class Ingestor:
         now = self.now()
         self.conn.execute("INSERT INTO snapshots(source, taken_at, items_json, good) VALUES (?,?,?,1)", (source, now, j(payload)))
         keep_days = int(self.policy.get("retention", "snapshots_days", default=30))
-        self.conn.execute("DELETE FROM snapshots WHERE source=? AND taken_at<? AND id NOT IN (SELECT id FROM snapshots WHERE source=? ORDER BY taken_at DESC LIMIT 1)",
+        self.conn.execute("DELETE FROM snapshots WHERE source=? AND taken_at<? "
+                          "AND id NOT IN (SELECT id FROM snapshots WHERE source=? ORDER BY taken_at DESC LIMIT 1)",
                           (source, now - keep_days * 86400, source))
 
     def last_good_snapshot(self, source: str) -> dict | None:

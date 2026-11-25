@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import json
 
-from ninshubur.adapters.base import FetchPlan, Fetched, get_adapter
-from ninshubur.adapters.provider_docs import (claude_slug, parse_anthropic_deprecations, parse_anthropic_effort,
-                                             parse_anthropic_overview, parse_anthropic_pricing, parse_chatgpt_models,
-                                             parse_openai_model_page)
+from ninshubur.adapters.base import Fetched, FetchPlan, get_adapter
+from ninshubur.adapters.provider_docs import (
+    claude_slug,
+    parse_anthropic_deprecations,
+    parse_anthropic_effort,
+    parse_anthropic_overview,
+    parse_anthropic_pricing,
+    parse_chatgpt_models,
+    parse_openai_model_page,
+)
 from ninshubur.config import SourceConfig
 from ninshubur.export_facts import build_provider_facts, euboulia_id
 from tests.conftest import NOW, load_sample
 
-S = lambda name: load_sample(f"provider_docs/{name}").decode("utf-8")
+
+def S(name: str) -> str:
+    return load_sample(f"provider_docs/{name}").decode("utf-8")
 
 
 def fetched(plan: FetchPlan, body: bytes) -> Fetched:
@@ -51,8 +59,9 @@ def test_anthropic_deprecations_status_table():
 def test_anthropic_effort_levels_per_model():
     parsed = {r["model_id"]: r for r in parse_anthropic_effort(S("anthropic-effort.md"))}
     rows = {k: v["efforts"] for k, v in parsed.items()}
-    assert {k: v.get("default_effort") for k, v in parsed.items() if k in ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-4-7", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5-5")} == {
-        "claude-fable-5-1": "high", "claude-opus-5-5": "medium", "claude-opus-4-7": "high", "claude-sonnet-5": "high", "claude-sonnet-4-6": "high", "claude-haiku-5-5": "medium"}
+    want = {"claude-fable-5-1": "high", "claude-opus-5-5": "medium", "claude-opus-4-7": "high",
+            "claude-sonnet-5": "high", "claude-sonnet-4-6": "high", "claude-haiku-5-5": "medium"}
+    assert {k: v.get("default_effort") for k, v in parsed.items() if k in want} == want
     assert parsed["claude-opus-4-6"]["default_effort"] == "high" and parsed["claude-opus-4-5"]["default_effort"] == "high"   # generic rule, no own section
     assert rows["claude-opus-5-5"] == ["low", "medium", "high", "xhigh", "max"]
     assert rows["claude-opus-4-6"] == ["low", "medium", "high", "max"]        # no xhigh on 4.6
@@ -157,13 +166,15 @@ def test_export_merges_pages_into_provider_facts():
 def test_admission_probe_leaves_no_fetch_state(home, now):
     """`sources test` fetches once to check H2-H6; that probe must not make the first real run see the page as unchanged."""
     import types
+
     from ninshubur.__main__ import _test_source
     from ninshubur.config import SourceConfig
     from tests.conftest import Env, write_config, write_profiles
     write_config(home)
     write_profiles(home)
     body = load_sample("provider_docs/anthropic-pricing.md")
-    env = Env(home, {("platform.claude.com", "*"): lambda req: __import__("httpx").Response(200, content=body, headers={"Content-Type": "text/markdown", "ETag": '"v1"'})})
+    headers = {"Content-Type": "text/markdown", "ETag": '"v1"'}
+    env = Env(home, {("platform.claude.com", "*"): lambda req: __import__("httpx").Response(200, content=body, headers=headers)})
     src = SourceConfig(name="pd", adapter="provider_docs", params={"provider": "anthropic", "pages": ["pricing"]},
                        trust={"tier": 0, "legal_basis": "public_business_info", "schema": "provider_model.v1", "reviewed_by": "alex",
                               "reviewed_at": "2026-10-12", "review_every_days": 90, "owner": "Anthropic", "owner_url": "https://platform.claude.com/docs",

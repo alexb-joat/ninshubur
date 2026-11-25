@@ -15,12 +15,12 @@ import time
 from urllib.parse import urljoin, urlsplit
 
 from ..config import SourceConfig
-from ..items import EntityRef, Item, apply_taint, item_uid
+from ..items import EntityRef, Item, item_uid
 from ..parse.htmltree import parse_html
 from ..parse.people import extract
 from ..policy import check_url, host_of, same_site
 from ..schemas import get_schema, project
-from .base import AdapterSpec, FetchPlan, Fetched, ParseResult, register
+from .base import AdapterSpec, Fetched, FetchPlan, ParseResult, register
 
 DAY = 86400.0
 PATH_TERMS = ("speaker", "sponsor", "exhibitor", "partner", "lineup", "agenda")
@@ -183,7 +183,7 @@ class EventSites:
             cands.sort(key=lambda c: c[0])
             used_prefix: set[str] = set()
             n = 0
-            for rank, prefix, target in cands:
+            for _rank, prefix, target in cands:
                 if n >= max_pages or prefix in used_prefix:
                     continue
                 used_prefix.add(prefix)

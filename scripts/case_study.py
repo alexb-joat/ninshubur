@@ -357,7 +357,7 @@ def f_attacks(_reps: dict[int, dict]) -> str:
     src = ATTACKS.read_text(encoding="utf-8")
     tree = ast.parse(src)
     sections, current = [], None
-    marks = [(i + 1, m.group(1).strip()) for i, l in enumerate(src.splitlines()) if (m := re.match(r"# -- (.+?) -+$", l))]
+    marks = [(i + 1, m.group(1).strip()) for i, ln in enumerate(src.splitlines()) if (m := re.match(r"# -- (.+?) -+$", ln))]
     funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
     py = [sys.executable, "-m", "pytest", str(ATTACKS.relative_to(ROOT)), "-q", "-p", "no:cacheprovider"]
     collected = subprocess.run(py + ["--collect-only"], cwd=ROOT, capture_output=True, text=True).stdout  # noqa: S603
@@ -429,7 +429,7 @@ def check(doc_path: Path, frags: dict[str, str]) -> int:
         for g in got:
             if g != body:
                 ga, wa = g.splitlines(), body.splitlines()
-                k = next((i for i, (a, b) in enumerate(zip(ga, wa)) if a != b), min(len(ga), len(wa)))
+                k = next((i for i, (a, b) in enumerate(zip(ga, wa, strict=False)) if a != b), min(len(ga), len(wa)))
                 problems.append(f"fragment {name!r} differs at its line {k + 1}:\n  doc:     {(ga[k:k+1] or [''])[0][:160]}"
                                 f"\n  reports: {(wa[k:k+1] or [''])[0][:160]}")
     problems += [f"unknown fragment {n!r} (not built by this script)" for n in found if n not in frags]

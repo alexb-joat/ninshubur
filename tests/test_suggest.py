@@ -430,8 +430,8 @@ def test_a_status_set_without_feedback_counts_from_its_last_update(home):
 
 
 def test_an_alias_added_later_expires_the_old_company_row(home):
-    from tests.test_companies import add_item
     from ninshubur.companies import aliases_path
+    from tests.test_companies import add_item
     env, sug = company_env(home, {"wide": {"titles": ["Account Executive"]}})
     add_item(env.conn, "hn", "Quokka Robotics", title="Account Executive")
     old = next(s for s in sug.build_all() if s.kind == "hiring_signal_outreach")

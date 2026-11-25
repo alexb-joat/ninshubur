@@ -17,9 +17,9 @@ import asyncio
 import secrets
 import sqlite3
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable
 from urllib.parse import urljoin, urlsplit
 
 import httpx

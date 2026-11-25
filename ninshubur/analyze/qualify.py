@@ -30,8 +30,9 @@ import re
 import sqlite3
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from ..config import Config
 from ..db import j, rows, uj
@@ -370,8 +371,7 @@ async def _ask(client: LLMClient, slot: Slot, q: Qualify, s: Subject, run_id: in
         out["latency_ms"] += reply.latency_ms
         parsed = parse_reply(reply.text, now())
         problem = parsed if isinstance(parsed, str) else ground(parsed, q, s)
-        if problem is None:
-            assert isinstance(parsed, Answer)
+        if problem is None and isinstance(parsed, Answer):  # problem is None only for an Answer: a str reply is its own problem
             out.update(status="ok", label=parsed.label, cited=parsed.cited, reason=parsed.reason, error=parsed.note)
             return out
     out["error"] = problem

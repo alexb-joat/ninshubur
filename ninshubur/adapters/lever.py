@@ -18,7 +18,7 @@ import re
 from ..config import SourceConfig
 from ..items import DateRef, EntityRef, Item, apply_taint, item_uid
 from ..policy import host_of
-from .base import AdapterSpec, FetchPlan, Fetched, ParseResult, register, run_projection
+from .base import AdapterSpec, Fetched, FetchPlan, ParseResult, register, run_projection
 
 BOARD_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 JOBS_HOST = "jobs.lever.co"

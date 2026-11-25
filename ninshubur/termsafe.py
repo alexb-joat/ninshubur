@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator, TextIO
+from typing import TextIO
 
 # C0 except \t and \n; DEL; C1 (U+0080-U+009F holds the 8-bit CSI and OSC introducers); bidi embeddings, overrides
 # and isolates, which reorder what is shown.

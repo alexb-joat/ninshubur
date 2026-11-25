@@ -58,7 +58,8 @@ def prospect_rows(conn: sqlite3.Connection, *, event: str | None = None, profile
         where.append("(ev.uid=? OR CAST(ev.id AS TEXT)=?)")
         params += [event, event]
     if profile:
-        where.append("ev.uid IN (SELECT substr(json_extract(s.entity_keys, '$[0]'), 7) FROM suggestions s WHERE s.kind='conference_prospecting' AND s.profile=?)")
+        where.append("ev.uid IN (SELECT substr(json_extract(s.entity_keys, '$[0]'), 7) FROM suggestions s "
+                     "WHERE s.kind='conference_prospecting' AND s.profile=?)")
         params.append(profile)
     if since is not None:
         where.append("i.fetched_at >= ?")
@@ -68,7 +69,7 @@ def prospect_rows(conn: sqlite3.Connection, *, event: str | None = None, profile
               FROM items i JOIN item_entities ie ON ie.item_id=i.id JOIN entities e ON e.id=ie.entity_id
               JOIN items ev ON ev.kind='event' AND ev.uid=json_extract(i.attrs, '$.event_uid')
               WHERE i.kind='prospect_page' AND e.forgotten_at IS NULL {('AND ' + ' AND '.join(where)) if where else ''}
-              ORDER BY event_date, ev.title, CASE ie.role WHEN 'sponsor' THEN 0 WHEN 'exhibitor' THEN 1 WHEN 'partner' THEN 2 ELSE 3 END, e.name"""
+              ORDER BY event_date, ev.title, CASE ie.role WHEN 'sponsor' THEN 0 WHEN 'exhibitor' THEN 1 WHEN 'partner' THEN 2 ELSE 3 END, e.name"""  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
     out = []
     for r in rows(conn, sql, params):
         r = dict(r)
@@ -229,10 +230,12 @@ def render_md(d: dict) -> str:
 _CSS = """
 body{font:14px/1.45 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111;background:#fff;max-width:900px;margin:24px auto;padding:0 16px}
 h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px;border-bottom:1px solid #999;padding-bottom:4px}
-h3{font-size:15px;margin:18px 0 2px}.meta{color:#444;font-size:12px}.badge{display:inline-block;border:1px solid #777;border-radius:3px;padding:0 5px;font-size:11px;margin-right:4px}
+h3{font-size:15px;margin:18px 0 2px}.meta{color:#444;font-size:12px}
+.badge{display:inline-block;border:1px solid #777;border-radius:3px;padding:0 5px;font-size:11px;margin-right:4px}
 .held{color:#7a3b00}ul,ol{margin:4px 0 8px 20px}table{border-collapse:collapse;font-size:12px}td,th{border:1px solid #bbb;padding:3px 6px;text-align:left}
 a{color:#0645ad;word-break:break-all}.entry{break-inside:avoid;page-break-inside:avoid}
-@media print{body{margin:0;max-width:none}h2{break-before:page;page-break-before:always}h2:first-of-type{break-before:auto;page-break-before:auto}a{color:#000;text-decoration:none}}
+@media print{body{margin:0;max-width:none}h2{break-before:page;page-break-before:always}
+h2:first-of-type{break-before:auto;page-break-before:auto}a{color:#000;text-decoration:none}}
 """
 
 
@@ -268,7 +271,8 @@ def render_html(d: dict) -> str:
             out.append("</ul>")
             pr = d.get("prospects", {}).get(s["id"])
             if pr:
-                out.append("<p>Prospects (unverified; top 25):</p><table><tr><th>Role</th><th>Name</th><th>Title</th><th>Company</th><th>Domain</th><th>Handle</th><th>Page</th></tr>")
+                out.append("<p>Prospects (unverified; top 25):</p><table><tr><th>Role</th><th>Name</th><th>Title</th>"
+                           "<th>Company</th><th>Domain</th><th>Handle</th><th>Page</th></tr>")
                 for r in pr:
                     hd = r.get("handle") or ""
                     out.append(f"<tr><td>{e(r['role'])}</td><td>{e(r['name'])}</td><td>{e(r.get('title') or '')}</td><td>{e(r.get('company') or '')}</td>"
@@ -279,7 +283,8 @@ def render_html(d: dict) -> str:
         out.append("<h2>Held</h2><p class=\"meta\">Not actionable until the source is reviewed or the claim is corroborated.</p><ul>")
         out += [f"<li>#{s['id']} [{e(s['kind'])}] {e(s['title'])}: {e(str(s.get('held_reason')))}</li>" for s in d["held"]]
         out.append("</ul>")
-    out.append("<h2>Sources</h2><table><tr><th>Source</th><th>Adapter</th><th>Tier</th><th>Reputation</th><th>Health</th><th>Next run</th><th>Review due</th></tr>")
+    out.append("<h2>Sources</h2><table><tr><th>Source</th><th>Adapter</th><th>Tier</th><th>Reputation</th>"
+               "<th>Health</th><th>Next run</th><th>Review due</th></tr>")
     for src in d["sources"]:
         due = (src["reviewed_at"] or 0) + (src["review_every_days"] or 0) * 86400
         out.append(f"<tr><td>{e(src['name'])}</td><td>{e(src['adapter'])}</td><td>{src['tier']}</td><td>{src['reputation']:.2f}</td>"

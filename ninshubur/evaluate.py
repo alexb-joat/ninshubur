@@ -225,7 +225,7 @@ def score(truth: list[str], rater: Rater, labels: tuple[str, ...], positive: str
           seed: int = S.SEED) -> dict:
     pred = rater.labels
     n = len(truth)
-    k = sum(t == p for t, p in zip(truth, pred))
+    k = sum(t == p for t, p in zip(truth, pred, strict=True))
     tb, pb = S.binary(truth, positive), S.binary(pred, positive)
     pr = S.precision_recall(truth, pred, positive)
     usage = rater.usage or []
@@ -258,8 +258,8 @@ def _iso(ts: float) -> str:
 def verdicts(truth: list[str], raters: list[Rater], scores: list[dict], *, reps: int = S.REPS, seed: int = S.SEED) -> None:
     """Add a non-inferiority verdict to each local rater's score, against the best remote rater with the same prompt
     (or, when no remote rater used that prompt, the best remote rater overall). Changes ``scores`` in place."""
-    remote = [(r, s) for r, s in zip(raters, scores) if not r.local]
-    for r, s in zip(raters, scores):
+    remote = [(r, s) for r, s in zip(raters, scores, strict=True) if not r.local]
+    for r, s in zip(raters, scores, strict=True):
         if not r.local:
             continue
         pool = [x for x in remote if x[0].prompt_hash == r.prompt_hash] or remote
@@ -285,7 +285,7 @@ def evaluate(sheet: FilledSheet, raters: list[Rater], *, reps: int = S.REPS, see
     scores = [score(truth, r, sheet.labels, sheet.positive, reps=reps, seed=seed) for r in raters]
     verdicts(truth, raters, scores, reps=reps, seed=seed)
     if prices is not None:
-        for r, s in zip(raters, scores):
+        for r, s in zip(raters, scores, strict=True):
             s["cost"] = list_cost(r, s, prices)
     rep = {
         "created_at": _iso(now if now is not None else time.time()),
@@ -354,7 +354,8 @@ def render_markdown(rep: dict) -> str:
         out.append(f"| {s['rater']} | {_prompt(s['prompt_hash'], sh['prompt_hash'])} | {s['answered']}/{s['n']}"
                    + (f" ({lost} without a usable answer)" if lost else "") + " | "
                    f"{s['agree']} ({_ci(s['agreement_ci'])}) | {s['kappa']:.2f} ({_ci(s['kappa_ci'])}) | "
-                   f"{_point_ci(s['positive_f1'], s['positive_f1_ci'])} | {_pct(s['positive_precision'])} / {_pct(s['positive_recall'])} | {s['mcnemar_p']:.3f} | {verdict} |")
+                   f"{_point_ci(s['positive_f1'], s['positive_f1_ci'])} | {_pct(s['positive_precision'])} / {_pct(s['positive_recall'])} | "
+                   f"{s['mcnemar_p']:.3f} | {verdict} |")
     m = rep["method"]
     out += ["", f"Method: Wilson intervals for agreement; Cohen's kappa with a percentile bootstrap ({m['bootstrap_reps']} resamples, "
                 f"seed {m['seed']}); McNemar is exact, on \"{sh['positive']}\" against the rest. A row without a usable answer counts "

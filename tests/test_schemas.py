@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -26,7 +26,7 @@ def test_projection_keeps_only_declared_fields(now):
     assert len(p.rows) == 1
     row = p.rows[0]
     assert set(row) == {"name", "url", "startDate", "endDate", "city", "country", "online", "_taint", "_severity"}
-    assert row["startDate"] == datetime(2026, 11, 10, tzinfo=timezone.utc).timestamp()
+    assert row["startDate"] == datetime(2026, 11, 10, tzinfo=UTC).timestamp()
     assert row["_taint"] == () and row["_severity"] is None
     assert p.violations == 0 and p.field_validity == 1.0
 

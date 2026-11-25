@@ -12,9 +12,9 @@ import math
 import sqlite3
 import sys
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from ..companies import AliasesError, Resolver, aliases_path, display_name, load_aliases, rollup
 from ..config import Config
@@ -153,7 +153,8 @@ class Suggester:
         return float(r["multiplier"]) if r else 1.0
 
     def _items(self, kind: str, since: float | None = None) -> list[dict]:
-        sql = "SELECT i.*, GROUP_CONCAT(d.kind || ':' || d.at || ':' || COALESCE(d.end_at, '')) AS dates FROM items i LEFT JOIN item_dates d ON d.item_id=i.id WHERE i.kind=?"
+        sql = ("SELECT i.*, GROUP_CONCAT(d.kind || ':' || d.at || ':' || COALESCE(d.end_at, '')) AS dates "
+               "FROM items i LEFT JOIN item_dates d ON d.item_id=i.id WHERE i.kind=?")
         params: list = [kind]
         if since is not None:
             sql += " AND (i.published_at IS NULL OR i.published_at>=?)"
@@ -223,15 +224,17 @@ class Suggester:
                                  relevance=relevance, conf=conf, timing_factor=w.factor(now), minutes=value.minutes_for("cfp_submit", self.cfg, 120),
                                  calibration=self._calibration("cfp_submit"))
             reasons = [f"CFP closes {_d(deadline)} ({(deadline - now) / DAY:.0f} days)",
-                       f"match: {'topic ' + str(attrs.get('topic')) if topic_hit else ''}{' city/country' if geo_hit else ''}{' keywords ' + ', '.join(matched) if matched else ''}".strip(),
+                       (f"match: {'topic ' + str(attrs.get('topic')) if topic_hit else ''}{' city/country' if geo_hit else ''}"
+                        f"{' keywords ' + ', '.join(matched) if matched else ''}").strip(),
                        est.formula]
             s = Suggestion(kind="cfp_submit", profile=profile.name, title=f"Submit a talk to {it['title']}",
                            steps=[f"Draft an abstract from the top pains: {', '.join(profile.pains[:3]) or 'see profile'}",
                                   f"Submit via {attrs.get('cfpUrl') or it['url']} before {_d(deadline - DAY)}",
                                   "Note the decision date in the calendar feed"],
-                           reasons=reasons, evidence=[_evidence(it, self.source(it["source"]), {"name": it["title"], "cfpEndDate": _d(deadline),
-                                                                                              "startDate": _d(d.get("event_start", (0, None))[0]) if "event_start" in d else None,
-                                                                                              "city": attrs.get("city"), "cfpUrl": attrs.get("cfpUrl")})],
+                           reasons=reasons, evidence=[_evidence(it, self.source(it["source"]), {
+                               "name": it["title"], "cfpEndDate": _d(deadline),
+                               "startDate": _d(d.get("event_start", (0, None))[0]) if "event_start" in d else None,
+                               "city": attrs.get("city"), "cfpUrl": attrs.get("cfpUrl")})],
                            confidence=conf, est_value=est.value, est_cost=est.cost, cost_parts=est.cost_parts, deadline=deadline,
                            best_window=(w.start, w.end), expires_at=deadline, entity_keys=[f"event:{it['uid']}"], item_ids=[it["id"]])
             out.append(self._finish(s, [it], tier))
@@ -245,7 +248,7 @@ class Suggester:
         ids = [p["id"] for p in pages]
         q = f"""SELECT e.*, ie.role AS link_role, i.held AS page_held, i.tainted AS page_tainted FROM entities e
                 JOIN item_entities ie ON ie.entity_id=e.id JOIN items i ON i.id=ie.item_id
-                WHERE ie.item_id IN ({','.join('?' * len(ids))}) AND e.forgotten_at IS NULL"""
+                WHERE ie.item_id IN ({','.join('?' * len(ids))}) AND e.forgotten_at IS NULL"""  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
         ents = rows(self.conn, q, ids)
         persons = [e for e in ents if e["type"] == "person"]
         orgs = [e for e in ents if e["type"] == "company"]
@@ -292,22 +295,24 @@ class Suggester:
                                  profile_weight=profile.weight("conference_prospecting"), relevance=round(geo_rel * match_ratio * scale / 2, 3),
                                  conf=conf, timing_factor=w.factor(now), minutes=minutes, calibration=self._calibration("conference_prospecting"))
             where = attrs.get("city") or attrs.get("country") or "online"
+            matched_note = f" ({', '.join(o['name'] for o in matched_orgs[:5])} match the profile)" if matched_orgs else ""
             if phase == "upcoming":
                 title = f"Prospect {it['title']} ({where}, {_d(start)}): {len(paid)} paying companies, {len(persons)} speakers"
-                steps = [f"Shortlist the sponsors/exhibitors{' (' + ', '.join(o['name'] for o in matched_orgs[:5]) + ' match the profile)' if matched_orgs else ''}",
+                steps = [f"Shortlist the sponsors/exhibitors{matched_note}",
                          f"Pick speakers with profile titles{' (' + ', '.join(p['name'] for p in matched_people[:5]) + ')' if matched_people else ''}",
                          f"Send a short pre-event note between {_d(w.start)} and {_d(w.end)}; verify each contact before writing",
                          "Offer a meeting during the event week; mark done with the outcome"]
                 reason0 = f"{it['title']} starts {_d(start)} in {where}; {len(paid)} companies paid for presence, {len(persons)} speakers listed"
             else:
                 title = f"Follow up {it['title']} ({where}, held {_d(end)}): {len(paid)} paying companies, {len(persons)} speakers"
-                steps = [f"Shortlist the companies that paid for a stand or sponsorship{' (' + ', '.join(o['name'] for o in matched_orgs[:5]) + ' match the profile)' if matched_orgs else ''}",
+                steps = [f"Shortlist the companies that paid for a stand or sponsorship{matched_note}",
                          "Angle: measurable pipeline versus what the event cost them; ask what the event delivered",
                          f"Send between {_d(w.start)} and {_d(w.end)}; follow up two weeks later",
                          "Speakers with profile titles are secondary targets; verify each contact before writing"]
                 reason0 = f"{it['title']} was held {_d(end)} in {where}; {len(paid)} companies paid for presence, {len(persons)} speakers listed"
             reasons = [reason0,
-                       f"profile match: {len(matched_orgs)} target companies, {len(matched_people)} speakers with target titles; geo/topic factor {geo_rel:.2f}",
+                       f"profile match: {len(matched_orgs)} target companies, {len(matched_people)} speakers with target titles; "
+                       f"geo/topic factor {geo_rel:.2f}",
                        "every prospect is unverified (Tier 2 page content): confirm role and company before contact",
                        est.formula]
             evidence = [_evidence(pg, self.source(pg["source"]), {"page": pg["url"], "persons": uj(pg["attrs"]).get("persons"),
@@ -408,7 +413,7 @@ class Suggester:
             if tiers[weakest["it"]["id"]] > max(tiers[x["it"]["id"]] for x in shown):
                 shown = shown + [weakest]  # the badge must show the least trusted evidence
 
-            def values(x: dict) -> dict:
+            def values(x: dict, name: str = name, trusted: bool = trusted) -> dict:
                 v = {"title": x["it"]["title"], "location": x["attrs"].get("location"), "posted": _d(x["posted"]), "company": name}
                 if trusted and not x["res"].trusted:
                     v["match"] = "name only, unverified"
@@ -556,7 +561,7 @@ class Suggester:
             new_rows = dict(self._new_company_rows)
         ids = expire + [int(r["id"]) for r in moved]
         if ids and not dry_run:
-            self.conn.execute(f"UPDATE suggestions SET status='expired', updated_at=? WHERE status IN ('new','held') "
+            self.conn.execute(f"UPDATE suggestions SET status='expired', updated_at=? WHERE status IN ('new','held') "  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                               f"AND id IN ({','.join('?' * len(ids))})", [now, *ids])
         return {"live_per_posting": len(live), "expire": len(expire), "companies": len(companies),
                 "new_rows": dict(sorted(new_rows.items())), "moved": len(moved),
@@ -600,14 +605,14 @@ class Suggester:
         # outages resolve themselves
         for s in rows(self.conn, "SELECT id, item_ids FROM suggestions WHERE kind='tool_outage' AND status IN ('new','held','accepted')"):
             ids = uj(s["item_ids"], [])
-            if ids and all(uj(i["attrs"]).get("resolved") for i in rows(self.conn, f"SELECT attrs FROM items WHERE id IN ({','.join('?' * len(ids))})", ids)):
+            if ids and all(uj(i["attrs"]).get("resolved") for i in rows(self.conn, f"SELECT attrs FROM items WHERE id IN ({','.join('?' * len(ids))})", ids)):  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
                 self.conn.execute("UPDATE suggestions SET status='expired', updated_at=? WHERE id=?", (now, s["id"]))
                 n += 1
         return int(n)
 
     # -- reading ----------------------------------------------------------------------------------
     def list(self, *, status: tuple[str, ...] = ("new",), profile: str | None = None, kind: str | None = None, top: int = 20) -> list[dict]:
-        sql = f"SELECT * FROM suggestions WHERE status IN ({','.join('?' * len(status))})"
+        sql = f"SELECT * FROM suggestions WHERE status IN ({','.join('?' * len(status))})"  # noqa: S608 — fragments are code constants and '?' lists; values go as parameters
         params: list = list(status)
         if profile:
             sql += " AND profile=?"

@@ -55,7 +55,7 @@ def render(suggestions: list[dict], now: float) -> str:
                       f"SUMMARY:{_esc('Window: ' + s['title'])}", f"DESCRIPTION:{desc}", f"CATEGORIES:{s['kind']}", "TRANSP:TRANSPARENT",
                       "END:VEVENT"]
     lines.append("END:VCALENDAR")
-    return "\r\n".join(_fold(l) for l in lines) + "\r\n"
+    return "\r\n".join(_fold(ln) for ln in lines) + "\r\n"
 
 
 class IcsSink:

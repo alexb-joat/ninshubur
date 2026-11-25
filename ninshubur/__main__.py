@@ -8,8 +8,8 @@ import json
 import random
 import sys
 import time
-from functools import cached_property
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -19,17 +19,24 @@ from . import __version__
 from .adapters.base import all_adapters, get_adapter, run_projection
 from .analyze import qualify as qualifier
 from .analyze.suggest import Suggester
-from .companies import ALIASES_FILE, companies as company_list, dupes as company_dupes, evidence_items
+from .companies import ALIASES_FILE, evidence_items
+from .companies import companies as company_list
+from .companies import dupes as company_dupes
 from .config import ConfigError, SourceConfig, load_config
 from .db import connect, j, ledger_sum, one, rows, uj
 from .envvars import load_dotenv
-from .export import export as export_files, parse_since, prospects_for_event, weekly_digests
+from .explorer.cli import add_commands as add_explore_commands
+from .export import export as export_files
+from .export import parse_since, prospects_for_event, weekly_digests
 from .export_facts import export_provider_facts
 from .feedback import Feedback, FeedbackError
 from .fetch import Fetcher
 from .home import data_home, ensure_home
 from .ingest import Ingestor
-from .labelsheet import LabelSheetError, meta_path as label_meta_path, read_sheet as read_label_sheet, write as write_label_sheet
+from .labelsheet import LabelSheetError
+from .labelsheet import meta_path as label_meta_path
+from .labelsheet import read_sheet as read_label_sheet
+from .labelsheet import write as write_label_sheet
 from .llm import LLMClient, LLMError
 from .logs import write_private
 from .policy import Policy, PolicyError, host_of
@@ -38,7 +45,6 @@ from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
 from .sinks.ics import IcsSink
 from .termsafe import guarded_output
-from .explorer.cli import add_commands as add_explore_commands
 
 
 class App:
@@ -80,7 +86,7 @@ class App:
     @cached_property
     def scheduler(self) -> Scheduler:
         return Scheduler(self.conn, self.policy, self.cfg, self.home, self.fetcher, self.ingestor, now=self.now,
-                         rng=random.Random())
+                         rng=random.Random())  # noqa: S311 — scheduling jitter / resampling, not security
 
     @cached_property
     def suggester(self) -> Suggester:
@@ -312,7 +318,8 @@ def cmd_lookup(args, app: App) -> int:
         app.scheduler.fetcher = app.fetcher
     print(f"{'dry run: ' if args.dry_run else ''}{ev['title']} ({ev['url']})")
     report, collected = asyncio.run(app.scheduler.crawl_event(srcs[0].name, dict(ev), dry_run=args.dry_run))
-    print(f"fetched {report.fetched} refused {report.refused} errors {report.errors} | stored {report.stored} dropped {report.dropped} held {report.held} | {report.note}".rstrip(" |"))
+    print(f"fetched {report.fetched} refused {report.refused} errors {report.errors} | "
+          f"stored {report.stored} dropped {report.dropped} held {report.held} | {report.note}".rstrip(" |"))
     for plan, f, parsed in collected:
         it = parsed.items[0] if parsed.items else None
         a = it.attrs if it else {}
@@ -995,7 +1002,7 @@ def _main(argv: list[str] | None) -> int:
     try:
         app = App(verbose=args.verbose)
         if getattr(args, "main_db", True):  # opened up front, so a schema error refuses before any work
-            app.conn
+            _ = app.conn
     except (PolicyError, ConfigError, ProfileError, SchemaError) as e:
         print(f"refusing to run: {e}", file=sys.stderr)
         return 3
@@ -1005,7 +1012,7 @@ def _main(argv: list[str] | None) -> int:
         if "fetcher" in app.__dict__:
             try:
                 asyncio.run(app.fetcher.aclose())
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 — a failed close at exit must not hide the command's result
                 pass
         if "conn" in app.__dict__:
             app.conn.close()

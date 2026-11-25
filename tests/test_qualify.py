@@ -204,12 +204,14 @@ def test_a_good_answer_is_stored_with_what_was_asked(home):
     p, rep, conn = run_once(home, server, [s])
     assert (rep.status, rep.asked, rep.answered, rep.failed, dict(rep.labels)) == ("done", 1, 1, 0, {"no": 1})
     row = one(conn, "SELECT * FROM qualifications")
-    assert (row["status"], row["label"], row["cited"], row["item_ids"], row["reason"], row["error"]) == ("ok", "no", "[2,3]", "[1,2,3]", "Line 2 rules it out.", None)
+    assert (row["status"], row["label"], row["cited"], row["item_ids"], row["reason"], row["error"]) == (
+        "ok", "no", "[2,3]", "[1,2,3]", "Line 2 rules it out.", None)
     assert (row["profile"], row["subject_key"], row["subject_name"], row["model"], row["attempts"]) == ("acme", s.key, s.name, "haiku", 1)
     assert row["evidence_hash"] == s.evidence_hash and row["prompt_hash"] == Q.prompt_hash(QUAL)
     assert row["usd"] == pytest.approx(400 * 1.0 / 1e6 + 30 * 5.0 / 1e6) and row["input_tokens"] == 400
     run_row = one(conn, "SELECT * FROM llm_runs")
-    assert (run_row["task"], run_row["status"], run_row["subjects"], run_row["answered"], run_row["failed"], run_row["max_usd"]) == ("qualify", "done", 1, 1, 0, 1.0)
+    assert (run_row["task"], run_row["status"], run_row["subjects"], run_row["answered"], run_row["failed"], run_row["max_usd"]) == (
+        "qualify", "done", 1, 1, 0, 1.0)
     assert run_row["finished_at"] is not None and run_row["usd"] == pytest.approx(row["usd"])
     body = sent(server)
     assert body["model"] == "haiku" and body["max_tokens"] == Q.MAX_REPLY_TOKENS
@@ -246,7 +248,8 @@ def test_two_unusable_replies_fail_the_subject_with_the_cause_and_the_run_goes_o
     _, rep, conn = run_once(home, server, [subject("company:bad"), subject("company:good")])
     assert (rep.status, rep.answered, rep.failed, dict(rep.errors)) == ("done", 1, 1, {cause: 1})
     got = {r["subject_key"]: r for r in rows(conn, "SELECT * FROM qualifications")}
-    assert (got["company:bad"]["status"], got["company:bad"]["label"], got["company:bad"]["error"], got["company:bad"]["attempts"]) == ("failed", None, cause, 2)
+    bad = got["company:bad"]
+    assert (bad["status"], bad["label"], bad["error"], bad["attempts"]) == ("failed", None, cause, 2)
     assert got["company:good"]["status"] == "ok" and len(server.requests) == 3
 
 
