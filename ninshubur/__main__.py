@@ -38,6 +38,7 @@ from .profiles import PROFILE_KEYS, ProfileError, load_profiles, load_qualify_fi
 from .runreport import run as run_report
 from .schedule import Scheduler, health_label, status_summary
 from .schemas import SchemaError, check_registry
+from .settings import add_commands as add_settings_commands
 from .sinks.ics import IcsSink
 from .termsafe import guarded_output
 from .explorer.cli import add_commands as add_explore_commands
@@ -963,6 +964,7 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--minutes", type=int)
     dn.set_defaults(fn=cmd_feedback, cmd="done")
     add_explore_commands(sub)
+    add_settings_commands(sub)
     evp = sub.add_parser("evaluate", help="score stored qualify answers (and filled sheet copies) against a labelled sheet")
     evp.add_argument("--sheet", required=True, help="the labelled sheet (its meta file beside it, or --meta)")
     evp.add_argument("--meta", metavar="FILE", help="the sheet's meta file, when it is not beside the sheet as <sheet>.meta.json")
