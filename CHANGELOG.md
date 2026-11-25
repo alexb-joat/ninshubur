@@ -6,6 +6,8 @@ heading and its date.
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-25
+
 ### Added
 
 - Policy-first crawling of admitted sources: a source is fetched only after a named reviewer admitted it through the H1–H8 checklist, only the fields it declared are kept, hostile or malformed input is quarantined, and rules (no model) build timed, costed suggestions, with an ICS calendar sink and a command line. Adapters for confs.tech, Greenhouse, Hacker News and status pages.

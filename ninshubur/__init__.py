@@ -7,4 +7,4 @@ Three rules shape every module:
    holds affected suggestions and keeps serving from the last good snapshot.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
