@@ -55,7 +55,7 @@ heading and its date.
 - A failed connect in the fetch log names the socket's own reason, not the HTTP library's wrapper.
 - `config.example.yaml` shows the `llm.router` slot (off, with a commented, unpriced model entry to fill in), and `docs/USAGE.md` says how to turn it on for `--slot router`.
 - The default `user_agent`, and the one in `config.example.yaml`, name the running version; a test fails if they drift apart. A `user_agent` line in your own `config.yaml` still overrides the default.
-- `PRIVACY.md` quotes what Lever's and Ashby's terms, API documentation and robots.txt say about reading public job postings, with their URLs; it drops the unchecked Hacker News request ceiling and says that page needs a person's eyes.
+- `PRIVACY.md` quotes what Lever's and Ashby's terms, API documentation and robots.txt say about reading public job postings, and the request limit the Hacker News API page states, each with its URL and the day it was read; the unchecked figures they replace are gone.
 - Database schema 5 adds the `forgotten` table; it is created on first open. Deleted rows are overwritten (`PRAGMA secure_delete=ON`).
 - The unused `trello`, `google_calendar` and `platform` sink entries are gone from the defaults and the example config.
 
