@@ -34,6 +34,7 @@ heading and its date.
 - `ninshubur export run-report`: one dated page of counts (fetches, refusals and quarantines, items, suggestions, sources, model runs and the explorer ladder) with no title, link, host or name on it, built read-only from the database and rebuilt by one command; `docs/run-report.md` says what each number means and what the page leaves out.
 - README: a "What it looks like" block with real output captured by `scripts/readme_sample.py` from the replay of the shipped samples, and a "Known limits" section where each limit points at the test, doc or line that shows it.
 - `scripts/private_words.py`: a check that fails when a word on a list of hashes (a former employer, a person) appears in the name or text of any tracked file; it never prints the word.
+- `scripts/fresh_clone.py`: rehearses each install path from a clone of the committed HEAD (the README's quick start, CONTRIBUTING's set up and the requirements file), then runs the tests, the smoke script and `ninshubur check` in the CONTRIBUTING clone and prints one result line per step; `--dry-run` shows the plan and runs nothing.
 
 ### Changed
 
@@ -59,6 +60,7 @@ heading and its date.
 - On Windows the CLI falls back to UTC with a warning when a time zone is missing, and `tzdata` is a runtime dependency there.
 - The admission probe no longer records fetch state, so a source's first real run parses the page, and it parses with the adapter itself, so H4 measures real extraction.
 - Explorer edge cases: a link that is no page stops nothing, a redirect target counts one hop further and never back to one, a redirect to another scheme counts only when it names an address, only a site's own front page is compared for drift, a taint stop names its detectors, a probe refused for its address is reported as the stop it is, deleting the STOP file by hand does not trip the tripwire again, an event link over the cap costs the link and not the site, an event with an http:// link reaches the crawler, and the explorer's own failures use up no page.
+- `pip install -r requirements-dev.in` works from a clean clone: the file named a `requirements.txt` that is not in the repository, and now pulls in the runtime requirements instead.
 
 ### Security
 
