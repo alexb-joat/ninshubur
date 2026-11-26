@@ -25,7 +25,7 @@ LEARNABLE_SINGLES = {"budgets.daily_human_minutes", "budgets.hourly_rate_usd", "
 
 
 def tree(root: Path) -> dict[str, bytes]:
-    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
 @pytest.fixture
