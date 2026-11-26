@@ -6,7 +6,7 @@ heading and its date.
 
 ## Unreleased
 
-## 0.2.0 - 2026-11-25
+## 0.2.0 - 2026-11-26
 
 ### Added
 

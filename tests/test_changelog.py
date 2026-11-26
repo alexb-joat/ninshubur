@@ -1,5 +1,5 @@
 """CHANGELOG.md in its released form: Keep a Changelog layout, one `## Unreleased` section on top, then one dated heading per
-release (`## 0.2.0 - 2026-11-25`), newest first, the newest being the version the package declares. Each section uses the
+release (`## 0.2.0 - 2026-11-26`), newest first, the newest being the version the package declares. Each section uses the
 four sub-headings in order, each once and none empty. Every `ninshubur <command>` a bullet names is a command the parser
 has, so the file cannot describe a command ahead of its code. Commit hashes and branch names stay out of the file."""
 from __future__ import annotations
